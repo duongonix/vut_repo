@@ -1,9 +1,0 @@
-
-Fixture      LinkLink LinkRun LldLink LldRun ClLink ClRun
--------      -------- ------- ------- ------ ------ -----
-fx-core-only        0      46       0     46      0    46
-fx-async            0       0       0      0      0     0
-fx-stdlib           0       0       0      0      0     0
-fx-http             0       0       0      0      0     0
-
-
