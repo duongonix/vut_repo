@@ -69,6 +69,17 @@ fx-stdlib     stdout contains os=..., fs=..., has_path=..., exit 0
 fx-http       stdout "status=200" (online) or a graceful "error=..." (offline)
 ```
 
+## CI results (M-LINK.0)
+
+| Platform | Runner | Backend | Result |
+| --- | --- | --- | --- |
+| Windows x86_64 | windows-latest | link.exe / lld-link / cl.exe | PASS 4/4 |
+| Linux x86_64 | ubuntu-latest | cc (`-no-pie`) | PASS 4/4 |
+| macOS arm64 | macos-latest | cc | FAIL: non-PIC text-relocations |
+| macOS x86_64 | — | — | not measured (no hosted Intel runner) |
+
+Downloaded evidence: `spikes/mlink0/report-ci2/` (git-ignored). See
+`specs/deploy/native-linking.md` for the full analysis and the macOS blocker.
 ## Notes
 
 * The runtime archives embed the Rust standard library. Linking both

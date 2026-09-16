@@ -1,5 +1,5 @@
 out/
 report/
-report-ci/
+report-*/
 objgen/target/
 objgen/Cargo.lock

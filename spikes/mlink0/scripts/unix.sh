@@ -29,6 +29,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 
 fixtures="fx-core-only fx-async fx-stdlib fx-http"
 need_stdlib() { [ "$1" = "fx-stdlib" ] || [ "$1" = "fx-http" ]; }
+FAILED=0
 
 # --- build reference runtime archives + spike tooling -------------------
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
@@ -132,6 +133,8 @@ link_with() {
     log "  cc[$variant] link=FAIL errors=$errs"
     grep -E 'undefined reference|text-relocation|error|not found|no_pie' "$logfile" | head -n 6 | tee -a "$LOG"
   done
+  FAILED=1
+  log "  $fx FAILED to link with any variant"
 }
 
 log "=== unix spike on $OS_NAME ($ARCH, cc=$CC) ==="
@@ -142,3 +145,4 @@ for fx in $fixtures; do
 done
 
 log "M-LINK.0 $OS_NAME spike complete."
+exit "$FAILED"
