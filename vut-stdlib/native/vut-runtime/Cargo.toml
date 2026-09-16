@@ -1,0 +1,25 @@
+[package]
+name = "vut-stdlib-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native/platform primitives for the Vut standard library."
+
+[lib]
+name = "vut_stdlib_native"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+vut-runtime = { path = "../../../crates/vut-runtime" }
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream"] }
+rustls = "0.23"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "net", "macros"] }
+url = "2"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

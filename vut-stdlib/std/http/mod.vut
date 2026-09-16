@@ -1,0 +1,419 @@
+# HTTP client.
+#
+# The high-level API is implemented in Vut; the native layer performs the request
+# and returns a response envelope. A `Client` owns a native `HttpClient` resource
+# (pooled connection state) released exactly once. Requests borrow that handle
+# only where it crosses the native ABI.
+#
+# `Request` is built by mutating instance methods (`request.header(...)`,
+# `request.query(...)`, `request.body(...)`, `request.range(...)`,
+# `request.timeout(...)`), then sent with `await request.send()`.
+import time
+
+opaque data HttpClient
+
+@link_name("vut_rt_http_client_create")
+extern "C" fn _client_create(timeout_nanos: usize, redirects: usize) -> resource(HttpClient)
+
+enum Method:
+  get
+  post
+  put
+  patch
+  delete
+  head
+  options
+
+fn Method.text() -> str:
+  text: str = match self:
+    get: "GET"
+    post: "POST"
+    put: "PUT"
+    patch: "PATCH"
+    delete: "DELETE"
+    head: "HEAD"
+    options: "OPTIONS"
+  text
+
+data Status:
+  code: int
+
+fn Status.is_informational() -> bool:
+  self.code >= 100 and self.code < 200
+
+fn Status.is_success() -> bool:
+  self.code >= 200 and self.code < 300
+
+fn Status.is_redirect() -> bool:
+  self.code >= 300 and self.code < 400
+
+fn Status.is_client_error() -> bool:
+  self.code >= 400 and self.code < 500
+
+fn Status.is_server_error() -> bool:
+  self.code >= 500 and self.code < 600
+
+# Headers keep every value (multi-value semantics) and match names
+# case-insensitively, as HTTP requires.
+data Headers:
+  lines: list(str) = @()
+
+fn _line_name(line: str) -> str:
+  stop = line.find(":")
+  name: str = if stop >= 0:
+    line.substring(0, stop)
+  else:
+    line
+  name.trim().to_lower()
+
+fn _line_value(line: str) -> str:
+  stop = line.find(":")
+  value: str = if stop >= 0:
+    line.substring(stop + 1, line.byte_len())
+  else:
+    ""
+  value.trim()
+
+fn headers_parse(raw: str) -> Headers:
+  lines: list(str) = @()
+  for line in raw.split("\n"):
+    if line.trim().byte_len() > 0:
+      lines.push(line)
+  Headers(lines = lines)
+
+fn Headers.raw() -> str:
+  text = ""
+  for line in self.lines:
+    text = text + line + "\n"
+  text
+
+fn Headers.get(name: str) -> str:
+  wanted = name.to_lower()
+  for line in self.lines:
+    if _line_name(line) == wanted:
+      return _line_value(line)
+  ""
+
+fn Headers.contains(name: str) -> bool:
+  self.get(name).byte_len() > 0
+
+fn Headers.append(name: str, value: str):
+  self.lines.push("$name: $value")
+
+fn Headers.set(name: str, value: str):
+  wanted = name.to_lower()
+  kept: list(str) = @()
+  for line in self.lines:
+    if _line_name(line) != wanted:
+      kept.push(line)
+  kept.push("$name: $value")
+  self.lines = kept
+
+fn Headers.remove(name: str):
+  wanted = name.to_lower()
+  kept: list(str) = @()
+  for line in self.lines:
+    if _line_name(line) != wanted:
+      kept.push(line)
+  self.lines = kept
+
+enum ErrorKind:
+  invalid_url
+  dns
+  connect
+  tls
+  timeout
+  redirect
+  request
+  response
+  body
+  cancelled
+  unsupported
+  other
+
+data Error:
+  kind: ErrorKind
+  message: str
+
+# Native transport codes carried in the response envelope.
+fn _kind(code: int) -> ErrorKind:
+  kind: ErrorKind = if code == 1:
+    ErrorKind.invalid_url
+  elif code == 2:
+    ErrorKind.dns
+  elif code == 3:
+    ErrorKind.connect
+  elif code == 4:
+    ErrorKind.tls
+  elif code == 5:
+    ErrorKind.timeout
+  elif code == 6:
+    ErrorKind.request
+  elif code == 7:
+    ErrorKind.redirect
+  elif code == 8:
+    ErrorKind.response
+  elif code == 9:
+    ErrorKind.body
+  elif code == 10:
+    ErrorKind.cancelled
+  elif code == 11:
+    ErrorKind.unsupported
+  else:
+    ErrorKind.other
+  kind
+
+data Response:
+  status: Status
+  headers: Headers
+  payload: bytes
+
+fn Response.bytes() -> bytes:
+  self.payload
+
+fn Response.text() -> result(str, Error):
+  value: result(str, Error) = match self.payload.to_str():
+    ok(text): ok(text)
+    err(error): err(Error(kind = ErrorKind.body, message = "response body is not valid UTF-8"))
+  value
+
+fn Response.is_success() -> bool:
+  self.status.is_success()
+
+fn Response.header(name: str) -> str:
+  self.headers.get(name)
+
+# Streams the already-received body as a single chunk. For bounded-memory
+# streaming of large bodies use `get_stream` / `Client.send_stream` /
+# `Request.send_stream`.
+fn Response.stream() -> Stream:
+  unsafe:
+    return Stream(inner = _native_stream_chunk(self.payload))
+
+fn _text_or(raw: bytes, fallback: str) -> str:
+  match raw.to_str():
+    ok(value): value
+    err(error): fallback
+
+fn _decode_ok(raw: bytes) -> result(Response, Error):
+  status = Status(code = raw.read_i32(4))
+  headers_len = raw.read_i32(8)
+  headers_end = 12 + headers_len
+  headers = headers_parse(_text_or(raw.slice(12, headers_end), ""))
+  ok(Response(status = status, headers = headers, payload = raw.slice(headers_end, raw.len())))
+
+fn _decode_bad(raw: bytes, kind: int) -> result(Response, Error):
+  err(Error(kind = _kind(kind), message = _text_or(raw.slice(4, raw.len()), "http request failed")))
+
+fn _decode(raw: bytes) -> result(Response, Error):
+  kind = raw.read_i32(0)
+  value: result(Response, Error) = if kind == 0:
+    _decode_ok(raw)
+  else:
+    _decode_bad(raw, kind)
+  value
+
+data Request:
+  method: Method
+  url: str
+  headers: Headers = Headers(lines = @())
+  query: list(str) = @()
+  payload: bytes = "".to_bytes()
+  timeout_nanos: usize = 0
+  redirects: usize = 0
+
+fn Request.header(name: str, value: str):
+  self.headers.append(name, value)
+
+fn Request.query(key: str, value: str):
+  self.query.push("$key=$value")
+
+fn Request.body(content: bytes):
+  self.payload = content
+
+fn Request.body_text(text: str):
+  self.payload = text.to_bytes()
+
+fn Request.range(start: int, end: int):
+  self.headers.set("Range", "bytes=$start-$end")
+
+fn Request.timeout(duration: time.Duration):
+  self.timeout_nanos = duration.nanos
+
+fn Request.with_redirects(limit: usize):
+  self.redirects = limit
+
+fn _query_raw(values: list(str)) -> str:
+  text = ""
+  for value in values:
+    text = text + value + "\n"
+  text
+
+# Streaming response body.
+#
+# A `Stream` owns a native `HttpStream` resource for exactly-once cleanup. Each
+# `read()` awaits the next chunk (bounded memory); an empty `bytes` means the
+# end of the stream.
+opaque data HttpStream
+
+@link_name("vut_rt_http_send_v1")
+extern "C" async fn _native_send(client: ptr(HttpClient), method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> bytes
+
+@link_name("vut_rt_http_stream_send_v1")
+extern "C" fn _native_stream_send(client: ptr(HttpClient), method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> resource(HttpStream)
+
+@link_name("vut_rt_http_stream_read_v1")
+extern "C" async fn _native_stream_read(stream: ptr(HttpStream)) -> bytes
+
+@link_name("vut_rt_http_stream_chunk_v1")
+extern "C" fn _native_stream_chunk(body: bytes) -> resource(HttpStream)
+
+data Stream:
+  inner: resource(HttpStream)
+
+# A `Client` owns native connection-pool state. Construct it with `client(...)`.
+data Client:
+  handle: resource(HttpClient)
+  timeout_nanos: usize
+  redirects: usize
+
+fn client(timeout: time.Duration, redirects: usize) -> Client:
+  unsafe:
+    return Client(handle = _client_create(timeout.nanos, redirects), timeout_nanos = timeout.nanos, redirects = redirects)
+
+fn default_client() -> Client:
+  client(time.nanoseconds(0), 0)
+
+fn Client.request(method: Method, url: str) -> Request:
+  Request(method = method, url = url, timeout_nanos = self.timeout_nanos, redirects = self.redirects)
+
+async fn Client.execute(request: Request) -> result(Response, Error):
+  raw: bytes = "".to_bytes()
+  unsafe:
+    raw = await _native_send(self.handle, request.method.text(), request.url, request.headers.raw(), _query_raw(request.query), request.payload, request.timeout_nanos, request.redirects)
+  _decode(raw)
+
+async fn Client.get(url: str) -> result(Response, Error):
+  await self.execute(self.request(Method.get, url))
+
+async fn Client.head(url: str) -> result(Response, Error):
+  await self.execute(self.request(Method.head, url))
+
+async fn Client.delete(url: str) -> result(Response, Error):
+  await self.execute(self.request(Method.delete, url))
+
+async fn Client.options(url: str) -> result(Response, Error):
+  await self.execute(self.request(Method.options, url))
+
+async fn Client.post(url: str, body: str) -> result(Response, Error):
+  request = self.request(Method.post, url)
+  request.body_text(body)
+  await self.execute(request)
+
+async fn Client.post_bytes(url: str, body: bytes) -> result(Response, Error):
+  request = self.request(Method.post, url)
+  request.body(body)
+  await self.execute(request)
+
+# Streams the response body of any request (bounded memory).
+fn Client.send_stream(request: Request) -> Stream:
+  unsafe:
+    return Stream(inner = _native_stream_send(self.handle, request.method.text(), request.url, request.headers.raw(), _query_raw(request.query), request.payload, request.timeout_nanos, request.redirects))
+
+fn Client.get_stream(url: str) -> Stream:
+  self.send_stream(self.request(Method.get, url))
+
+async fn Request.send() -> result(Response, Error):
+  config = default_client()
+  await config.execute(self)
+
+fn Request.send_stream() -> Stream:
+  config = default_client()
+  config.send_stream(self)
+
+async fn get(url: str) -> result(Response, Error):
+  config = default_client()
+  await config.get(url)
+
+async fn head(url: str) -> result(Response, Error):
+  config = default_client()
+  await config.head(url)
+
+async fn delete(url: str) -> result(Response, Error):
+  config = default_client()
+  await config.delete(url)
+
+async fn options(url: str) -> result(Response, Error):
+  config = default_client()
+  await config.options(url)
+
+async fn get_range(url: str, start: int, end: int) -> result(Response, Error):
+  request = default_request(Method.get, url)
+  request.range(start, end)
+  config = default_client()
+  await config.execute(request)
+
+fn default_request(method: Method, url: str) -> Request:
+  Request(method = method, url = url)
+
+async fn post(url: str, body: str) -> result(Response, Error):
+  config = default_client()
+  await config.post(url, body)
+
+async fn post_bytes(url: str, body: bytes) -> result(Response, Error):
+  config = default_client()
+  await config.post_bytes(url, body)
+
+async fn put(url: str, body: str) -> result(Response, Error):
+  request = default_request(Method.put, url)
+  request.body_text(body)
+  config = default_client()
+  await config.execute(request)
+
+async fn put_bytes(url: str, body: bytes) -> result(Response, Error):
+  request = default_request(Method.put, url)
+  request.body(body)
+  config = default_client()
+  await config.execute(request)
+
+async fn patch(url: str, body: str) -> result(Response, Error):
+  request = default_request(Method.patch, url)
+  request.body_text(body)
+  config = default_client()
+  await config.execute(request)
+
+async fn patch_bytes(url: str, body: bytes) -> result(Response, Error):
+  request = default_request(Method.patch, url)
+  request.body(body)
+  config = default_client()
+  await config.execute(request)
+
+fn _ok_chunk(payload: bytes) -> result(bytes, Error):
+  ok(payload)
+
+fn _eof_chunk() -> result(bytes, Error):
+  ok("".to_bytes())
+
+fn _err_chunk(kind: int, message: str) -> result(bytes, Error):
+  err(Error(kind = _kind(kind), message = message))
+
+fn _read_decode(raw: bytes) -> result(bytes, Error):
+  kind = raw.read_i32(0)
+  payload = raw.slice(4, raw.len())
+  value: result(bytes, Error) = if kind == 0:
+    _ok_chunk(payload)
+  elif kind == 1:
+    _eof_chunk()
+  else:
+    _err_chunk(kind, _text_or(payload, "stream read failed"))
+  value
+
+async fn Stream.read() -> result(bytes, Error):
+  value: bytes = "".to_bytes()
+  unsafe:
+    value = await _native_stream_read(self.inner)
+  _read_decode(value)
+
+fn get_stream(url: str) -> Stream:
+  config = default_client()
+  config.get_stream(url)

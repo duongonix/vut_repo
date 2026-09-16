@@ -1,0 +1,29 @@
+# Shared native result-envelope decoding for the official Vut standard library.
+#
+# Envelope layout: [status: i32 little-endian][payload...].
+# status 0 means success and the payload is the operation result; otherwise the
+# payload is a UTF-8 diagnostic message.
+
+fn status(raw: bytes) -> int:
+  raw.read_i32(0)
+
+fn is_ok(raw: bytes) -> bool:
+  raw.read_i32(0) == 0
+
+fn payload(raw: bytes) -> bytes:
+  raw.slice(4, raw.len())
+
+fn message(raw: bytes) -> str:
+  match payload(raw).to_str():
+    ok(value): value
+    err(error): "native operation failed"
+
+fn raw_text(raw: bytes) -> str:
+  match payload(raw).to_str():
+    ok(value): value
+    err(error): ""
+
+fn fields(raw: bytes) -> list(str):
+  match payload(raw).to_str():
+    ok(value): value.split("\0")
+    err(error): @()

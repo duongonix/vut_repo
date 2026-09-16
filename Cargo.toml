@@ -1,0 +1,39 @@
+[workspace]
+members = [
+  "crates/vut-source",
+  "crates/vut-diagnostics",
+  "crates/vut-ast",
+  "crates/vut-lexer",
+  "crates/vut-parser",
+  "crates/vut-resolver",
+  "crates/vut-hir",
+  "crates/vut-types",
+  "crates/vut-interface",
+  "crates/vut-incremental",
+  "crates/vut-tooling",
+  "crates/vut-memory",
+  "crates/vut-mir",
+  "crates/vut-codegen",
+  "crates/vut-linker",
+  "crates/vut-compiler",
+  "crates/vut-runtime",
+  "crates/vut-cli",
+  "crates/vpm",
+  "crates/vut-fuzz",
+  "crates/vut-lsp",
+  "vut-stdlib/native/vut-runtime",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Vut contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

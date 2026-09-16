@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "command": {},
+  "plugin": [],
+  "username": "duong",
+  "mode": {},
+  "agent": {},
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "external_directory": "allow",
+    "webfetch": "allow",
+    "doom_loop": "allow"
+  },
+  "disabled_providers": [
+    "opencode"
+  ],
+  "enabled_providers": []
+}

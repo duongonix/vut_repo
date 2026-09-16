@@ -1,0 +1,13 @@
+[package]
+name = "vut-tooling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vut-lexer = { path = "../vut-lexer" }
+vut-parser = { path = "../vut-parser" }
+vut-source = { path = "../vut-source" }
+
+[lints]
+workspace = true

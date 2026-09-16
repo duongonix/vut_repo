@@ -1,0 +1,134 @@
+# Environment variables and process arguments.
+#
+# Native access goes through platform primitives that return the shared result
+# envelope; this module maps status codes into a typed `EnvError`.
+import _internal.abi
+
+@link_name("vut_rt_env_get_v1")
+extern "C" fn _native_get(name: str) -> bytes
+
+@link_name("vut_rt_env_has_v1")
+extern "C" fn _native_has(name: str) -> usize
+
+@link_name("vut_rt_env_set_v1")
+extern "C" fn _native_set(name: str, value: str) -> bytes
+
+@link_name("vut_rt_env_remove_v1")
+extern "C" fn _native_remove(name: str) -> bytes
+
+@link_name("vut_rt_env_all_v1")
+extern "C" fn _native_all() -> bytes
+
+@link_name("vut_rt_env_args_v1")
+extern "C" fn _native_args() -> bytes
+
+fn _get(name: str) -> bytes:
+  unsafe:
+    _native_get(name)
+
+fn _has(name: str) -> usize:
+  unsafe:
+    _native_has(name)
+
+fn _set(name: str, value: str) -> bytes:
+  unsafe:
+    _native_set(name, value)
+
+fn _remove(name: str) -> bytes:
+  unsafe:
+    _native_remove(name)
+
+fn _all() -> bytes:
+  unsafe:
+    _native_all()
+
+fn _args() -> bytes:
+  unsafe:
+    _native_args()
+
+enum EnvErrorKind:
+  not_found
+  invalid_input
+  invalid_data
+  other
+
+data EnvError:
+  kind: EnvErrorKind
+  message: str
+
+fn _kind(code: int) -> EnvErrorKind:
+  kind: EnvErrorKind = if code == 1:
+    EnvErrorKind.not_found
+  elif code == 4:
+    EnvErrorKind.invalid_input
+  elif code == 11:
+    EnvErrorKind.invalid_data
+  else:
+    EnvErrorKind.other
+  kind
+
+fn _error(code: int, raw: bytes) -> EnvError:
+  EnvError(kind = _kind(code), message = abi.message(raw))
+
+fn _ok_opt(text: str) -> result(str?, EnvError):
+  ok(text)
+
+fn _err_opt(code: int, raw: bytes) -> result(str?, EnvError):
+  err(_error(code, raw))
+
+fn _ok_flag() -> result(bool, EnvError):
+  ok(true)
+
+fn _err_flag(code: int, raw: bytes) -> result(bool, EnvError):
+  err(_error(code, raw))
+
+fn _ok_list(values: list(str)) -> result(list(str), EnvError):
+  ok(values)
+
+fn _err_list(code: int, raw: bytes) -> result(list(str), EnvError):
+  err(_error(code, raw))
+
+fn _flag_result(raw: bytes) -> result(bool, EnvError):
+  value: result(bool, EnvError) = if abi.is_ok(raw):
+    _ok_flag()
+  else:
+    _err_flag(abi.status(raw), raw)
+  value
+
+# Returns the value of `name`, or `null` when it is not set.
+fn get(name: str) -> result(str?, EnvError):
+  raw = _get(name)
+  value: result(str?, EnvError) = if abi.is_ok(raw):
+    _ok_opt(abi.raw_text(raw))
+  else:
+    _err_opt(abi.status(raw), raw)
+  value
+
+fn has(name: str) -> bool:
+  _has(name) != 0
+
+fn set(name: str, value: str) -> result(bool, EnvError):
+  _flag_result(_set(name, value))
+
+fn remove(name: str) -> result(bool, EnvError):
+  _flag_result(_remove(name))
+
+# All variables as `key=value` text entries, sorted by key.
+fn all() -> result(list(str), EnvError):
+  raw = _all()
+  result: result(list(str), EnvError) = if abi.is_ok(raw):
+    _ok_list(abi.fields(raw))
+  else:
+    _err_list(abi.status(raw), raw)
+  result
+
+# Raw process arguments, including the program name at index 0.
+fn args() -> list(str):
+  abi.fields(_args())
+
+fn arg(index: int) -> str?:
+  values = args()
+  value: str? = null
+  if index < values.len():
+    value = values.at(index)
+  value

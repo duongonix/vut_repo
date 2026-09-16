@@ -1,0 +1,29 @@
+# Receiver Functions: a typed, statically resolved DSL.
+#
+# A trailing `Call():` body is an anonymous receiver function. Implicit names
+# (`Column`, `Button`) resolve at compile time to the enclosing receiver's
+# method; there is no runtime receiver lookup and no heap closure.
+
+data AppScope:
+  title: str
+
+data ColumnScope:
+  label: str
+
+fn AppScope.Column(body: fn(ColumnScope)() -> void) -> void:
+  scope = ColumnScope(label = "column")
+  out("column: $(body)")
+  body.call(scope)
+
+fn ColumnScope.Button(text: str) -> void:
+  out("button=$text")
+
+fn App(body: fn(AppScope)() -> void) -> void:
+  scope = AppScope(title = "app")
+  body.call(scope)
+
+fn main():
+  App():
+    Column():
+      Button("Save")
+      Button("Cancel")

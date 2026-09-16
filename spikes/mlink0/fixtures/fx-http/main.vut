@@ -1,0 +1,16 @@
+# M-LINK.0 fixture: fx-http
+#
+# Contract: exercises the native stdlib HTTP/TLS stack
+# (reqwest + tokio + rustls + system libraries).
+#
+# Online:  expect "status=200".
+# Offline: a graceful "error=<message>" still proves the binary linked and the
+#          native HTTP/TLS runtime initialized; record whichever branch occurs.
+
+import http
+
+async fn main():
+  outcome = await http.get("https://example.com")
+  match outcome:
+    ok(response): out("status=$(response.status.code)")
+    err(error): out("error=$(error.message)")

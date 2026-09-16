@@ -1,0 +1,24 @@
+# M-LINK.0 fixture: fx-core-only
+#
+# Contract: truly core-only.
+#   - no stdlib imports (`import ...`)
+#   - no `out` / `print` / `input` (compiler builtins, but excluded by policy)
+#   - must not require the native stdlib archive to link
+# Observability is the process exit code produced by `fn main() -> int`.
+#
+# Expected exit code: 46.
+# A return of 254 means the runtime leak detector fired (LIVE_ALLOCATION_COUNT != 0).
+
+data Point:
+  x: int
+  y: int
+
+fn checksum() -> int:
+  points = @(Point(x = 1, y = 2), Point(x = 3, y = 4))
+  total = 0
+  for p in points:
+    total = total + p.x * 10 + p.y
+  total
+
+fn main() -> int:
+  checksum()

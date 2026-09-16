@@ -1,0 +1,24 @@
+[package]
+name = "vut-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vut-ast = { path = "../vut-ast" }
+vut-diagnostics = { path = "../vut-diagnostics" }
+vut-hir = { path = "../vut-hir" }
+vut-interface = { path = "../vut-interface" }
+vut-resolver = { path = "../vut-resolver" }
+vut-source = { path = "../vut-source" }
+
+[dev-dependencies]
+vut-lexer = { path = "../vut-lexer" }
+vut-parser = { path = "../vut-parser" }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "throughput"
+harness = false

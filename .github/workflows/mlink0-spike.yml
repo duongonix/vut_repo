@@ -1,0 +1,65 @@
+name: M-LINK.0 spike
+
+# Temporary spike workflow for M-LINK.0: verify standalone native linking
+# (no rustc/cargo in the link step) on Windows, Linux and macOS, and capture
+# the evidence under spikes/mlink0/report/.
+#
+# This workflow is manual-only and does not publish anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: "Reuse existing build artifacts (not recommended on CI)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NASM (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Install NASM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm || true
+
+      - name: Linux spike
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x spikes/mlink0/scripts/unix.sh spikes/mlink0/scripts/linux.sh
+          spikes/mlink0/scripts/linux.sh
+
+      - name: macOS spike
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x spikes/mlink0/scripts/unix.sh spikes/mlink0/scripts/macos.sh
+          spikes/mlink0/scripts/macos.sh
+
+      - name: Windows spike
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: spikes/mlink0/scripts/windows.ps1
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlink0-report-${{ matrix.os }}
+          path: spikes/mlink0/report
+          if-no-files-found: warn

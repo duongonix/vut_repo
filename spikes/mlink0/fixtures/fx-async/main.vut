@@ -1,0 +1,21 @@
+# M-LINK.0 fixture: fx-async
+#
+# Contract: exercises the core async / Vutcon runtime only.
+#   - no stdlib imports
+#   - `out` here is a compiler builtin that lowers to the core runtime,
+#     so this fixture still does not require the native stdlib archive.
+#
+# Expected stdout: "async=42 vutcon=42"
+# Expected exit code: 0.
+
+async fn compute() -> int:
+  42
+
+fn calc() -> int:
+  21
+
+async fn main():
+  value = await compute()
+  job = vut(() => calc())
+  doubled = await job
+  out("async=$value vutcon=$(doubled * 2)")

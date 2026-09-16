@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-platform:
+    name: ${{ matrix.os }} / stable
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Build runtime ABI artifact
+        run: cargo build -p vut-runtime
+      - name: Test runtime ABI contract
+        run: cargo test -p vut-runtime --test abi_contract
+      - name: Test workspace and native pipeline
+        run: cargo test --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Frontend fuzz smoke
+        if: runner.os == 'Linux'
+        run: cargo run -p vut-fuzz -- 10000
+
+  sanitizers:
+    name: Linux / ${{ matrix.sanitizer }} sanitizer
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, leak]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sanitizer-${{ matrix.sanitizer }}
+      - name: Run runtime and ownership tests under sanitizer
+        env:
+          RUSTFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+          RUSTDOCFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu -p vut-runtime -p vut-memory

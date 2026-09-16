@@ -1,0 +1,22 @@
+[package]
+name = "vut-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cranelift-codegen = "0.135.0"
+cranelift-frontend = "0.135.0"
+cranelift-module = "0.135.0"
+cranelift-object = "0.135.0"
+target-lexicon = "0.13.3"
+vut-mir = { path = "../vut-mir" }
+vut-hir = { path = "../vut-hir" }
+vut-ast = { path = "../vut-ast" }
+vut-runtime = { path = "../vut-runtime" }
+
+[dev-dependencies]
+vut-resolver = { path = "../vut-resolver" }
+
+[lints]
+workspace = true

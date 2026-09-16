@@ -1,0 +1,3 @@
+fn broken("$(unclosed)
+  ## malformed indentation and delimiters
+    @((1, 2]

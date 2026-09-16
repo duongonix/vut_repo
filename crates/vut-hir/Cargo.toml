@@ -1,0 +1,17 @@
+[package]
+name = "vut-hir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vut-ast = { path = "../vut-ast" }
+vut-resolver = { path = "../vut-resolver" }
+vut-source = { path = "../vut-source" }
+
+[dev-dependencies]
+vut-lexer = { path = "../vut-lexer" }
+vut-parser = { path = "../vut-parser" }
+
+[lints]
+workspace = true

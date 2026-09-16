@@ -1,0 +1,15 @@
+[package]
+name = "vut-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+vut-diagnostics = { path = "../vut-diagnostics" }
+vut-source = { path = "../vut-source" }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "throughput"
+harness = false

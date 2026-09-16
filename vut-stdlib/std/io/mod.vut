@@ -1,0 +1,64 @@
+# Standard-stream helpers.
+#
+# Text output to standard output is provided by the core `out` builtin; this
+# module adds standard error and explicit flushing.
+import _internal.abi
+
+@link_name("vut_rt_io_stderr_write_v1")
+extern "C" fn _native_stderr_write(text: str) -> bytes
+
+@link_name("vut_rt_io_flush_v1")
+extern "C" fn _native_flush() -> bytes
+
+fn _stderr_write(text: str) -> bytes:
+  unsafe:
+    _native_stderr_write(text)
+
+fn _flush_stream() -> bytes:
+  unsafe:
+    _native_flush()
+
+enum IoErrorKind:
+  invalid_input
+  invalid_data
+  other
+
+data IoError:
+  kind: IoErrorKind
+  message: str
+
+fn _kind(code: int) -> IoErrorKind:
+  kind: IoErrorKind = if code == 4:
+    IoErrorKind.invalid_input
+  elif code == 11:
+    IoErrorKind.invalid_data
+  else:
+    IoErrorKind.other
+  kind
+
+fn _error(code: int, raw: bytes) -> IoError:
+  IoError(kind = _kind(code), message = abi.message(raw))
+
+fn _ok_flag() -> result(bool, IoError):
+  ok(true)
+
+fn _err_flag(code: int, raw: bytes) -> result(bool, IoError):
+  err(_error(code, raw))
+
+fn _flag_result(raw: bytes) -> result(bool, IoError):
+  value: result(bool, IoError) = if abi.is_ok(raw):
+    _ok_flag()
+  else:
+    _err_flag(abi.status(raw), raw)
+  value
+
+# Writes `text` to standard error without a trailing newline.
+fn eprint(text: str) -> result(bool, IoError):
+  _flag_result(_stderr_write(text))
+
+# Writes `text` followed by a newline to standard error.
+fn eprintln(text: str) -> result(bool, IoError):
+  _flag_result(_stderr_write(text + "\n"))
+
+fn flush() -> result(bool, IoError):
+  _flag_result(_flush_stream())

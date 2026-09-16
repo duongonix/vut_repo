@@ -1,0 +1,115 @@
+# Process identity, termination, and synchronous child execution.
+#
+# Child processes run synchronously; asynchronous handles and pipes are
+# deferred until the language has a managed native-resource type.
+import _internal.abi
+
+@link_name("vut_rt_process_id_v1")
+extern "C" fn _native_id() -> u32
+
+@link_name("vut_rt_process_exit_v1")
+extern "C" fn _native_exit(code: i32)
+
+@link_name("vut_rt_process_status_v1")
+extern "C" fn _native_status(program: str, args: list(str), cwd: str) -> bytes
+
+@link_name("vut_rt_process_output_v1")
+extern "C" fn _native_output(program: str, args: list(str), cwd: str) -> bytes
+
+fn _id() -> u32:
+  unsafe:
+    _native_id()
+
+fn _exit(code: i32):
+  unsafe:
+    _native_exit(code)
+
+fn _status(program: str, args: list(str), cwd: str) -> bytes:
+  unsafe:
+    _native_status(program, args, cwd)
+
+fn _output(program: str, args: list(str), cwd: str) -> bytes:
+  unsafe:
+    _native_output(program, args, cwd)
+
+enum ProcessErrorKind:
+  not_found
+  permission_denied
+  invalid_input
+  other
+
+data ProcessError:
+  kind: ProcessErrorKind
+  message: str
+
+data Output:
+  exit_code: int
+  stdout: str
+  stderr: str
+
+fn _kind(code: int) -> ProcessErrorKind:
+  kind: ProcessErrorKind = if code == 1:
+    ProcessErrorKind.not_found
+  elif code == 2:
+    ProcessErrorKind.permission_denied
+  elif code == 4:
+    ProcessErrorKind.invalid_input
+  else:
+    ProcessErrorKind.other
+  kind
+
+fn _error(code: int, raw: bytes) -> ProcessError:
+  ProcessError(kind = _kind(code), message = abi.message(raw))
+
+fn _decode_text(blob: bytes) -> str:
+  match blob.to_str():
+    ok(value): value
+    err(error): ""
+
+fn _build_output(payload: bytes) -> Output:
+  code = payload.read_i32(0)
+  length = payload.read_i32(4)
+  Output(
+    exit_code = code,
+    stdout = _decode_text(payload.slice(8, 8 + length)),
+    stderr = _decode_text(payload.slice(8 + length, payload.len()))
+  )
+
+fn _ok_output(payload: bytes) -> result(Output, ProcessError):
+  ok(_build_output(payload))
+
+fn _err_output(code: int, raw: bytes) -> result(Output, ProcessError):
+  err(_error(code, raw))
+
+fn _ok_status(code: int) -> result(int, ProcessError):
+  ok(code)
+
+fn _err_status(code: int, raw: bytes) -> result(int, ProcessError):
+  err(_error(code, raw))
+
+# The current process identifier.
+fn id() -> u32:
+  _id()
+
+# Terminates the current process with `code`.
+fn exit(code: i32):
+  _exit(code)
+
+# Runs `program` with `args`, returning its exit code.
+fn status(program: str, args: list(str), cwd: str) -> result(int, ProcessError):
+  raw = _status(program, args, cwd)
+  value: result(int, ProcessError) = if abi.is_ok(raw):
+    _ok_status(abi.payload(raw).read_i32(0))
+  else:
+    _err_status(abi.status(raw), raw)
+  value
+
+# Runs `program` with `args`, capturing standard output and error.
+fn output(program: str, args: list(str), cwd: str) -> result(Output, ProcessError):
+  raw = _output(program, args, cwd)
+  value: result(Output, ProcessError) = if abi.is_ok(raw):
+    _ok_output(abi.payload(raw))
+  else:
+    _err_output(abi.status(raw), raw)
+  value
+

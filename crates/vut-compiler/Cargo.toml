@@ -1,0 +1,21 @@
+[package]
+name = "vut-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+vut-diagnostics = { path = "../vut-diagnostics" }
+vut-ast = { path = "../vut-ast" }
+vut-lexer = { path = "../vut-lexer" }
+vut-parser = { path = "../vut-parser" }
+vut-hir = { path = "../vut-hir" }
+vut-resolver = { path = "../vut-resolver" }
+vut-types = { path = "../vut-types" }
+vut-mir = { path = "../vut-mir" }
+vut-codegen = { path = "../vut-codegen" }
+vut-source = { path = "../vut-source" }
+vut-runtime = { path = "../vut-runtime" }
+vut-linker = { path = "../vut-linker" }
+vut-incremental = { path = "../vut-incremental" }
+[lints]
+workspace = true

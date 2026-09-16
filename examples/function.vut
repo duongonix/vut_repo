@@ -1,0 +1,38 @@
+# Function values: callbacks, returned functions, chained calls, and variadics.
+#
+# Note: anonymous functions cannot capture enclosing bindings yet (E1013), so
+# lambdas below use only their own parameters.
+
+fn compute(a: int, b: int, c: fn(int, int) -> int) -> int:
+  c(a, b)
+
+fn multiply(x: int, y: int) -> int:
+  x * y
+
+# Returns a function value.
+fn make_incrementer() -> fn(int) -> int:
+  fn(x):
+    x + 1
+
+fn hello(...names: str) -> void:
+  for name in names:
+    out("Hello $name")
+
+fn main():
+  product = compute(5, 3, multiply)
+  out("product = $product")
+
+  squared = compute(4, 4, fn(x, y):
+    x * y
+  )
+  out("squared = $squared")
+
+  increment = make_incrementer()
+  result = increment(5)
+  out("result = $result")
+
+  # Chained call: the result of a call may itself be called.
+  chained = make_incrementer()(10)
+  out("chained = $chained")
+
+  hello("a", "b", "c")

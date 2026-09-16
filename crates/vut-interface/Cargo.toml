@@ -1,0 +1,12 @@
+[package]
+name = "vut-interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+vut-diagnostics = { path = "../vut-diagnostics" }
+vut-hir = { path = "../vut-hir" }
+vut-resolver = { path = "../vut-resolver" }
+vut-source = { path = "../vut-source" }
+[lints]
+workspace = true

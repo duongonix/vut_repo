@@ -1,0 +1,18 @@
+# M-LINK.0 fixture: fx-stdlib
+#
+# Contract: exercises native stdlib symbols (fs / os / env) from vut-stdlib.
+# # Expected stdout contains "os=<name>", "fs=ok", "has_path=true".
+# Expected exit code: 0.
+
+import os
+import env
+import fs
+
+fn main() -> int:
+  name = os.name()
+  here = fs.exists(".")
+  has_path = env.has("PATH")
+  out("os=$name")
+  out("fs=$here")
+  out("has_path=$has_path")
+  0

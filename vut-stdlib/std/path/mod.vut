@@ -1,0 +1,121 @@
+# Pure path manipulation. Never touches the filesystem.
+#
+# All behavior is lexical and platform-aware; `os.name()` selects the
+# separator so Windows and Unix-like platforms use their own rules.
+import os
+
+fn separator() -> str:
+  sep: str = if os.name() == "windows":
+    "\\"
+  else:
+    "/"
+  sep
+
+fn _last_index(value: str, needle: str) -> int:
+  parts = value.split(needle)
+  count = parts.len()
+  result: int = if count <= 1:
+    -1
+  else:
+    last = parts.at(count - 1)
+    value.byte_len() - last.byte_len() - needle.byte_len()
+  result
+
+fn _file_name_value(value: str) -> str:
+  index = _last_index(value, separator())
+  result: str = if index < 0:
+    value
+  else:
+    value.substring(index + 1, value.byte_len())
+  result
+
+fn is_absolute(value: str) -> bool:
+  absolute: bool = if separator() == "\\":
+    value.starts_with("\\") or value.starts_with("/") or value.find(":") == 1
+  else:
+    value.starts_with("/")
+  absolute
+
+fn is_relative(value: str) -> bool:
+  not is_absolute(value)
+
+fn join(base: str, child: str) -> str:
+  joined: str = if is_absolute(child):
+    child
+  elif base.is_empty():
+    child
+  elif base.ends_with(separator()):
+    base + child
+  else:
+    base + separator() + child
+  joined
+
+fn parent(value: str) -> str?:
+  result: str? = null
+  index = _last_index(value, separator())
+  if index > 0:
+    result = value.substring(0, index)
+  result
+
+fn file_name(value: str) -> str?:
+  result: str? = null
+  name = _file_name_value(value)
+  if not name.is_empty():
+    result = name
+  result
+
+fn extension(value: str) -> str?:
+  result: str? = null
+  name = _file_name_value(value)
+  index = _last_index(name, ".")
+  if index > 0:
+    result = name.substring(index + 1, name.byte_len())
+  result
+
+fn stem(value: str) -> str?:
+  result: str? = null
+  name = _file_name_value(value)
+  index = _last_index(name, ".")
+  if not name.is_empty():
+    if index > 0:
+      result = name.substring(0, index)
+    else:
+      result = name
+  result
+
+fn with_extension(value: str, extension: str) -> str:
+  index = _last_index(value, ".")
+  dot = _last_index(value, separator())
+  result: str = if index > dot:
+    value.substring(0, index) + "." + extension
+  else:
+    value + "." + extension
+  result
+
+fn components(value: str) -> list(str):
+  result: list(str) = @()
+  for part in value.split(separator()):
+    if not part.is_empty():
+      result.push(part)
+  result
+
+# Lexically normalizes `.` and `..` components. Does not resolve symlinks and
+# never touches the filesystem.
+fn normalize(value: str) -> str:
+  kept: list(str) = @()
+  # `list.remove` returns the removed element, which must stay owned so it is
+  # released; bind it rather than discarding the call.
+  removed = ""
+  for part in value.split(separator()):
+    if part == "..":
+      if not kept.is_empty():
+        removed = kept.remove(kept.len() - 1)
+    elif not part.is_empty() and part != ".":
+      kept.push(part)
+  joined = ""
+  for part in kept:
+    joined = if joined.is_empty():
+      part
+    else:
+      joined + separator() + part
+  joined

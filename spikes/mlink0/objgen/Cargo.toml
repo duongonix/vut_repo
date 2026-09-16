@@ -1,0 +1,17 @@
+[package]
+name = "vut-objgen"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone spike workspace: builds the workspace compiler crates as path
+# dependencies without becoming a member of the Vut workspace.
+[workspace]
+
+[dependencies]
+vut-compiler = { path = "../../../crates/vut-compiler" }
+vut-codegen = { path = "../../../crates/vut-codegen" }
+vut-mir = { path = "../../../crates/vut-mir" }
+vut-resolver = { path = "../../../crates/vut-resolver" }
+vut-runtime = { path = "../../../crates/vut-runtime" }
+vut-types = { path = "../../../crates/vut-types" }

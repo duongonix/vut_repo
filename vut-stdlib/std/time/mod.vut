@@ -1,0 +1,72 @@
+# Wall-clock and monotonic time.
+#
+# `Timestamp` is an absolute point on the system clock; `Instant` is a
+# monotonic reading suitable only for measuring elapsed time; `Duration` is a
+# signed span in nanoseconds.
+#
+# Native scalars cross the ABI as `usize`/`isize` because the FFI boundary
+# only accepts fixed-width numeric types, not the language's `int`.
+@link_name("vut_rt_time_now_nanos_v1")
+extern "C" fn _native_now_nanos() -> usize
+
+@link_name("vut_rt_time_instant_nanos_v1")
+extern "C" fn _native_instant_nanos() -> usize
+
+@link_name("vut_rt_time_sleep_nanos_v1")
+extern "C" fn _native_sleep_nanos(nanos: usize)
+
+fn _now_nanos() -> usize:
+  unsafe:
+    _native_now_nanos()
+
+fn _instant_nanos() -> usize:
+  unsafe:
+    _native_instant_nanos()
+
+fn _sleep_nanos(nanos: usize):
+  unsafe:
+    _native_sleep_nanos(nanos)
+
+data Timestamp:
+  nanos: usize
+
+data Instant:
+  nanos: usize
+
+data Duration:
+  nanos: usize
+
+# Current wall-clock time.
+fn now() -> Timestamp:
+  Timestamp(nanos = _now_nanos())
+
+# A monotonic reading for measuring elapsed time.
+fn instant() -> Instant:
+  Instant(nanos = _instant_nanos())
+
+fn nanoseconds(count: usize) -> Duration:
+  Duration(nanos = count)
+
+fn milliseconds(count: usize) -> Duration:
+  Duration(nanos = count * 1000000)
+
+fn seconds(count: usize) -> Duration:
+  Duration(nanos = count * 1000000000)
+
+fn sleep(duration: Duration):
+  _sleep_nanos(duration.nanos)
+
+fn elapsed(start: Instant, finish: Instant) -> Duration:
+  Duration(nanos = finish.nanos - start.nanos)
+
+fn Timestamp.seconds() -> usize:
+  self.nanos / 1000000000
+
+fn Timestamp.milliseconds() -> usize:
+  self.nanos / 1000000
+
+fn Duration.milliseconds() -> usize:
+  self.nanos / 1000000
+
+fn Duration.seconds() -> usize:
+  self.nanos / 1000000000

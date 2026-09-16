@@ -1,0 +1,4 @@
+allowBuilds:
+  sharp: set this to true or false
+minimumReleaseAgeExclude:
+  - '@types/node@22.20.3'

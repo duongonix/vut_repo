@@ -1,0 +1,379 @@
+# Filesystem operations.
+#
+# Native primitives return the shared result envelope; this module maps status
+# codes into a typed `FsError`. `read_dir` yields entry names (relative to the
+# directory) sorted lexicographically.
+import _internal.abi
+
+@link_name("vut_rt_fs_exists_v1")
+extern "C" fn _native_exists(path: str) -> usize
+
+@link_name("vut_rt_fs_is_file_v1")
+extern "C" fn _native_is_file(path: str) -> usize
+
+@link_name("vut_rt_fs_is_dir_v1")
+extern "C" fn _native_is_dir(path: str) -> usize
+
+@link_name("vut_rt_fs_read_v1")
+extern "C" fn _native_read(path: str) -> bytes
+
+@link_name("vut_rt_fs_read_str_v1")
+extern "C" fn _native_read_str(path: str) -> bytes
+
+@link_name("vut_rt_fs_write_v1")
+extern "C" fn _native_write(path: str, blob: bytes) -> bytes
+
+@link_name("vut_rt_fs_write_str_v1")
+extern "C" fn _native_write_str(path: str, blob: str) -> bytes
+
+@link_name("vut_rt_fs_append_v1")
+extern "C" fn _native_append(path: str, blob: bytes) -> bytes
+
+@link_name("vut_rt_fs_append_str_v1")
+extern "C" fn _native_append_str(path: str, blob: str) -> bytes
+
+@link_name("vut_rt_fs_create_dir_v1")
+extern "C" fn _native_create_dir(path: str) -> bytes
+
+@link_name("vut_rt_fs_create_dir_all_v1")
+extern "C" fn _native_create_dir_all(path: str) -> bytes
+
+@link_name("vut_rt_fs_remove_dir_v1")
+extern "C" fn _native_remove_dir(path: str) -> bytes
+
+@link_name("vut_rt_fs_remove_dir_all_v1")
+extern "C" fn _native_remove_dir_all(path: str) -> bytes
+
+@link_name("vut_rt_fs_remove_file_v1")
+extern "C" fn _native_remove_file(path: str) -> bytes
+
+@link_name("vut_rt_fs_copy_v1")
+extern "C" fn _native_copy(from: str, to: str) -> bytes
+
+@link_name("vut_rt_fs_rename_v1")
+extern "C" fn _native_rename(from: str, to: str) -> bytes
+
+@link_name("vut_rt_fs_read_dir_v1")
+extern "C" fn _native_read_dir(path: str) -> bytes
+
+@link_name("vut_rt_fs_metadata_len_v1")
+extern "C" fn _native_metadata_len(path: str) -> i64
+
+@link_name("vut_rt_fs_metadata_is_file_v1")
+extern "C" fn _native_metadata_is_file(path: str) -> usize
+
+@link_name("vut_rt_fs_metadata_is_dir_v1")
+extern "C" fn _native_metadata_is_dir(path: str) -> usize
+
+@link_name("vut_rt_fs_metadata_readonly_v1")
+extern "C" fn _native_metadata_readonly(path: str) -> usize
+
+@link_name("vut_rt_fs_metadata_modified_v1")
+extern "C" fn _native_metadata_modified(path: str) -> i64
+
+@link_name("vut_rt_fs_metadata_created_v1")
+extern "C" fn _native_metadata_created(path: str) -> i64
+
+@link_name("vut_rt_fs_metadata_accessed_v1")
+extern "C" fn _native_metadata_accessed(path: str) -> i64
+
+@link_name("vut_rt_fs_set_readonly_v1")
+extern "C" fn _native_set_readonly(path: str, readonly: usize) -> bytes
+
+fn _exists(path: str) -> usize:
+  unsafe:
+    _native_exists(path)
+
+fn _is_file(path: str) -> usize:
+  unsafe:
+    _native_is_file(path)
+
+fn _is_dir(path: str) -> usize:
+  unsafe:
+    _native_is_dir(path)
+
+fn _read(path: str) -> bytes:
+  unsafe:
+    _native_read(path)
+
+fn _read_str(path: str) -> bytes:
+  unsafe:
+    _native_read_str(path)
+
+fn _write(path: str, blob: bytes) -> bytes:
+  unsafe:
+    _native_write(path, blob)
+
+fn _write_str(path: str, blob: str) -> bytes:
+  unsafe:
+    _native_write_str(path, blob)
+
+fn _append(path: str, blob: bytes) -> bytes:
+  unsafe:
+    _native_append(path, blob)
+
+fn _append_str(path: str, blob: str) -> bytes:
+  unsafe:
+    _native_append_str(path, blob)
+
+fn _create_dir(path: str) -> bytes:
+  unsafe:
+    _native_create_dir(path)
+
+fn _create_dir_all(path: str) -> bytes:
+  unsafe:
+    _native_create_dir_all(path)
+
+fn _remove_dir(path: str) -> bytes:
+  unsafe:
+    _native_remove_dir(path)
+
+fn _remove_dir_all(path: str) -> bytes:
+  unsafe:
+    _native_remove_dir_all(path)
+
+fn _remove_file(path: str) -> bytes:
+  unsafe:
+    _native_remove_file(path)
+
+fn _copy(from: str, to: str) -> bytes:
+  unsafe:
+    _native_copy(from, to)
+
+fn _rename(from: str, to: str) -> bytes:
+  unsafe:
+    _native_rename(from, to)
+
+fn _read_dir(path: str) -> bytes:
+  unsafe:
+    _native_read_dir(path)
+
+fn _metadata_len(path: str) -> i64:
+  unsafe:
+    _native_metadata_len(path)
+
+fn _metadata_is_file(path: str) -> usize:
+  unsafe:
+    _native_metadata_is_file(path)
+
+fn _metadata_is_dir(path: str) -> usize:
+  unsafe:
+    _native_metadata_is_dir(path)
+
+fn _metadata_readonly(path: str) -> usize:
+  unsafe:
+    _native_metadata_readonly(path)
+
+fn _metadata_modified(path: str) -> i64:
+  unsafe:
+    _native_metadata_modified(path)
+
+fn _metadata_created(path: str) -> i64:
+  unsafe:
+    _native_metadata_created(path)
+
+fn _metadata_accessed(path: str) -> i64:
+  unsafe:
+    _native_metadata_accessed(path)
+
+fn _set_readonly(path: str, readonly: usize) -> bytes:
+  unsafe:
+    _native_set_readonly(path, readonly)
+
+enum FsErrorKind:
+  not_found
+  permission_denied
+  already_exists
+  invalid_input
+  not_a_directory
+  is_a_directory
+  directory_not_empty
+  unsupported
+  invalid_data
+  other
+
+data FsError:
+  kind: FsErrorKind
+  message: str
+
+data Metadata:
+  size: i64
+  is_file: bool
+  is_dir: bool
+  readonly: bool
+  modified: i64
+  created: i64
+  accessed: i64
+
+fn _kind(code: int) -> FsErrorKind:
+  kind: FsErrorKind = if code == 1:
+    FsErrorKind.not_found
+  elif code == 2:
+    FsErrorKind.permission_denied
+  elif code == 3:
+    FsErrorKind.already_exists
+  elif code == 4:
+    FsErrorKind.invalid_input
+  elif code == 5:
+    FsErrorKind.not_a_directory
+  elif code == 6:
+    FsErrorKind.is_a_directory
+  elif code == 7:
+    FsErrorKind.directory_not_empty
+  elif code == 8:
+    FsErrorKind.unsupported
+  elif code == 11:
+    FsErrorKind.invalid_data
+  else:
+    FsErrorKind.other
+  kind
+
+fn _error(code: int, raw: bytes) -> FsError:
+  FsError(kind = _kind(code), message = abi.message(raw))
+
+fn _ok_bytes(value: bytes) -> result(bytes, FsError):
+  ok(value)
+
+fn _err_bytes(code: int, raw: bytes) -> result(bytes, FsError):
+  err(_error(code, raw))
+
+fn _ok_text(value: str) -> result(str, FsError):
+  ok(value)
+
+fn _err_text(code: int, raw: bytes) -> result(str, FsError):
+  err(_error(code, raw))
+
+fn _ok_flag() -> result(bool, FsError):
+  ok(true)
+
+fn _err_flag(code: int, raw: bytes) -> result(bool, FsError):
+  err(_error(code, raw))
+
+fn _ok_size(value: int) -> result(int, FsError):
+  ok(value)
+
+fn _err_size(code: int, raw: bytes) -> result(int, FsError):
+  err(_error(code, raw))
+
+fn _ok_list(values: list(str)) -> result(list(str), FsError):
+  ok(values)
+
+fn _err_list(code: int, raw: bytes) -> result(list(str), FsError):
+  err(_error(code, raw))
+
+fn _flag_result(raw: bytes) -> result(bool, FsError):
+  value: result(bool, FsError) = if abi.is_ok(raw):
+    _ok_flag()
+  else:
+    _err_flag(abi.status(raw), raw)
+  value
+
+fn exists(path: str) -> bool:
+  _exists(path) != 0
+
+fn is_file(path: str) -> bool:
+  _is_file(path) != 0
+
+fn is_dir(path: str) -> bool:
+  _is_dir(path) != 0
+
+fn read(path: str) -> result(bytes, FsError):
+  raw = _read(path)
+  value: result(bytes, FsError) = if abi.is_ok(raw):
+    _ok_bytes(abi.payload(raw))
+  else:
+    _err_bytes(abi.status(raw), raw)
+  value
+
+fn read_str(path: str) -> result(str, FsError):
+  raw = _read_str(path)
+  value: result(str, FsError) = if abi.is_ok(raw):
+    _ok_text(abi.raw_text(raw))
+  else:
+    _err_text(abi.status(raw), raw)
+  value
+
+fn write(path: str, blob: bytes) -> result(bool, FsError):
+  _flag_result(_write(path, blob))
+
+fn write_str(path: str, blob: str) -> result(bool, FsError):
+  _flag_result(_write_str(path, blob))
+
+fn append(path: str, blob: bytes) -> result(bool, FsError):
+  _flag_result(_append(path, blob))
+
+fn append_str(path: str, blob: str) -> result(bool, FsError):
+  _flag_result(_append_str(path, blob))
+
+fn create_dir(path: str) -> result(bool, FsError):
+  _flag_result(_create_dir(path))
+
+fn create_dir_all(path: str) -> result(bool, FsError):
+  _flag_result(_create_dir_all(path))
+
+fn remove_dir(path: str) -> result(bool, FsError):
+  _flag_result(_remove_dir(path))
+
+fn remove_dir_all(path: str) -> result(bool, FsError):
+  _flag_result(_remove_dir_all(path))
+
+fn remove_file(path: str) -> result(bool, FsError):
+  _flag_result(_remove_file(path))
+
+fn copy(from: str, to: str) -> result(int, FsError):
+  raw = _copy(from, to)
+  value: result(int, FsError) = if abi.is_ok(raw):
+    _ok_size(abi.payload(raw).read_i64(0))
+  else:
+    _err_size(abi.status(raw), raw)
+  value
+
+fn rename(from: str, to: str) -> result(bool, FsError):
+  _flag_result(_rename(from, to))
+
+# Entry names inside `path`, sorted lexicographically.
+fn read_dir(path: str) -> result(list(str), FsError):
+  raw = _read_dir(path)
+  result: result(list(str), FsError) = if abi.is_ok(raw):
+    _ok_list(abi.fields(raw))
+  else:
+    _err_list(abi.status(raw), raw)
+  result
+
+fn _set_readonly_one(path: str) -> bytes:
+  unsafe:
+    _native_set_readonly(path, 1)
+
+fn _set_readonly_zero(path: str) -> bytes:
+  unsafe:
+    _native_set_readonly(path, 0)
+
+fn set_readonly(path: str, readonly: bool) -> result(bool, FsError):
+  raw: bytes = _set_readonly_zero(path)
+  if readonly:
+    raw = _set_readonly_one(path)
+  _flag_result(raw)
+
+fn _ok_metadata(value: Metadata) -> result(Metadata, FsError):
+  ok(value)
+
+fn _err_metadata(code: int) -> result(Metadata, FsError):
+  err(FsError(kind = _kind(code), message = "path metadata is unavailable"))
+
+# Metadata for `path`, or `not_found` when it does not exist.
+fn metadata(path: str) -> result(Metadata, FsError):
+  value: result(Metadata, FsError) = if exists(path):
+    _ok_metadata(Metadata(
+      size = _metadata_len(path),
+      is_file = _metadata_is_file(path) != 0,
+      is_dir = _metadata_is_dir(path) != 0,
+      readonly = _metadata_readonly(path) != 0,
+      modified = _metadata_modified(path),
+      created = _metadata_created(path),
+      accessed = _metadata_accessed(path)
+    ))
+  else:
+    _err_metadata(1)
+  value
+
+

@@ -1,0 +1,9 @@
+[package]
+name = "vut-diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+vut-source = { path = "../vut-source" }
+[lints]
+workspace = true

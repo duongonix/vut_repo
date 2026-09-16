@@ -1,0 +1,58 @@
+data Packet:
+  label: str
+  payload: bytes
+
+fn text_or_error(blob: bytes) -> str:
+  match blob.to_str():
+    ok(value): value
+    err(error): "invalid utf-8 at $(error.valid_up_to) len $(error.error_len)"
+
+fn read_text(blob: bytes) -> result(str, Utf8Error):
+  value = blob.to_str()?
+  ok(value)
+
+fn main():
+  greeting = "Xin chào Vút"
+  blob = greeting.to_bytes()
+  out("bytes: $(blob.len())")
+  out("first: $(blob.first()) last: $(blob.last())")
+
+  copied = blob
+  copied.set(0, 86)
+  out(text_or_error(blob))
+  out(text_or_error(copied))
+
+  part = blob.slice(0, 3)
+  out("slice: $(part.len()) $(text_or_error(part))")
+
+  empty = bytes()
+  out("empty: $(empty.is_empty())")
+  empty.reserve(64)
+  out("capacity ok: $(empty.capacity() >= 64)")
+
+  values: list(u8) = blob.to_list()
+  rebuilt = bytes.from_list(values)
+  out("roundtrip: $(text_or_error(rebuilt))")
+
+  packet = Packet(label = "packet", payload = blob)
+  out("packet: $(packet.payload.len())")
+
+  many: list(bytes) = @(blob, copied)
+  out("many: $(many.at(0).at(0)) $(many.at(1).at(0))")
+
+  table: map(str, bytes) = map(("greeting", blob))
+  entry = table.get("greeting")
+  out("map: $(entry.len())")
+
+  fixed: array(bytes, 2) = array(blob, copied)
+  out("array: $(fixed.at(0).at(0)) $(fixed.at(1).at(0))")
+
+  binary: list(u8) = @(255, 254)
+  raw = bytes.from_list(binary)
+  out("raw: $(text_or_error(raw))")
+
+  match read_text(blob):
+    ok(text): out("ok: $text")
+    err(error): out("err: $(error.valid_up_to)")
+
+  out("bounds: $(blob.at(999))")
