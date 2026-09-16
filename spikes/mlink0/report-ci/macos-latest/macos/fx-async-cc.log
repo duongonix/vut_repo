@@ -1,0 +1,38 @@
+ld: warning: ignoring duplicate libraries: '-lSystem'
+ld: warning: alignment (4) of atom '_vut_fn_2' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) is too small and may result in unaligned pointers 
+ld: warning: alignment (4) of atom '_vut_future_drop_0' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) is too small and may result in unaligned pointers 
+ld: warning: alignment (4) of atom '_vut_future_drop_2' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) is too small and may result in unaligned pointers 
+ld: warning: alignment (4) of atom '_vut_entry' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) is too small and may result in unaligned pointers 
+Illegal text-relocations:
+  text-relocation in '_vut_fn_2'+0x2D4 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x2BC (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_out_v1'
+  text-relocation in '_vut_fn_2'+0x2A4 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x28C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x26C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_concat_v1'
+  text-relocation in '_vut_fn_2'+0x254 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_format_i64_v1'
+  text-relocation in '_vut_fn_2'+0x234 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x21C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x1FC (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_concat_v1'
+  text-relocation in '_vut_fn_2'+0x1E4 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_string_from_utf8_v1'
+  text-relocation in '_vut_fn_2'+0x1C0 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x1A8 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_release_string_v1'
+  text-relocation in '_vut_fn_2'+0x188 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_concat_v1'
+  text-relocation in '_vut_fn_2'+0x170 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_format_i64_v1'
+  text-relocation in '_vut_fn_2'+0x154 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_string_from_utf8_v1'
+  text-relocation in '_vut_fn_2'+0x10C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_async_await_child_v1'
+  text-relocation in '_vut_fn_2'+0xE8 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_vutcon_spawn_v1'
+  text-relocation in '_vut_fn_2'+0x8C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_async_await_child_v1'
+  text-relocation in '_vut_fn_2'+0x58 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_async_new_v1'
+  text-relocation in '_vut_fn_2'+0x34 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_frame_alloc_v1'
+  text-relocation in '_vut_future_drop_0'+0x18 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_frame_free_v1'
+  text-relocation in '_vut_future_drop_2'+0x40 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_frame_free_v1'
+  text-relocation in '_vut_future_drop_2'+0x24 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_async_drop_v1'
+  text-relocation in '_vut_entry'+0xD0 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_live_allocation_count_v1'
+  text-relocation in '_vut_entry'+0xB8 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_executor_drain_v1'
+  text-relocation in '_vut_entry'+0xA0 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_async_drop_v1'
+  text-relocation in '_vut_entry'+0x84 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_task_result_v1'
+  text-relocation in '_vut_entry'+0x70 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_executor_run_v1'
+  text-relocation in '_vut_entry'+0x58 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_vutcon_spawn_v1'
+  text-relocation in '_vut_entry'+0x20 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-async.o) to '_vut_rt_frame_alloc_v1'
+ld: Found illegal text-relocations
+clang: error: linker command failed with exit code 1 (use -v to see invocation)

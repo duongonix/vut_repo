@@ -1,0 +1,38 @@
+vcvars: C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+rust-lld (as lld-link): C:\Users\runneradmin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe
+building reference staticlibs (cargo)...
+=== fx-core-only ===
+  run  exit=46 stdout=''
+  link exit=0 errors=0 run=46
+  run  exit=46 stdout=''
+  lld exit=0 errors=0 run=46
+  run  exit=46 stdout=''
+  cl exit=0 errors=0 run=46
+=== fx-async ===
+  run  exit=0 stdout='async=42 vutcon=42'
+  link exit=0 errors=0 run=0
+  run  exit=0 stdout='async=42 vutcon=42'
+  lld exit=0 errors=0 run=0
+  run  exit=0 stdout='async=42 vutcon=42'
+  cl exit=0 errors=0 run=0
+=== fx-stdlib ===
+  run  exit=0 stdout='os=windows
+fs=1
+has_path=1'
+  link exit=0 errors=0 run=0
+  run  exit=0 stdout='os=windows
+fs=1
+has_path=1'
+  lld exit=0 errors=0 run=0
+  run  exit=0 stdout='os=windows
+fs=1
+has_path=1'
+  cl exit=0 errors=0 run=0
+=== fx-http ===
+  run  exit=0 stdout='status=200'
+  link exit=0 errors=0 run=0
+  run  exit=0 stdout='status=200'
+  lld exit=0 errors=0 run=0
+  run  exit=0 stdout='status=200'
+  cl exit=0 errors=0 run=0
+M-LINK.0 Windows spike complete.

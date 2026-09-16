@@ -1,0 +1,3 @@
+os=windows
+fs=1
+has_path=1

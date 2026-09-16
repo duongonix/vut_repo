@@ -9,7 +9,8 @@
 #
 # The system library list is derived from the arguments rustc itself passes to
 # the platform linker, so it reflects the toolchain's real requirements instead
-# of guesswork.
+# of guesswork. Rustc is used here only to discover dependencies; it is not part
+# of the final link.
 set -eu
 
 OS_NAME="${1:?usage: unix.sh <linux|macos>}"
@@ -21,6 +22,7 @@ REPORT="$ROOT/report/$OS_NAME"
 mkdir -p "$OUT" "$REPORT"
 
 CC="${CC:-cc}"
+ARCH="$(uname -m)"
 LOG="$REPORT/spike.log"
 : > "$LOG"
 log() { echo "$*" | tee -a "$LOG"; }
@@ -60,27 +62,38 @@ WRAP
   chmod +x "$OUT/linkwrap.sh"
   : > "$OUT/linkargs.txt"
   printf 'fn main() {}\n' > "$OUT/hello.rs"
-  VUT_LINKARG_LOG="$OUT/linkargs.txt" VUT_REAL_LINK="$CC" \
-    rustc --edition 2021 -C linker="$OUT/linkwrap.sh" -o "$OUT/hello-rust" "$OUT/hello.rs" \
-    > "$REPORT/capture.log" 2>&1 || {
-      log "warning: rustc link-arg capture failed; falling back to a baseline list"
-      echo "-lpthread -ldl -lm -lrt -lutil -lgcc_s"
-      return 0
+  if ! VUT_LINKARG_LOG="$OUT/linkargs.txt" VUT_REAL_LINK="$CC" \
+      rustc --edition 2021 -C linker="$OUT/linkwrap.sh" -o "$OUT/hello-rust" "$OUT/hello.rs" \
+      > "$REPORT/capture.log" 2>&1; then
+    log "warning: rustc link-arg capture failed; falling back to a baseline list"
+    echo "-lpthread -ldl -lm -lrt -lutil -lgcc_s"
+    return 0
+  fi
+  # Only whole tokens that begin with -l (and -framework <name> pairs) count;
+  # substring matches inside paths like .../x86_64-unknown-linux-gnu/lib/... must
+  # be ignored.
+  awk '{
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^-l./) { print $i }
+      else if ($i == "-framework") { print "-framework " $(i + 1) }
     }
-  {
-    grep -oE -- '-framework [A-Za-z0-9_]+' "$OUT/linkargs.txt" 2>/dev/null || true
-    grep -oE -- '-l[A-Za-z0-9_+.-]+' "$OUT/linkargs.txt" 2>/dev/null || true
-  } | awk '!seen[$0]++' | tr '\n' ' '
+  }' "$OUT/linkargs.txt" | awk '!seen[$0]++' | tr '\n' ' '
 }
 
 SYSTEM_LIBS="$(capture_system_libs)"
+log "arch: $ARCH"
 log "system libs (from rustc): $SYSTEM_LIBS"
 
-# Linux glibc: keep CRT/non-PIE behaviour explicit for the raw link.
-EXTRA=""
-if [ "$OS_NAME" = "linux" ]; then
-  EXTRA="-no-pie"
-fi
+# Link-flag variants to try, most likely first. Cranelift currently emits
+# non-position-independent objects, which glibc accepts with -no-pie and macOS
+# x86_64 accepts with -Wl,-no_pie but macOS arm64 rejects (no_pie unsupported).
+link_variants() {
+  case "$OS_NAME" in
+    linux) printf '%s\n' "-no-pie" "" ;;
+    macos) printf '%s\n' "-Wl,-no_pie" "" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
 
 # The system-library capture uses a dependency-free hello world, so framework
 # requirements that only the stdlib/HTTP stack pulls in (getrandom's Security
@@ -91,7 +104,7 @@ if [ "$OS_NAME" = "macos" ]; then
 fi
 
 run_fixture() {
-  fx="$1"; exe="$2"; tag="$3"
+  exe="$1"; tag="$2"
   set +e
   "$exe" > "$REPORT/$tag.stdout.txt" 2> "$REPORT/$tag.stderr.txt"
   code=$?
@@ -101,28 +114,31 @@ run_fixture() {
 }
 
 link_with() {
-  fx="$1"; backend="$2"; driver="$3"
+  fx="$1"
   obj="$OUT/$fx.o"
   if need_stdlib "$fx"; then libs="$CORE $STDLIB"; fw="$MAC_STDLIB_FRAMEWORKS"; else libs="$CORE"; fw=""; fi
-  exe="$OUT/$fx-$backend"
-  logfile="$REPORT/$fx-$backend.log"
-  # shellcheck disable=SC2086
-  if $driver $EXTRA -o "$exe" "$OUT/vut-startup.o" "$obj" $libs $SYSTEM_LIBS $fw \
-      > "$logfile" 2>&1; then
-    log "  $backend link=ok"
-    run_fixture "$fx" "$exe" "$fx-$backend"
-  else
-    errs="$(grep -cE 'undefined reference|error|not found' "$logfile" || true)"
-    log "  $backend link=FAIL errors=$errs"
-    grep -E 'undefined reference|error|not found' "$logfile" | head -n 10 | tee -a "$LOG"
-  fi
+  for variant in $(link_variants); do
+    label="$(echo "$variant" | tr -d ' ' | sed 's/^$/default/')"
+    exe="$OUT/$fx-cc-$label"
+    logfile="$REPORT/$fx-cc-$label.log"
+    # shellcheck disable=SC2086
+    if $CC $variant -o "$exe" "$OUT/vut-startup.o" "$obj" $libs $SYSTEM_LIBS $fw \
+        > "$logfile" 2>&1; then
+      log "  cc[$variant] link=ok -> $(basename "$exe")"
+      run_fixture "$exe" "$fx-cc-$label"
+      return 0
+    fi
+    errs="$(grep -cE 'undefined reference|text-relocation|error|not found|no_pie' "$logfile" || true)"
+    log "  cc[$variant] link=FAIL errors=$errs"
+    grep -E 'undefined reference|text-relocation|error|not found|no_pie' "$logfile" | head -n 6 | tee -a "$LOG"
+  done
 }
 
-log "=== unix spike on $OS_NAME (cc=$CC) ==="
+log "=== unix spike on $OS_NAME ($ARCH, cc=$CC) ==="
 for fx in $fixtures; do
   log "=== $fx ==="
   "$OBJGEN" "$ROOT/fixtures/$fx" "$OUT/$fx.o" > /dev/null
-  link_with "$fx" cc "$CC"
+  link_with "$fx"
 done
 
 log "M-LINK.0 $OS_NAME spike complete."

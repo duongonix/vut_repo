@@ -1,0 +1,13 @@
+ld: warning: ignoring duplicate libraries: '-lSystem'
+ld: warning: alignment (4) of atom '_vut_fn_1' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) is too small and may result in unaligned pointers 
+ld: warning: alignment (4) of atom '_vut_entry' (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) is too small and may result in unaligned pointers 
+Illegal text-relocations:
+  text-relocation in '_vut_fn_1'+0x160 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_release_v1'
+  text-relocation in '_vut_fn_1'+0xC8 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_len_v1'
+  text-relocation in '_vut_fn_1'+0xA4 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_data_v1'
+  text-relocation in '_vut_fn_1'+0x84 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_push_v1'
+  text-relocation in '_vut_fn_1'+0x58 (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_push_v1'
+  text-relocation in '_vut_fn_1'+0x2C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_list_new_v1'
+  text-relocation in '_vut_entry'+0x1C (/Users/runner/work/vut_repo/vut_repo/spikes/mlink0/out/fx-core-only.o) to '_vut_rt_live_allocation_count_v1'
+ld: Found illegal text-relocations
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
