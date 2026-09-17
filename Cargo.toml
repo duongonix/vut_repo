@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/vut-source",
+  "crates/vut-paths",
   "crates/vut-diagnostics",
   "crates/vut-ast",
   "crates/vut-lexer",
@@ -19,6 +20,7 @@ members = [
   "crates/vut-runtime",
   "crates/vut-cli",
   "crates/vpm",
+  "crates/vut-dist",
   "crates/vut-fuzz",
   "crates/vut-lsp",
   "vut-stdlib/native/vut-runtime",

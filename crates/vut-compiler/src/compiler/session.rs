@@ -14,26 +14,10 @@ use super::{BuildMode, CheckedProgram, CompileError, CompilerSession};
 
 /// Locates the official Vut standard library source root.
 ///
-/// Resolution order:
-/// 1. `VUT_STDLIB_PATH` (development override)
-/// 2. `~/.vut/std` (installed distribution)
-/// 3. the bundled `vut-stdlib/std` tree (repository/CI builds)
+/// Resolution is centralized in `vut-paths`: `VUT_STDLIB_PATH`, then
+/// `$VUT_HOME/std`, then the bundled development tree.
 fn stdlib_root() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("VUT_STDLIB_PATH") {
-        let path = PathBuf::from(path);
-        if path.is_dir() {
-            return Some(path);
-        }
-    }
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
-    if let Some(home) = home {
-        let path = PathBuf::from(home).join(".vut").join("std");
-        if path.is_dir() {
-            return Some(path);
-        }
-    }
-    let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vut-stdlib/std");
-    bundled.is_dir().then_some(bundled)
+    vut_paths::stdlib_root()
 }
 
 /// Locates the native stdlib runtime archive built from
@@ -42,24 +26,7 @@ fn stdlib_root() -> Option<PathBuf> {
 /// A bundled static library is preferred so that the HTTP/TLS dependencies are
 /// linked transitively without the compiler knowing anything about them.
 fn stdlib_runtime_library(config: &super::CompilerConfig) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("VUT_STDLIB_RUNTIME") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let directory = config.runtime_library.as_ref()?.parent()?;
-    for name in [
-        "vut_stdlib_native.lib",
-        "libvut_stdlib_native.a",
-        "libvut_stdlib_native.rlib",
-    ] {
-        let candidate = directory.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    vut_paths::stdlib_runtime_library(config.runtime_library.as_deref(), &config.target)
 }
 
 /// Returns true when any module imports a top-level standard-library module.

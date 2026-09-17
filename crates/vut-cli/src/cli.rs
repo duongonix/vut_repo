@@ -107,10 +107,8 @@ fn build(
             .unwrap_or_else(|| CompilerConfig::default().target),
         mode,
     );
-    config.runtime_library = crate::discovery::locate_runtime();
-    if let Some(runtime) = &config.runtime_library {
-        config.startup_object = crate::discovery::locate_startup(runtime, &config.target);
-    }
+    config.runtime_library = vut_paths::runtime_library(&config.target);
+    config.startup_object = vut_paths::startup_object(&config.target);
     config.native_libraries.clone_from(&options.native_lib);
     config.system_libraries.clone_from(&options.system_lib);
     let output = options

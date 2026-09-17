@@ -15,15 +15,18 @@ impl Store {
         Self { root }
     }
     pub fn global() -> Result<Self, io::Error> {
-        let root = std::env::var_os("VPM_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("USERPROFILE").map(|path| PathBuf::from(path).join(".vpm"))
-            })
-            .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".vpm")))
-            .or_else(|| dirs::home_dir().map(|p| p.join(".vpm")))
-            .ok_or_else(|| io::Error::other("cannot determine VPM home"))?;
-        Ok(Self { root })
+        // `VPM_HOME` remains an explicit override; by default the store lives
+        // in the canonical Vut home so packages/cache share one root.
+        if let Some(path) = std::env::var_os("VPM_HOME") {
+            return Ok(Self {
+                root: PathBuf::from(path),
+            });
+        }
+        let home = vut_paths::Home::resolve()
+            .ok_or_else(|| io::Error::other("cannot determine VUT home"))?;
+        Ok(Self {
+            root: home.root().to_path_buf(),
+        })
     }
     /// Installs every not-yet-present package and returns how many packages
     /// were newly written to the store.

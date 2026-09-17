@@ -2,13 +2,18 @@
 
 Deployment and toolchain-distribution specifications for Vut.
 
-These documents define how a Vut installation is assembled, linked, and
-distributed. They are subordinate to the language and compiler specifications
-in `specs/` but are the source of truth for release/distribution behavior.
+These documents define how a Vut installation is assembled, linked, packaged,
+and distributed. They are subordinate to the language and compiler
+specifications in `specs/` but are the source of truth for release/distribution
+behavior.
 
 | Document | Scope | Status |
 | --- | --- | --- |
-| [native-linking.md](native-linking.md) | Standalone native linking model, distribution runtime layout, per-OS linkers and system libraries | M-LINK.0–6 complete: release builds link with the platform toolchain (no rustc/cargo), verified on Windows, Linux, macOS arm64 + x86_64; `rustc` remains a dev-only fallback |
+| [native-linking.md](native-linking.md) | Standalone native linking model, per-OS linkers and system libraries | M-LINK.0–6 complete; release links with the platform toolchain (no rustc/cargo) |
+| [versioning.md](versioning.md) | Distribution/vpm/runtime-ABI version domains, tags | M2 complete |
+| [distribution.md](distribution.md) | Artifact layout, manifest, naming, checksums, `vut-dist` | M4/M5/M15 complete |
+| [installer.md](installer.md) | `install.sh` / `install.ps1`, atomic update, PATH | M16–M19 complete |
+| [release.md](release.md) | GitHub Actions release pipeline, matrix, cross-repo publishing | M13/M14/M20 complete |
 
 ## Convention
 

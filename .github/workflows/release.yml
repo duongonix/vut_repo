@@ -1,0 +1,154 @@
+name: Release
+
+# Builds one distribution per Tier-1 target, then publishes a SINGLE release to
+# the public `duongonix/vut` repository. Publishing needs a token with
+# `contents: write` on that repository (secret `VUT_RELEASE_TOKEN`); the default
+# `GITHUB_TOKEN` cannot write to another repository.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.versions.outputs.version }}
+      vpm: ${{ steps.versions.outputs.vpm }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: versions
+        run: |
+          set -euo pipefail
+          version=$(awk '/^\[workspace.package\]/{f=1} f&&/^version/{gsub(/[^0-9.]/,"");print;exit}' Cargo.toml)
+          vpm=$(awk '/^\[package\]/{f=1} f&&/^version/{gsub(/[^0-9.]/,"");print;exit}' crates/vpm/Cargo.toml)
+          test -n "$version"
+          test -n "$vpm"
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if [ "v${version}" != "$tag" ]; then
+            echo "tag $tag does not match root Cargo.toml version v${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "vpm=${vpm}" >> "$GITHUB_OUTPUT"
+          echo "vut=${version} vpm=${vpm} tag=${tag}"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install NASM (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Install NASM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm || true
+
+      - name: Build release toolchain
+        run: cargo build --release -p vut-runtime -p vut-stdlib-native -p vut-cli -p vpm -p vut-lsp
+
+      - name: Prebuild startup object
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "Windows" ]; then name=vut-startup.obj; else name=vut-startup.o; fi
+          rustc --edition 2024 --crate-type=lib --emit=obj -C panic=abort -C opt-level=2 \
+            -o "target/release/${name}" crates/vut-linker/startup/vut-startup.rs
+
+      - name: Assemble distribution
+        shell: bash
+        run: |
+          cargo run --release -p vut-dist -- \
+            --target "${{ matrix.target }}" \
+            --out dist \
+            --bin-dir target/release \
+            --vpm-version "${{ needs.validate.outputs.vpm }}" \
+            --build-commit "${GITHUB_SHA}"
+
+      - name: Verify distribution layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="dist/vut-v${{ needs.validate.outputs.version }}-${{ matrix.target }}"
+          test -f "${dir}/manifest.json"
+          test -d "${dir}/bin"
+          test -d "${dir}/lib/runtime/${{ matrix.target }}"
+          test -d "${dir}/std"
+          grep -q "\"target\": \"${{ matrix.target }}\"" "${dir}/manifest.json"
+          grep -q "\"vpm\": \"${{ needs.validate.outputs.vpm }}\"" "${dir}/manifest.json"
+
+      - name: Upload distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute release checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -l
+          sha256sum *.zip *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish to duongonix/vut
+        env:
+          GH_TOKEN: ${{ secrets.VUT_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "VUT_RELEASE_TOKEN is not configured" >&2
+            exit 1
+          fi
+          gh release create "v${{ needs.validate.outputs.version }}" \
+            --repo duongonix/vut \
+            --title "Vut v${{ needs.validate.outputs.version }}" \
+            --notes "Vut v${{ needs.validate.outputs.version }} distributions for all supported targets." \
+            artifacts/*

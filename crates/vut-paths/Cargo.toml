@@ -1,0 +1,12 @@
+[package]
+name = "vut-paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical Vut installation layout and artifact discovery."
+
+[dependencies]
+dirs = "6"
+
+[lints]
+workspace = true

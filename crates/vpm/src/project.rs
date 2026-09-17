@@ -192,6 +192,7 @@ pub fn build(root: &Path, release: bool) -> Result<PathBuf, Box<dyn std::error::
     };
     let mut config = CompilerConfig::for_target(CompilerConfig::default().target, mode);
     config.runtime_library = runtime_library(root);
+    config.startup_object = vut_paths::startup_object(&config.target);
     config.output_dir = Some(store.build_cache(&config.target, release));
     let manifest = Manifest::read(root)?;
     config.native_libraries = manifest
@@ -286,32 +287,8 @@ fn ensure_layout(root: &Path) -> io::Result<()> {
     }
     Ok(())
 }
-pub(crate) fn runtime_library(root: &Path) -> Option<PathBuf> {
-    std::env::var_os("VUT_RUNTIME_LIBRARY")
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .or_else(|| {
-            let name = if cfg!(windows) {
-                "libvut_runtime.rlib"
-            } else {
-                "libvut_runtime.a"
-            };
-            std::env::current_exe().ok().and_then(|executable| {
-                let parent = executable.parent()?;
-                [
-                    parent.join(name),
-                    parent
-                        .parent()
-                        .map_or_else(PathBuf::new, |path| path.join(name)),
-                ]
-                .into_iter()
-                .find(|path| path.is_file())
-            })
-        })
-        .or_else(|| {
-            let p = root.join("target/debug/libvut_runtime.rlib");
-            p.is_file().then_some(p)
-        })
+pub(crate) fn runtime_library(_root: &Path) -> Option<PathBuf> {
+    vut_paths::runtime_library(&CompilerConfig::default().target)
 }
 pub(crate) fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     let temp = path.with_extension("tmp");

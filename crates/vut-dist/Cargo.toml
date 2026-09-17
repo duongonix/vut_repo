@@ -1,0 +1,25 @@
+[package]
+name = "vut-dist"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Assemble a Vut distribution artifact (manifest, runtime, stdlib, archive, checksum)."
+publish = false
+
+[[bin]]
+name = "vut-dist"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+vut-linker = { path = "../vut-linker" }
+vut-runtime = { path = "../vut-runtime" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

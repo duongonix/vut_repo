@@ -76,7 +76,7 @@ fn report_rustc() {
 }
 
 fn report_assets(target: &str, issues: &mut Vec<String>) {
-    let Some(runtime) = discovery::locate_runtime() else {
+    let Some(runtime) = vut_paths::runtime_library(target) else {
         println!("  core:    runtime archive NOT FOUND");
         issues.push(
             "Vut runtime archive not found; set VUT_RUNTIME_LIBRARY or build the runtime".into(),
@@ -95,14 +95,14 @@ fn report_assets(target: &str, issues: &mut Vec<String>) {
         }
     }
 
-    if let Some(stdlib) = discovery::locate_stdlib_runtime(&runtime) {
+    if let Some(stdlib) = vut_paths::stdlib_runtime_library(Some(&runtime), target) {
         println!("  stdlib:  {}", stdlib.display());
     } else {
         println!("  stdlib:  NOT FOUND");
         issues.push("native stdlib runtime archive not found".into());
     }
 
-    if let Some(startup) = discovery::locate_startup(&runtime, target) {
+    if let Some(startup) = vut_paths::startup_object(target) {
         println!("  startup: {}", startup.display());
     } else {
         println!(

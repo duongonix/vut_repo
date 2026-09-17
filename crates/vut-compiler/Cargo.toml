@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 [dependencies]
 vut-diagnostics = { path = "../vut-diagnostics" }
+vut-paths = { path = "../vut-paths" }
 vut-ast = { path = "../vut-ast" }
 vut-lexer = { path = "../vut-lexer" }
 vut-parser = { path = "../vut-parser" }
