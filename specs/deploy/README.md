@@ -8,7 +8,7 @@ in `specs/` but are the source of truth for release/distribution behavior.
 
 | Document | Scope | Status |
 | --- | --- | --- |
-| [native-linking.md](native-linking.md) | Standalone native linking model, distribution runtime layout, per-OS linkers and system libraries | M-LINK.0 complete; M-LINK.1–5 implemented (backend abstraction, `vut-startup`, per-OS system backend + `vut doctor`); M-LINK.6 pending |
+| [native-linking.md](native-linking.md) | Standalone native linking model, distribution runtime layout, per-OS linkers and system libraries | M-LINK.0 complete; M-LINK.1–5 implemented and E2E-verified on Windows, Linux, macOS arm64 + x86_64; M-LINK.6 (default flip / remove rustc) pending |
 
 ## Convention
 

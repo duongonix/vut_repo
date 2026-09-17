@@ -6,8 +6,8 @@ link and run on Windows (x86_64-pc-windows-msvc), Linux
 `rustc`/`cargo` in the link step** and without `-no-pie`/`-Wl,-no-pie`.
 M-LINK.1 adds the backend abstraction, target profiles and system-library
 knowledge; M-LINK.2 adds the `vut-startup` object; M-LINK.3–5 verify the
-standalone system backend per OS (Windows/Linux/macOS) end to end. The default
-backend is still `rustc` until M-LINK.6.
+standalone system backend end to end on Windows, Linux, macOS arm64 and macOS
+x86_64. The default backend is still `rustc` until M-LINK.6.
 
 This document is the source of truth for how a compiled Vut object is linked
 into a native executable without `rustc`/`cargo`, and how the static runtime is
@@ -230,10 +230,17 @@ actionable hint (`install Visual Studio Build Tools ... Windows SDK`,
 `vut doctor` reports the target, selected backend, linker and `rustc` presence,
 and the core/stdlib/startup assets, with `status: ok` or a list of issues.
 
-End-to-end evidence: `vut build` with `VUT_LINKER=system` produces a runnable
-executable for `fx-stdlib` on Windows, Linux, macOS arm64 and macOS x86_64 with
-**no `rustc`/`cargo` on `PATH`** and a prebuilt startup object (workflow
-`M-LINK.3-5 system backend E2E`).
+End-to-end evidence (workflow `M-LINK.3-5 system backend E2E`, run `35182893787`):
+`vut build` with `VUT_LINKER=system` produced a runnable `fx-stdlib` executable
+on every runner with **no `rustc`/`cargo` on `PATH`** and a prebuilt startup
+object.
+
+| Runner | Target | Driver | `vut build` result |
+| --- | --- | --- | --- |
+| windows-latest | x86_64-pc-windows-msvc | `link.exe` | `os=windows` |
+| ubuntu-latest | x86_64-unknown-linux-gnu | `cc` | `os=linux` |
+| macos-latest | aarch64-apple-darwin | `cc` | `os=macos` |
+| macos-15-intel | x86_64-apple-darwin | `cc` | `os=macos` |
 
 ---
 
@@ -471,5 +478,5 @@ macOS architectures. M-LINK.1 is the next milestone and must not rely on
 - [x] Toolchain diagnostics with actionable hints (Windows SDK / Xcode CLT / cc)
 - [x] `vut doctor` reports backend, tools and runtime assets
 - [x] Windows E2E: `vut build` + `VUT_LINKER=system` builds and runs `fx-stdlib`
-- [ ] Linux and macOS E2E (workflow `M-LINK.3-5 system backend E2E`)
+- [x] Linux and macOS E2E (workflow `M-LINK.3-5 system backend E2E`, run `35182893787`)
 - [ ] Production default flip and removal of rustc (M-LINK.6)
