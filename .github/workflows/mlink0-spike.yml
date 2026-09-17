@@ -39,6 +39,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install nasm || true
 
+      - name: PIC / compiler regression tests
+        run: cargo test -p vut-codegen -p vut-compiler
+
       - name: Linux spike
         if: runner.os == 'Linux'
         shell: bash
