@@ -37,6 +37,12 @@ pub(super) fn compile(
         .parse()
         .map_err(|error| CodegenError::InvalidTarget(format!("invalid target: {error}")))?;
     let mut flag_builder = settings::builder();
+    // Emit position-independent code. Required by platforms that forbid text
+    // relocations (macOS arm64) and harmless on Windows/Linux, where it keeps
+    // the object compatible with PIE-based linkers.
+    flag_builder
+        .set("is_pic", "true")
+        .map_err(|error| CodegenError::Backend(error.to_string()))?;
     if backend.optimize {
         flag_builder
             .set("opt_level", "speed")
