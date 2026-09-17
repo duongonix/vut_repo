@@ -42,8 +42,8 @@ jobs:
       - name: Build runtime artifacts
         run: cargo build -p vut-runtime -p vut-stdlib-native
 
-      - name: PIC regression tests (gate)
-        run: cargo test -p vut-codegen
+      - name: Linker / PIC regression tests (gate)
+        run: cargo test -p vut-linker -p vut-codegen
 
       # Informational: the compiler suite currently fails on Linux/macOS in
       # `payload_enum_program_compiles_and_executes` (pre-existing heap
