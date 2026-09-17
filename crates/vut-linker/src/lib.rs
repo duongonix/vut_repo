@@ -13,7 +13,9 @@ mod system_libs;
 mod target;
 
 pub use assets::resolve_static_archive;
-pub use backend::{BackendKind, LinkerBackend, driver_program, requested_kind, toolchain_hint};
+pub use backend::{
+    BackendKind, LinkerBackend, default_kind, driver_program, requested_kind, toolchain_hint,
+};
 pub use error::{LinkError, LinkFailure};
 pub use plan::LinkPlan;
 pub use startup::StartupObject;

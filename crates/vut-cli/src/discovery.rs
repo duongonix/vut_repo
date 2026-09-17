@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 
 /// Locates the core runtime archive used as a link input.
 ///
-/// Order: `VUT_RUNTIME_LIBRARY`, then `target/debug/<name>`, then the directory
-/// of the running `vut` executable.
+/// Order: `VUT_RUNTIME_LIBRARY`, then the directory of the running `vut`
+/// executable (works for both `target/debug` and `target/release`), then the
+/// development `target/debug` layout relative to the working directory.
 #[must_use]
 pub fn locate_runtime() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("VUT_RUNTIME_LIBRARY").map(PathBuf::from)
@@ -20,10 +21,14 @@ pub fn locate_runtime() -> Option<PathBuf> {
     } else {
         "libvut_runtime.a"
     };
-    let candidates = [
-        PathBuf::from("target/debug").join(name),
-        std::env::current_exe().ok()?.parent()?.join(name),
-    ];
+    let mut candidates = Vec::new();
+    if let Some(directory) = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+    {
+        candidates.push(directory.join(name));
+    }
+    candidates.push(PathBuf::from("target/debug").join(name));
     candidates.into_iter().find(|path| path.is_file())
 }
 

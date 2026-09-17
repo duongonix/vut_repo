@@ -24,19 +24,28 @@ Operating System
 
 ## 2. Runtime Library
 
-All official native stdlib support is compiled into one static library.
+All official native stdlib support is compiled into two static libraries plus a
+startup object.
 
 Windows:
 
 ```text
-vut-runtime.lib
+vut-core.lib
+vut-stdlib.lib
+vut-startup.obj
 ```
 
 Linux/macOS:
 
 ```text
-libvut-runtime.a
+libvut-core.a
+libvut-stdlib.a
+vut-startup.o
 ```
+
+`vut-core` provides the language/runtime primitives and the core ABI; `vut-stdlib`
+provides the native stdlib (fs/io/os/env/time/process/http/...). The startup
+object supplies the platform `main` that calls `vut_entry`.
 
 Do not create one native library per stdlib module.
 
@@ -293,19 +302,17 @@ Example:
 extern "C" fn _native_read(...)
 ```
 
-The compiler/build system automatically includes:
+The compiler/build system automatically includes, from
+`~/.vut/lib/runtime/<target>/`:
 
 ```text
-~/.vut/lib/runtime/<target>/vut-runtime.lib
+vut-startup.obj / vut-startup.o
+vut-core.lib    / libvut-core.a
+vut-stdlib.lib  / libvut-stdlib.a
 ```
 
-or:
-
-```text
-~/.vut/lib/runtime/<target>/libvut-runtime.a
-```
-
-in the native LinkPlan.
+plus the platform system libraries, in the native LinkPlan. The startup object
+is linked before the archives.
 
 ---
 
@@ -320,10 +327,13 @@ Canonical location:
 Example:
 
 ```text
-~/.vut/lib/runtime/x86_64-pc-windows-msvc/vut-runtime.lib
+~/.vut/lib/runtime/x86_64-pc-windows-msvc/
+├── vut-core.lib
+├── vut-stdlib.lib
+└── vut-startup.obj
 ```
 
-This library supports the official stdlib as a whole.
+These artifacts support the official stdlib as a whole.
 
 ---
 

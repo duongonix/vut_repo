@@ -1,9 +1,9 @@
-name: M-LINK.3-5 system backend E2E
+name: M-LINK.6 release-linker E2E
 
-# Per-OS end-to-end verification of the standalone system linker backend:
-# `vut build` must produce a runnable executable with no rustc/cargo on PATH.
-# The startup object is prebuilt (the rustc dev fallback is exercised elsewhere);
-# the final link uses link.exe / cc only.
+# Production default verification: the RELEASE `vut` links through the platform
+# toolchain (no `VUT_LINKER` override) and must build+run with no rustc/cargo on
+# PATH. The startup object is prebuilt, as an installed distribution would ship
+# it; the final link uses link.exe / cc only.
 
 on:
   workflow_dispatch:
@@ -35,44 +35,42 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install nasm || true
 
-      - name: Build runtime and CLI
-        run: cargo build -p vut-runtime -p vut-stdlib-native -p vut-cli
+      - name: Build release runtime and CLI
+        run: cargo build --release -p vut-runtime -p vut-stdlib-native -p vut-cli
 
       - name: Prebuild startup object
         shell: bash
         run: |
           if [ "${RUNNER_OS}" = "Windows" ]; then name=vut-startup.obj; else name=vut-startup.o; fi
           rustc --edition 2024 --crate-type=lib --emit=obj -C panic=abort -C opt-level=2 \
-            -o "target/debug/${name}" crates/vut-linker/startup/vut-startup.rs
-          ls -l "target/debug/${name}"
+            -o "target/release/${name}" crates/vut-linker/startup/vut-startup.rs
+          ls -l "target/release/${name}"
 
-      - name: System-backend E2E (Windows)
+      - name: Release default E2E (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VUT_LINKER: system
         run: |
-          # Drop rustup/cargo from PATH: the final link must not need a Rust
-          # toolchain, and the startup object is prebuilt.
+          # Drop rustup/cargo from PATH: the release linker must not need rustc.
           $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -notmatch 'cargo|rustup' }) -join ';'
           if (Get-Command rustc -ErrorAction SilentlyContinue) { throw 'rustc is still on PATH' }
-          .\target\debug\vut.exe doctor
-          .\target\debug\vut.exe build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e.exe
+          $doctor = .\target\release\vut.exe doctor
+          $doctor | Write-Output
+          if (-not ($doctor | Select-String -Pattern 'backend: system')) { throw 'release default is not the system backend' }
+          .\target\release\vut.exe build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e.exe
           .\system-e2e.exe | Tee-Object run.out
           if (-not (Select-String -Path run.out -Pattern 'os=' -Quiet)) { throw 'missing os= output' }
 
-      - name: System-backend E2E (Unix)
+      - name: Release default E2E (Unix)
         if: runner.os != 'Windows'
         shell: bash
-        env:
-          VUT_LINKER: system
         run: |
           set -euo pipefail
           export PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE 'cargo|rustup' | paste -sd: -)"
           if command -v rustc >/dev/null 2>&1; then
             echo "rustc is still on PATH; aborting"; exit 1
           fi
-          target/debug/vut doctor
-          target/debug/vut build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e
+          target/release/vut doctor | tee doctor.out
+          grep -q 'backend: system' doctor.out
+          target/release/vut build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e
           ./system-e2e | tee run.out
           grep -q 'os=' run.out

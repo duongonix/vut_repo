@@ -178,27 +178,44 @@ Do not move ordinary high-level stdlib logic into Rust merely because Rust imple
 
 ## 5. Native Runtime
 
-All official native stdlib support is compiled into one runtime library.
+All official native stdlib support is compiled into two static libraries plus a
+small startup object:
+
+```text
+vut-core      language/runtime primitives (memory/ownership, str/bytes/list/map,
+              dyn/interface, panic, bounds, async/Vutcon, core ABI)
+vut-stdlib    native implementation of the official stdlib
+              (fs/io/os/env/time/process/http/...)
+vut-startup   platform C entry `main` forwarding to `vut_entry`
+```
 
 Windows:
 
 ```text
-vut-runtime.lib
+vut-core.lib
+vut-stdlib.lib
+vut-startup.obj
 ```
 
 Linux/macOS:
 
 ```text
-libvut-runtime.a
+libvut-core.a
+libvut-stdlib.a
+vut-startup.o
 ```
 
-Do not create separate native libraries such as:
+Do not create a separate native library per stdlib module:
 
 ```text
 fs.lib
 os.lib
 time.lib
 ```
+
+The two archives are internal build units; the distribution names above are the
+stable contract. The startup object is prebuilt per target and shipped so that
+linking never requires a Rust toolchain.
 
 Native functionality is distinguished by exported symbols.
 
@@ -227,7 +244,9 @@ The canonical installation layout is:
 ├── lib/
 │   └── runtime/
 │       └── <target>/
-│           └── vut-runtime.lib / libvut-runtime.a
+│           ├── vut-core.lib / libvut-core.a
+│           ├── vut-stdlib.lib / libvut-stdlib.a
+│           └── vut-startup.obj / vut-startup.o
 │
 ├── std/
 │   ├── fs/

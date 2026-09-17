@@ -7,7 +7,9 @@ link and run on Windows (x86_64-pc-windows-msvc), Linux
 M-LINK.1 adds the backend abstraction, target profiles and system-library
 knowledge; M-LINK.2 adds the `vut-startup` object; M-LINK.3–5 verify the
 standalone system backend end to end on Windows, Linux, macOS arm64 and macOS
-x86_64. The default backend is still `rustc` until M-LINK.6.
+x86_64. M-LINK.6 makes the **release** build default to the platform linker
+(debug builds keep the `rustc` fallback) and reconciles `specs/std` with the
+two-archive + startup model.
 
 This document is the source of truth for how a compiled Vut object is linked
 into a native executable without `rustc`/`cargo`, and how the static runtime is
@@ -362,14 +364,27 @@ linker failure.
 ## 10. Migration off `rustc`
 
 ```text
-1. Introduce LinkerBackend; default stays rustc          [done, M-LINK.1]
-2. Add native cc/cl backend; verify on all targets        [done, M-LINK.1; per-OS E2E in M-LINK.3-5]
-3. Add lld backend; verify on all targets                 [backend present, M-LINK.1]
-4. Flip the release default to the native backend
-5. CI clean-environment gate: compile + run with no rustc/cargo on PATH
-6. Remove link_shim.rs and the CARGO_MANIFEST_DIR dependency from production
-7. Update specs/std to the two-archive + startup model
+1. Introduce LinkerBackend                                    [done, M-LINK.1]
+2. Add native cc/cl backend; verify on all targets            [done, M-LINK.1–5]
+3. Add lld backend                                            [present, not default]
+4. Flip the release default to the native backend             [done, M-LINK.6]
+5. CI clean-environment gate (no rustc/cargo on PATH)         [done, M-LINK.6]
+6. Remove link_shim / CARGO_MANIFEST_DIR from production      [done, M-LINK.6]
+7. Update specs/std to the two-archive + startup model        [done, M-LINK.6]
 ```
+
+Backend default (M-LINK.6):
+
+```text
+VUT_LINKER set        -> that backend (override)
+unset, release build  -> system (platform link.exe / cc / lld)
+unset, debug build    -> rustc (development fallback)
+```
+
+The `rustc` backend and its embedded `link_shim.rs` remain available only as an
+explicit development fallback (`VUT_LINKER=rustc`); they are never on the
+release link path. The `CARGO_MANIFEST_DIR` dependency was removed in M-LINK.2
+(the shim source is embedded with `include_str!`).
 
 ---
 
@@ -479,4 +494,14 @@ macOS architectures. M-LINK.1 is the next milestone and must not rely on
 - [x] `vut doctor` reports backend, tools and runtime assets
 - [x] Windows E2E: `vut build` + `VUT_LINKER=system` builds and runs `fx-stdlib`
 - [x] Linux and macOS E2E (workflow `M-LINK.3-5 system backend E2E`, run `35182893787`)
-- [ ] Production default flip and removal of rustc (M-LINK.6)
+- [x] Production default flip and removal of rustc from the release path (M-LINK.6)
+
+### M-LINK.6 gate
+
+- [x] Release builds default to the system backend; debug builds keep `rustc`
+- [x] `VUT_LINKER` override documented (`rustc` / `system` / `lld`)
+- [x] Release-linker E2E: release `vut` builds and runs with **no `VUT_LINKER`**
+      and no `rustc`/`cargo` on `PATH` (workflow `M-LINK.6 release-linker E2E`)
+- [x] `CARGO_MANIFEST_DIR` removed from production paths (M-LINK.2)
+- [x] `rustc` backend confined to an explicit development fallback
+- [x] `specs/std` reconciled with the two-archive + startup model

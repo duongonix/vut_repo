@@ -85,6 +85,9 @@ pub fn select(target: &str) -> Result<Box<dyn LinkerBackend>, LinkError> {
 }
 
 /// Reads the `VUT_LINKER` development override.
+///
+/// Accepted values: `rustc`, `system`/`cc`/`cl`, `lld`/`lld-link`. When unset,
+/// [`default_kind`] applies.
 #[must_use]
 pub fn requested_kind() -> BackendKind {
     match std::env::var("VUT_LINKER")
@@ -92,9 +95,24 @@ pub fn requested_kind() -> BackendKind {
         .to_ascii_lowercase()
         .as_str()
     {
+        "rustc" => BackendKind::Rustc,
         "system" | "cc" | "cl" => BackendKind::System,
         "lld" | "lld-link" => BackendKind::Lld,
-        _ => BackendKind::Rustc,
+        _ => default_kind(),
+    }
+}
+
+/// Default backend for unattended builds.
+///
+/// Release artifacts link with the platform toolchain and must **not** require
+/// `rustc`. Development builds keep the `rustc` fallback so `cargo test` runs
+/// without a platform SDK on `PATH`; `VUT_LINKER` overrides either choice.
+#[must_use]
+pub fn default_kind() -> BackendKind {
+    if cfg!(debug_assertions) {
+        BackendKind::Rustc
+    } else {
+        BackendKind::System
     }
 }
 
@@ -103,11 +121,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selection_parses_the_target_and_defaults_to_rustc() {
+    fn selection_parses_the_target_and_defaults_to_the_build_default() {
         if std::env::var_os("VUT_LINKER").is_none() {
-            assert_eq!(requested_kind(), BackendKind::Rustc);
+            assert_eq!(requested_kind(), default_kind());
         }
         assert!(select("x86_64-unknown-linux-gnu").is_ok());
+    }
+
+    #[test]
+    fn release_builds_default_to_the_platform_linker() {
+        // `default_kind` must not require rustc in release artifacts.
+        if cfg!(debug_assertions) {
+            assert_eq!(default_kind(), BackendKind::Rustc);
+        } else {
+            assert_eq!(default_kind(), BackendKind::System);
+        }
     }
 
     #[test]
