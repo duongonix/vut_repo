@@ -2,12 +2,14 @@
 //!
 //! Drives the platform toolchain directly: MSVC `link.exe` or LLVM `lld-link`
 //! on Windows MSVC, `cc` or `ld.lld` elsewhere. It resolves the prebuilt
-//! `vut-startup` object, links the runtime archives, and adds the system
+//! `vut-startup` object, maps runtime `.rlib` inputs to their C-linkable
+//! staticlib siblings, links the runtime archives, and adds the system
 //! libraries measured in M-LINK.0. No `rustc` is invoked for the final link.
 use std::path::{Path, PathBuf};
 
-use crate::backend::{BackendKind, LinkerBackend};
-use crate::error::LinkError;
+use crate::assets;
+use crate::backend::{BackendKind, LinkerBackend, driver_program, toolchain_hint};
+use crate::error::{LinkError, LinkFailure};
 use crate::plan::LinkPlan;
 use crate::process;
 use crate::startup::StartupObject;
@@ -29,46 +31,42 @@ impl SystemBackend {
     /// Linker program for this backend and target.
     #[must_use]
     pub(crate) fn driver(&self) -> PathBuf {
-        let lld = self.kind == BackendKind::Lld;
-        match (self.profile.flavor(), lld) {
-            (Flavor::Msvc, false) => PathBuf::from("link.exe"),
-            (Flavor::Msvc, true) => PathBuf::from("lld-link"),
-            (Flavor::Darwin, true) => PathBuf::from("ld64.lld"),
-            (_, true) => PathBuf::from("ld.lld"),
-            (_, false) => PathBuf::from("cc"),
-        }
+        PathBuf::from(driver_program(&self.profile, self.kind))
     }
 
     /// Full argument vector for a resolved startup object.
-    #[must_use]
-    pub(crate) fn argv(&self, plan: &LinkPlan, startup: &Path) -> Vec<String> {
+    ///
+    /// # Errors
+    /// Returns [`LinkFailure::MissingLibrary`] when a runtime `.rlib` has no
+    /// staticlib sibling.
+    pub(crate) fn argv(&self, plan: &LinkPlan, startup: &Path) -> Result<Vec<String>, LinkError> {
         match self.profile.flavor() {
             Flavor::Msvc => self.msvc_argv(plan, startup),
             _ => self.unix_argv(plan, startup),
         }
     }
 
-    fn msvc_argv(&self, plan: &LinkPlan, startup: &Path) -> Vec<String> {
+    fn msvc_argv(&self, plan: &LinkPlan, startup: &Path) -> Result<Vec<String>, LinkError> {
         let mut arguments = vec![
             "/NOLOGO".into(),
             "/SUBSYSTEM:CONSOLE".into(),
             format!("/OUT:{}", plan.output.display()),
             startup.display().to_string(),
         ];
-        append_archives(&mut arguments, plan);
+        append_archives(&mut arguments, plan)?;
         for library in system_libs::system_libraries(&self.profile) {
             arguments.push(with_lib_extension(library));
         }
-        arguments
+        Ok(arguments)
     }
 
-    fn unix_argv(&self, plan: &LinkPlan, startup: &Path) -> Vec<String> {
+    fn unix_argv(&self, plan: &LinkPlan, startup: &Path) -> Result<Vec<String>, LinkError> {
         let mut arguments = vec![
             "-o".into(),
             plan.output.display().to_string(),
             startup.display().to_string(),
         ];
-        append_archives(&mut arguments, plan);
+        append_archives(&mut arguments, plan)?;
         for library in system_libs::system_libraries(&self.profile) {
             arguments.push(format!("-l{library}"));
         }
@@ -80,7 +78,7 @@ impl SystemBackend {
             arguments.push("-framework".into());
             arguments.push(framework.clone());
         }
-        arguments
+        Ok(arguments)
     }
 
     fn resolve_startup(&self, plan: &LinkPlan) -> Result<PathBuf, LinkError> {
@@ -97,6 +95,16 @@ impl SystemBackend {
             &cache_dir,
         )
     }
+
+    /// Adds a platform toolchain hint to discovery/SDK failures.
+    fn enrich(&self, error: LinkError) -> LinkError {
+        match error.failure() {
+            LinkFailure::ToolNotFound | LinkFailure::MissingSdk | LinkFailure::MissingCrt => {
+                error.with_hint(toolchain_hint(&self.profile))
+            }
+            _ => error,
+        }
+    }
 }
 
 impl LinkerBackend for SystemBackend {
@@ -109,21 +117,31 @@ impl LinkerBackend for SystemBackend {
     fn link(&self, plan: &LinkPlan) -> Result<(), LinkError> {
         let startup = self.resolve_startup(plan)?;
         let program = self.driver();
-        let arguments = self.argv(plan, &startup);
-        process::run(&program, &arguments, &plan.output)
+        let arguments = self.argv(plan, &startup)?;
+        process::run(&program, &arguments, &plan.output).map_err(|error| self.enrich(error))
     }
 }
 
-fn append_archives(arguments: &mut Vec<String>, plan: &LinkPlan) {
+/// Appends the runtime and static archives, mapping `.rlib` to staticlibs.
+fn append_archives(arguments: &mut Vec<String>, plan: &LinkPlan) -> Result<(), LinkError> {
     for object in &plan.objects {
         arguments.push(object.display().to_string());
     }
     if let Some(runtime) = &plan.runtime {
-        arguments.push(runtime.display().to_string());
+        arguments.push(
+            assets::resolve_static_archive(runtime)?
+                .display()
+                .to_string(),
+        );
     }
     for library in plan.unique_static_libraries() {
-        arguments.push(library.display().to_string());
+        arguments.push(
+            assets::resolve_static_archive(library)?
+                .display()
+                .to_string(),
+        );
     }
+    Ok(())
 }
 
 fn with_lib_extension(name: &str) -> String {
@@ -155,10 +173,12 @@ mod tests {
         let profile = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
         let backend = SystemBackend::new(BackendKind::System, profile);
         assert_eq!(backend.driver(), PathBuf::from("link.exe"));
-        let arguments = backend.argv(
-            &plan("x86_64-pc-windows-msvc"),
-            Path::new("vut-startup.obj"),
-        );
+        let arguments = backend
+            .argv(
+                &plan("x86_64-pc-windows-msvc"),
+                Path::new("vut-startup.obj"),
+            )
+            .expect("argv");
         assert!(arguments.iter().any(|arg| arg == "/SUBSYSTEM:CONSOLE"));
         assert!(arguments.iter().any(|arg| arg == "vut-startup.obj"));
         assert!(arguments.iter().any(|arg| arg == "program.o"));
@@ -180,10 +200,12 @@ mod tests {
         let profile = TargetProfile::parse("x86_64-unknown-linux-gnu").unwrap();
         let backend = SystemBackend::new(BackendKind::System, profile);
         assert_eq!(backend.driver(), PathBuf::from("cc"));
-        let arguments = backend.argv(
-            &plan("x86_64-unknown-linux-gnu"),
-            Path::new("vut-startup.o"),
-        );
+        let arguments = backend
+            .argv(
+                &plan("x86_64-unknown-linux-gnu"),
+                Path::new("vut-startup.o"),
+            )
+            .expect("argv");
         assert_eq!(arguments.first().map(String::as_str), Some("-o"));
         assert!(arguments.iter().any(|arg| arg == "-lpthread"));
         assert!(arguments.iter().any(|arg| arg == "-lgcc_s"));
@@ -194,7 +216,9 @@ mod tests {
     fn darwin_adds_frameworks() {
         let profile = TargetProfile::parse("aarch64-apple-darwin").unwrap();
         let backend = SystemBackend::new(BackendKind::System, profile);
-        let arguments = backend.argv(&plan("aarch64-apple-darwin"), Path::new("vut-startup.o"));
+        let arguments = backend
+            .argv(&plan("aarch64-apple-darwin"), Path::new("vut-startup.o"))
+            .expect("argv");
         assert!(arguments.iter().any(|arg| arg == "-lSystem"));
         assert!(
             arguments
@@ -206,5 +230,17 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["-framework", "CoreFoundation"])
         );
+    }
+
+    #[test]
+    fn rlib_runtime_without_static_sibling_fails_with_a_hint() {
+        let profile = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
+        let backend = SystemBackend::new(BackendKind::System, profile);
+        let mut plan = plan("x86_64-pc-windows-msvc");
+        plan.runtime = Some(PathBuf::from("definitely-missing/libvut_runtime.rlib"));
+        let error = backend
+            .argv(&plan, Path::new("vut-startup.obj"))
+            .expect_err("missing static archive");
+        assert_eq!(error.failure(), LinkFailure::MissingLibrary);
     }
 }

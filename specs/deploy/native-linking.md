@@ -1,12 +1,13 @@
 # Vut Native Linking
 
-Status: **M-LINK.0 complete**, **M-LINK.1–2 implemented**. All four fixtures
+Status: **M-LINK.0 complete**, **M-LINK.1–5 implemented**. All four fixtures
 link and run on Windows (x86_64-pc-windows-msvc), Linux
 (x86_64-unknown-linux-gnu), macOS arm64 and macOS x86_64, with **no
-`rustc`/`cargo` in the link step** and without `-no-pie`/`-Wl,-no_pie`.
+`rustc`/`cargo` in the link step** and without `-no-pie`/`-Wl,-no-pie`.
 M-LINK.1 adds the backend abstraction, target profiles and system-library
-knowledge; M-LINK.2 adds the `vut-startup` object. The default backend is still
-`rustc` until M-LINK.6.
+knowledge; M-LINK.2 adds the `vut-startup` object; M-LINK.3–5 verify the
+standalone system backend per OS (Windows/Linux/macOS) end to end. The default
+backend is still `rustc` until M-LINK.6.
 
 This document is the source of truth for how a compiled Vut object is linked
 into a native executable without `rustc`/`cargo`, and how the static runtime is
@@ -207,6 +208,32 @@ used by a production installation.
 `CompilerConfig` gained `startup_object: Option<PathBuf>`, and `LinkPlan` carries
 `startup` so `vut build`/`run` link it automatically through the system
 backends. The rustc backend ignores it because its shim supplies `main`.
+
+## 5.2 Per-OS system backends (M-LINK.3–5)
+
+The standalone backend is selected with `VUT_LINKER=system` or `VUT_LINKER=lld`.
+Runtime `.rlib` inputs are mapped automatically to their staticlib siblings
+(`crates/vut-linker/src/assets.rs`), so the compiler's existing runtime
+discovery keeps working unchanged while linking with a C linker.
+
+| OS | Default driver | LLVM lld driver | System libraries / frameworks |
+| --- | --- | --- | --- |
+| Windows | `link.exe` (MSVC) | `lld-link` | CRT + `kernel32 ntdll userenv ws2_32 dbghelp bcrypt advapi32` |
+| Linux | `cc` | `ld.lld` | `gcc_s util rt pthread m dl c` |
+| macOS | `cc` (clang) | `ld64.lld` | `System c m` + `-framework Security -framework CoreFoundation` |
+
+Toolchain diagnostics: a missing driver, SDK, or CRT is classified
+(`ToolNotFound`/`MissingSdk`/`MissingCrt`) and the message is augmented with an
+actionable hint (`install Visual Studio Build Tools ... Windows SDK`,
+`xcode-select --install`, `install a C toolchain`).
+
+`vut doctor` reports the target, selected backend, linker and `rustc` presence,
+and the core/stdlib/startup assets, with `status: ok` or a list of issues.
+
+End-to-end evidence: `vut build` with `VUT_LINKER=system` produces a runnable
+executable for `fx-stdlib` on Windows, Linux, macOS arm64 and macOS x86_64 with
+**no `rustc`/`cargo` on `PATH`** and a prebuilt startup object (workflow
+`M-LINK.3-5 system backend E2E`).
 
 ---
 
@@ -436,3 +463,13 @@ macOS architectures. M-LINK.1 is the next milestone and must not rely on
 - [x] System backend smoke-tested on Windows (`VUT_LINKER=system` links and runs
       `fx-core-only` and `fx-stdlib`)
 - [ ] Per-OS system-backend E2E and production default flip (M-LINK.3-6)
+
+### M-LINK.3–5 gate
+
+- [x] Runtime `.rlib` → staticlib resolution for standalone backends
+- [x] Per-OS driver selection (link.exe / cc / lld) with measured system libraries
+- [x] Toolchain diagnostics with actionable hints (Windows SDK / Xcode CLT / cc)
+- [x] `vut doctor` reports backend, tools and runtime assets
+- [x] Windows E2E: `vut build` + `VUT_LINKER=system` builds and runs `fx-stdlib`
+- [ ] Linux and macOS E2E (workflow `M-LINK.3-5 system backend E2E`)
+- [ ] Production default flip and removal of rustc (M-LINK.6)

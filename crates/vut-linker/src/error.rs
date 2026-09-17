@@ -84,6 +84,12 @@ impl LinkError {
     pub fn message(&self) -> &str {
         &self.message
     }
+    /// Appends an actionable installation hint to the message.
+    #[must_use]
+    pub fn with_hint(mut self, hint: &str) -> Self {
+        self.message = format!("{}; {hint}", self.message);
+        self
+    }
 }
 
 impl fmt::Display for LinkError {

@@ -32,6 +32,12 @@ enum Command {
     Run(Options),
     /// Compile a Vut program to a native executable.
     Build(Options),
+    /// Diagnose the local toolchain, runtime archives and linker backend.
+    Doctor {
+        /// Target triple to diagnose; defaults to the host.
+        #[arg(long)]
+        target: Option<String>,
+    },
 }
 
 #[derive(clap::Args, Debug)]
@@ -70,6 +76,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(status.code().unwrap_or(1));
             }
         }
+        Command::Doctor { target } => {
+            crate::doctor::run(target)?;
+        }
     }
     Ok(())
 }
@@ -98,7 +107,10 @@ fn build(
             .unwrap_or_else(|| CompilerConfig::default().target),
         mode,
     );
-    config.runtime_library = locate_runtime();
+    config.runtime_library = crate::discovery::locate_runtime();
+    if let Some(runtime) = &config.runtime_library {
+        config.startup_object = crate::discovery::locate_startup(runtime, &config.target);
+    }
     config.native_libraries.clone_from(&options.native_lib);
     config.system_libraries.clone_from(&options.system_lib);
     let output = options
@@ -141,24 +153,6 @@ fn default_output(release: bool) -> PathBuf {
     PathBuf::from("build")
         .join(directory)
         .join(if cfg!(windows) { "app.exe" } else { "app" })
-}
-
-fn locate_runtime() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("VUT_RUNTIME_LIBRARY").map(PathBuf::from)
-        && path.is_file()
-    {
-        return Some(path);
-    }
-    let name = if cfg!(windows) {
-        "libvut_runtime.rlib"
-    } else {
-        "libvut_runtime.a"
-    };
-    let candidates = [
-        PathBuf::from("target/debug").join(name),
-        std::env::current_exe().ok()?.parent()?.join(name),
-    ];
-    candidates.into_iter().find(|path| path.is_file())
 }
 
 #[cfg(test)]

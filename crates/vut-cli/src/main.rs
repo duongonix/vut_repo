@@ -1,4 +1,6 @@
 mod cli;
+mod discovery;
+mod doctor;
 
 fn main() {
     if let Err(error) = cli::run() {

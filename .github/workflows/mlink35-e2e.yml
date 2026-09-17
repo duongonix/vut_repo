@@ -1,0 +1,73 @@
+name: M-LINK.3-5 system backend E2E
+
+# Per-OS end-to-end verification of the standalone system linker backend:
+# `vut build` must produce a runnable executable with no rustc/cargo on PATH.
+# The startup object is prebuilt (the rustc dev fallback is exercised elsewhere);
+# the final link uses link.exe / cc only.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install NASM (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Install NASM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm || true
+
+      - name: Build runtime and CLI
+        run: cargo build -p vut-runtime -p vut-stdlib-native -p vut-cli
+
+      - name: Prebuild startup object
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "Windows" ]; then name=vut-startup.obj; else name=vut-startup.o; fi
+          rustc --edition 2024 --crate-type=lib --emit=obj -C panic=abort -C opt-level=2 \
+            -o "target/debug/${name}" crates/vut-linker/startup/vut-startup.rs
+          ls -l "target/debug/${name}"
+
+      - name: Doctor (system backend)
+        shell: bash
+        env:
+          VUT_LINKER: system
+        run: |
+          if [ "${RUNNER_OS}" = "Windows" ]; then vut=target/debug/vut.exe; else vut=target/debug/vut; fi
+          "${vut}" doctor || true
+
+      - name: System-backend build and run without rustc/cargo
+        shell: bash
+        env:
+          VUT_LINKER: system
+        run: |
+          set -euo pipefail
+          # Strip any rustup/cargo directory from PATH: the final link must not
+          # need a Rust toolchain, and the startup object is prebuilt.
+          export PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE 'cargo|rustup' | paste -sd: -)"
+          if command -v rustc >/dev/null 2>&1; then
+            echo "rustc is still on PATH; aborting"; exit 1
+          fi
+          if [ "${RUNNER_OS}" = "Windows" ]; then vut=target/debug/vut.exe; out=system-e2e.exe; else vut=target/debug/vut; out=system-e2e; fi
+          rm -f "$out"
+          "${vut}" build spikes/mlink0/fixtures/fx-stdlib/main.vut --output "$out"
+          ./"$out" | tee run.out
+          grep -q 'os=' run.out

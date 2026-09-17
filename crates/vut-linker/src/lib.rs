@@ -3,6 +3,7 @@
 //! Turns a [`LinkPlan`] into a native executable without requiring `rustc` in
 //! production. Backends are selected in [`backend`]; the measured target
 //! profiles and system libraries live in [`target`] and [`system_libs`].
+mod assets;
 mod backend;
 mod error;
 mod plan;
@@ -11,7 +12,8 @@ mod startup;
 mod system_libs;
 mod target;
 
-pub use backend::{BackendKind, LinkerBackend};
+pub use assets::resolve_static_archive;
+pub use backend::{BackendKind, LinkerBackend, driver_program, requested_kind, toolchain_hint};
 pub use error::{LinkError, LinkFailure};
 pub use plan::LinkPlan;
 pub use startup::StartupObject;

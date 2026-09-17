@@ -1,16 +1,15 @@
-//! Linker backend selection.
+//! Linker backend selection and platform diagnostics.
 //!
 //! A backend turns a [`LinkPlan`](crate::LinkPlan) into a native executable.
-//! The default remains the `rustc` backend during migration; the standalone
-//! system/lld backends can be selected explicitly while M-LINK.3-5 enable and
-//! verify them per target. Production release linking must not depend on
-//! `rustc` once the migration completes.
+//! During migration the default remains `rustc`; the standalone system/lld
+//! backends are selected with `VUT_LINKER`. Production release linking must not
+//! depend on `rustc` once M-LINK.6 completes.
 pub mod rustc;
 pub mod system;
 
 use crate::error::LinkError;
 use crate::plan::LinkPlan;
-use crate::target::TargetProfile;
+use crate::target::{Flavor, TargetProfile};
 
 /// Concrete linker backend family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,6 +31,38 @@ pub trait LinkerBackend {
     /// # Errors
     /// Returns tool discovery, classification, and linker diagnostics.
     fn link(&self, plan: &LinkPlan) -> Result<(), LinkError>;
+}
+
+/// Linker program a backend uses for a target.
+#[must_use]
+pub fn driver_program(profile: &TargetProfile, kind: BackendKind) -> &'static str {
+    match kind {
+        BackendKind::Rustc => "rustc",
+        BackendKind::Lld => match profile.flavor() {
+            Flavor::Msvc => "lld-link",
+            Flavor::Darwin => "ld64.lld",
+            _ => "ld.lld",
+        },
+        BackendKind::System => match profile.flavor() {
+            Flavor::Msvc => "link.exe",
+            _ => "cc",
+        },
+    }
+}
+
+/// Actionable installation hint when a platform toolchain/SDK is missing.
+#[must_use]
+pub fn toolchain_hint(profile: &TargetProfile) -> &'static str {
+    match profile.flavor() {
+        Flavor::Msvc => {
+            "install Visual Studio Build Tools with the C++ workload and the Windows SDK"
+        }
+        Flavor::Darwin => "install the Xcode Command Line Tools with `xcode-select --install`",
+        Flavor::Gnu | Flavor::Musl if !profile.is_windows() => {
+            "install a C toolchain (`cc` and binutils)"
+        }
+        _ => "install the platform native linker and its SDK",
+    }
 }
 
 /// Selects the backend for a target.
@@ -73,8 +104,6 @@ mod tests {
 
     #[test]
     fn selection_parses_the_target_and_defaults_to_rustc() {
-        // `requested_kind` reads the environment; without VUT_LINKER set the
-        // default is rustc.
         if std::env::var_os("VUT_LINKER").is_none() {
             assert_eq!(requested_kind(), BackendKind::Rustc);
         }
@@ -84,5 +113,28 @@ mod tests {
     #[test]
     fn selection_rejects_malformed_targets() {
         assert!(select("nonsense").is_err());
+    }
+
+    #[test]
+    fn driver_programs_follow_flavor_and_backend() {
+        let msvc = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
+        assert_eq!(driver_program(&msvc, BackendKind::System), "link.exe");
+        assert_eq!(driver_program(&msvc, BackendKind::Lld), "lld-link");
+        assert_eq!(driver_program(&msvc, BackendKind::Rustc), "rustc");
+
+        let linux = TargetProfile::parse("aarch64-unknown-linux-gnu").unwrap();
+        assert_eq!(driver_program(&linux, BackendKind::System), "cc");
+        assert_eq!(driver_program(&linux, BackendKind::Lld), "ld.lld");
+
+        let darwin = TargetProfile::parse("aarch64-apple-darwin").unwrap();
+        assert_eq!(driver_program(&darwin, BackendKind::Lld), "ld64.lld");
+    }
+
+    #[test]
+    fn hints_match_the_platform() {
+        let msvc = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
+        assert!(toolchain_hint(&msvc).contains("Windows SDK"));
+        let darwin = TargetProfile::parse("aarch64-apple-darwin").unwrap();
+        assert!(toolchain_hint(&darwin).contains("Xcode"));
     }
 }
