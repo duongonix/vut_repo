@@ -85,14 +85,21 @@ SYSTEM_LIBS="$(capture_system_libs)"
 log "arch: $ARCH"
 log "system libs (from rustc): $SYSTEM_LIBS"
 
-# Link-flag variants to try, most likely first. Code generation now emits
-# position-independent objects, so the default PIE link is tried first; -no-pie
-# variants are kept only as a fallback for troubleshooting.
+# Link-flag variants to try, in order. Code generation now emits
+# position-independent objects, so the default PIE link must succeed; the
+# no-pie variants are only a troubleshooting fallback.
 link_variants() {
   case "$OS_NAME" in
-    linux) printf '%s\n' "" "-no-pie" ;;
-    macos) printf '%s\n' "" "-Wl,-no_pie" ;;
-    *) printf '%s\n' "" ;;
+    linux | macos) printf '%s\n' default no-pie ;;
+    *) printf '%s\n' default ;;
+  esac
+}
+
+variant_flags() {
+  case "$OS_NAME:$1" in
+    macos:no-pie) printf '%s' "-Wl,-no_pie" ;;
+    *:no-pie) printf '%s' "-no-pie" ;;
+    *) printf '%s' "" ;;
   esac
 }
 
@@ -119,14 +126,14 @@ link_with() {
   obj="$OUT/$fx.o"
   if need_stdlib "$fx"; then libs="$CORE $STDLIB"; fw="$MAC_STDLIB_FRAMEWORKS"; else libs="$CORE"; fw=""; fi
   for variant in $(link_variants); do
-    label="$(echo "$variant" | tr -d ' ' | sed 's/^$/default/')"
-    exe="$OUT/$fx-cc-$label"
-    logfile="$REPORT/$fx-cc-$label.log"
+    flags="$(variant_flags "$variant")"
+    exe="$OUT/$fx-cc-$variant"
+    logfile="$REPORT/$fx-cc-$variant.log"
     # shellcheck disable=SC2086
-    if $CC $variant -o "$exe" "$OUT/vut-startup.o" "$obj" $libs $SYSTEM_LIBS $fw \
+    if $CC $flags -o "$exe" "$OUT/vut-startup.o" "$obj" $libs $SYSTEM_LIBS $fw \
         > "$logfile" 2>&1; then
       log "  cc[$variant] link=ok -> $(basename "$exe")"
-      run_fixture "$exe" "$fx-cc-$label"
+      run_fixture "$exe" "$fx-cc-$variant"
       return 0
     fi
     errs="$(grep -cE 'undefined reference|text-relocation|error|not found|no_pie' "$logfile" || true)"
