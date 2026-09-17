@@ -63,10 +63,14 @@ pub fn locate_startup(runtime: &Path, target: &str) -> Option<PathBuf> {
 }
 
 /// Finds a program on `PATH`, honoring `PATHEXT` on Windows.
+///
+/// When `program` already has an extension (for example `link.exe`), `PATHEXT`
+/// is not appended again.
 #[must_use]
 pub fn find_on_path(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    let extensions: Vec<String> = if cfg!(windows) {
+    let has_extension = Path::new(program).extension().is_some();
+    let extensions: Vec<String> = if cfg!(windows) && !has_extension {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
             .split(';')

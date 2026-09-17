@@ -46,28 +46,33 @@ jobs:
             -o "target/debug/${name}" crates/vut-linker/startup/vut-startup.rs
           ls -l "target/debug/${name}"
 
-      - name: Doctor (system backend)
-        shell: bash
+      - name: System-backend E2E (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         env:
           VUT_LINKER: system
         run: |
-          if [ "${RUNNER_OS}" = "Windows" ]; then vut=target/debug/vut.exe; else vut=target/debug/vut; fi
-          "${vut}" doctor || true
+          # Drop rustup/cargo from PATH: the final link must not need a Rust
+          # toolchain, and the startup object is prebuilt.
+          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -notmatch 'cargo|rustup' }) -join ';'
+          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw 'rustc is still on PATH' }
+          .\target\debug\vut.exe doctor
+          .\target\debug\vut.exe build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e.exe
+          .\system-e2e.exe | Tee-Object run.out
+          if (-not (Select-String -Path run.out -Pattern 'os=' -Quiet)) { throw 'missing os= output' }
 
-      - name: System-backend build and run without rustc/cargo
+      - name: System-backend E2E (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         env:
           VUT_LINKER: system
         run: |
           set -euo pipefail
-          # Strip any rustup/cargo directory from PATH: the final link must not
-          # need a Rust toolchain, and the startup object is prebuilt.
           export PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE 'cargo|rustup' | paste -sd: -)"
           if command -v rustc >/dev/null 2>&1; then
             echo "rustc is still on PATH; aborting"; exit 1
           fi
-          if [ "${RUNNER_OS}" = "Windows" ]; then vut=target/debug/vut.exe; out=system-e2e.exe; else vut=target/debug/vut; out=system-e2e; fi
-          rm -f "$out"
-          "${vut}" build spikes/mlink0/fixtures/fx-stdlib/main.vut --output "$out"
-          ./"$out" | tee run.out
+          target/debug/vut doctor
+          target/debug/vut build spikes/mlink0/fixtures/fx-stdlib/main.vut --output system-e2e
+          ./system-e2e | tee run.out
           grep -q 'os=' run.out
