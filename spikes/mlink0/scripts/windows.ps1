@@ -78,10 +78,11 @@ if ($LASTEXITCODE -ne 0) { throw 'startup object build failed' }
 
 # ---- fixtures ---------------------------------------------------------
 $fixtures = [ordered]@{
-    'fx-core-only' = @($core)
-    'fx-async'     = @($core)
-    'fx-stdlib'    = @($core, $stdlib)
-    'fx-http'      = @($core, $stdlib)
+    'fx-core-only'   = @($core)
+    'fx-async'       = @($core)
+    'fx-payload-enum' = @($core)
+    'fx-stdlib'      = @($core, $stdlib)
+    'fx-http'        = @($core, $stdlib)
 }
 
 $crtLibs = @('msvcrt.lib', 'vcruntime.lib', 'ucrt.lib', 'oldnames.lib')

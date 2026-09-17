@@ -1,0 +1,51 @@
+# M-LINK.0 fixture: fx-payload-enum
+#
+# Contract: exercises payload enums with managed (str) and scalar (float)
+# payloads plus exhaustive match, including teardown of managed payloads.
+# Uses only core runtime (out is a compiler builtin; no stdlib import).
+#
+# Expected stdout: 12 / 12 / 0 / exact / some / none / zero / small / medium /
+#                  negative / large
+# Expected exit code: 0
+
+enum Shape:
+  point
+  circle(radius: float)
+  rect(width: float, height: float)
+
+enum Option:
+  none
+  some(value: str)
+
+fn area(shape: Shape) -> float:
+  match shape:
+    point: 0.0
+    circle(radius = r): 3.0 * r * r
+    rect(width = w, height = h): w * h
+
+fn classify(o: Option) -> str:
+  match o:
+    some(value = "hi"): "exact"
+    some(value = _): "some"
+    none: "none"
+
+fn describe(value: int) -> str:
+  match value:
+    0: "zero"
+    1 or 2: "small"
+    3..=9: "medium"
+    _ if value < 0: "negative"
+    _: "large"
+
+fn main():
+  out("$(area(Shape.circle(radius = 2.0)))")
+  out("$(area(Shape.rect(width = 3.0, height = 4.0)))")
+  out("$(area(Shape.point))")
+  out(classify(Option.some(value = "hi")))
+  out(classify(Option.some(value = "bye")))
+  out(classify(Option.none))
+  out(describe(0))
+  out(describe(2))
+  out(describe(5))
+  out(describe(-1))
+  out(describe(100))
