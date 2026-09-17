@@ -79,7 +79,7 @@ jobs:
         run: brew install nasm || true
 
       - name: Build release toolchain
-        run: cargo build --release -p vut-runtime -p vut-stdlib-native -p vut-cli -p vpm -p vut-lsp
+        run: cargo build --release -p vut-runtime -p vut-stdlib-native -p vut-cli -p vpm -p vut-lsp -p vut-dist
 
       - name: Prebuild startup object
         shell: bash
@@ -91,7 +91,8 @@ jobs:
       - name: Assemble distribution
         shell: bash
         run: |
-          cargo run --release -p vut-dist -- \
+          if [ "${RUNNER_OS}" = "Windows" ]; then vutdist=target/release/vut-dist.exe; else vutdist=target/release/vut-dist; fi
+          "$vutdist" \
             --target "${{ matrix.target }}" \
             --out dist \
             --bin-dir target/release \
