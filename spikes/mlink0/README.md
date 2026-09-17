@@ -10,11 +10,12 @@ results.
 ## Layout
 
 ```text
-fixtures/            four Vut programs (each a module root with main.vut)
+fixtures/            Vut programs (each a module root with main.vut)
   fx-core-only/      pure core; observes via exit code (no out/print, no stdlib)
   fx-async/          async/await + vut(...) core runtime
   fx-stdlib/         fs/os/env native stdlib
   fx-http/           reqwest + tokio + rustls HTTP/TLS stack
+  fx-payload-enum/   payload enums; excluded from the gate (pre-existing bug)
 startup/             vut-startup.rs -> startup object exporting `main`
 objgen/              standalone cargo project emitting the executable object
 scripts/windows.ps1  3 linkers x 4 fixtures on Windows
@@ -74,12 +75,20 @@ fx-http       stdout "status=200" (online) or a graceful "error=..." (offline)
 | Platform | Runner | Backend | Result |
 | --- | --- | --- | --- |
 | Windows x86_64 | windows-latest | link.exe / lld-link / cl.exe | PASS 4/4 |
-| Linux x86_64 | ubuntu-latest | cc (`-no-pie`) | PASS 4/4 |
-| macOS arm64 | macos-latest | cc | FAIL: non-PIC text-relocations |
-| macOS x86_64 | — | — | not measured (no hosted Intel runner) |
+| Linux x86_64 | ubuntu-latest | cc | PASS 4/4 (default PIE) |
+| macOS arm64 | macos-latest | cc | PASS 4/4 (default PIE) |
+| macOS x86_64 | macos-15-intel | cc | PASS 4/4 (default PIE) |
 
-Downloaded evidence: `spikes/mlink0/report-ci2/` (git-ignored). See
-`specs/deploy/native-linking.md` for the full analysis and the macOS blocker.
+Codegen now emits position-independent objects (`is_pic`), so the default PIE
+link works everywhere with no `-no-pie` workaround.
+
+`fixtures/fx-payload-enum` is retained but excluded from the gate: it links on
+every platform yet aborts at teardown on Linux/macOS. This is a pre-existing
+compiler/runtime bug (it reproduces with non-PIC objects too), recorded in
+`specs/deploy/native-linking.md` §12.
+
+Downloaded evidence: `spikes/mlink0/report-ci5/` (git-ignored). See
+`specs/deploy/native-linking.md` for the full analysis.
 ## Notes
 
 * The runtime archives embed the Rust standard library. Linking both
