@@ -17,6 +17,7 @@ vut-runtime = { path = "../vut-runtime" }
 
 [dev-dependencies]
 vut-resolver = { path = "../vut-resolver" }
+object = { version = "0.39", default-features = false, features = ["read", "std"] }
 
 [lints]
 workspace = true

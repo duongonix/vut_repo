@@ -1913,6 +1913,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "object",
  "target-lexicon",
  "vut-ast",
  "vut-hir",

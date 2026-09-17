@@ -71,6 +71,59 @@ fn emits_a_real_host_object() {
             || &bytes[..4] == b"\xfe\xed\xfa\xcf"
     );
 }
+
+/// Builds a program whose only work is calling an external symbol, which forces
+/// the backend to emit a relocation for that symbol reference.
+fn calls_external() -> Program {
+    let mut program = constant();
+    program.functions[0].blocks[0] = BasicBlock {
+        instructions: vec![Instruction::Call {
+            value: Some(ValueId(0)),
+            result_type: None,
+            target: SymbolId(7),
+            arguments: vec![],
+        }],
+        terminator: Terminator::Return(Some(ValueId(0))),
+    };
+    program.external_functions.push(vut_mir::ExternalFunction {
+        symbol: SymbolId(7),
+        link_name: "native_add".into(),
+        parameters: vec![],
+        return_type: Some(vut_hir::TypeId(0)),
+    });
+    program
+}
+
+/// Executable sections must not contain absolute relocations (text
+/// relocations). macOS arm64 rejects them outright; other platforms require
+/// position-independent objects to link cleanly, so this is a cross-platform
+/// regression guard for the `is_pic` codegen setting.
+#[test]
+fn emits_position_independent_code() {
+    use object::{Object as _, ObjectSection as _, RelocationKind, SectionKind};
+
+    let bytes = CraneliftBackend::new(Target::host())
+        .compile_module(&calls_external())
+        .unwrap();
+    let file = object::File::parse(&*bytes).expect("parse emitted object");
+
+    let mut saw_text = false;
+    for section in file.sections() {
+        if section.kind() != SectionKind::Text {
+            continue;
+        }
+        saw_text = true;
+        for (offset, relocation) in section.relocations() {
+            assert_ne!(
+                relocation.kind(),
+                RelocationKind::Absolute,
+                "absolute relocation at {offset:#x} in executable section `{}`",
+                section.name().unwrap_or("<unnamed>")
+            );
+        }
+    }
+    assert!(saw_text, "expected at least one executable section");
+}
 #[test]
 fn emits_static_utf8_string_data() {
     let mut program = constant();

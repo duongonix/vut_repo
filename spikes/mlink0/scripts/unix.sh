@@ -85,13 +85,13 @@ SYSTEM_LIBS="$(capture_system_libs)"
 log "arch: $ARCH"
 log "system libs (from rustc): $SYSTEM_LIBS"
 
-# Link-flag variants to try, most likely first. Cranelift currently emits
-# non-position-independent objects, which glibc accepts with -no-pie and macOS
-# x86_64 accepts with -Wl,-no_pie but macOS arm64 rejects (no_pie unsupported).
+# Link-flag variants to try, most likely first. Code generation now emits
+# position-independent objects, so the default PIE link is tried first; -no-pie
+# variants are kept only as a fallback for troubleshooting.
 link_variants() {
   case "$OS_NAME" in
-    linux) printf '%s\n' "-no-pie" "" ;;
-    macos) printf '%s\n' "-Wl,-no_pie" "" ;;
+    linux) printf '%s\n' "" "-no-pie" ;;
+    macos) printf '%s\n' "" "-Wl,-no_pie" ;;
     *) printf '%s\n' "" ;;
   esac
 }
