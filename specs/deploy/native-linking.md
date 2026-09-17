@@ -386,6 +386,11 @@ explicit development fallback (`VUT_LINKER=rustc`); they are never on the
 release link path. The `CARGO_MANIFEST_DIR` dependency was removed in M-LINK.2
 (the shim source is embedded with `include_str!`).
 
+Verified (workflow `M-LINK.6 release-linker E2E`, run `35183562429`): the
+release `vut` reports `backend: system` and builds/runs `fx-stdlib` on all four
+runners (`os=windows` / `os=linux` / `os=macos`) with no `VUT_LINKER` set and no
+`rustc`/`cargo` on `PATH`.
+
 ---
 
 ## 11. Dependencies and sizes
