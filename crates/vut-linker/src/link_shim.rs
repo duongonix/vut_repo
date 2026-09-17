@@ -7,11 +7,11 @@
 //! would leave those threads alive and prevent the process from exiting.
 
 unsafe extern "C" {
-    fn vut_entry() -> i32;
+    fn vut_entry() -> i64;
 }
 
 fn main() {
     // SAFETY: the compiler-generated object always exports this C-compatible
-    // entry with an integer process result.
-    std::process::exit(unsafe { vut_entry() });
+    // entry returning the process exit code as a 64-bit value.
+    std::process::exit(unsafe { vut_entry() as i32 });
 }

@@ -453,6 +453,7 @@ impl CompilerSession {
             system_libraries: self.config.system_libraries.clone(),
             frameworks: Vec::new(),
             runtime: self.config.runtime_library.clone(),
+            startup: self.config.startup_object.clone(),
             output: output.to_owned(),
             entry: "vut_entry".into(),
             target: self.config.target.clone(),

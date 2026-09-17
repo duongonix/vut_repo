@@ -28,6 +28,9 @@ pub struct CompilerConfig {
     pub build_mode: BuildMode,
     pub output_dir: Option<PathBuf>,
     pub runtime_library: Option<PathBuf>,
+    /// Prebuilt `vut-startup` object (`vut-startup.o`/`.obj`) for standalone
+    /// linking. The rustc backend supplies its own entry shim and ignores it.
+    pub startup_object: Option<PathBuf>,
     /// Native static libraries (`.lib`/`.a`) to link into the executable.
     pub native_libraries: Vec<PathBuf>,
     /// Platform system libraries referenced by native dependencies.
@@ -41,6 +44,7 @@ impl CompilerConfig {
             build_mode,
             output_dir: None,
             runtime_library: None,
+            startup_object: None,
             native_libraries: Vec::new(),
             system_libraries: Vec::new(),
         }
@@ -53,6 +57,7 @@ impl Default for CompilerConfig {
             build_mode: BuildMode::Debug,
             output_dir: None,
             runtime_library: None,
+            startup_object: None,
             native_libraries: Vec::new(),
             system_libraries: Vec::new(),
         }

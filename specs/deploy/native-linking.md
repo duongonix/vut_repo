@@ -1,9 +1,12 @@
 # Vut Native Linking
 
-Status: **M-LINK.0 complete**. All four fixtures link and run on Windows
-(x86_64-pc-windows-msvc), Linux (x86_64-unknown-linux-gnu), macOS arm64 and
-macOS x86_64, with **no `rustc`/`cargo` in the link step** and without
-`-no-pie`/`-Wl,-no_pie`.
+Status: **M-LINK.0 complete**, **M-LINK.1–2 implemented**. All four fixtures
+link and run on Windows (x86_64-pc-windows-msvc), Linux
+(x86_64-unknown-linux-gnu), macOS arm64 and macOS x86_64, with **no
+`rustc`/`cargo` in the link step** and without `-no-pie`/`-Wl,-no_pie`.
+M-LINK.1 adds the backend abstraction, target profiles and system-library
+knowledge; M-LINK.2 adds the `vut-startup` object. The default backend is still
+`rustc` until M-LINK.6.
 
 This document is the source of truth for how a compiled Vut object is linked
 into a native executable without `rustc`/`cargo`, and how the static runtime is
@@ -127,9 +130,25 @@ definition appears, correct the internal topology. No script-based merge.
 
 ---
 
-## 5. Linker abstraction
+## 5. Linker abstraction (M-LINK.1)
 
-`crates/vut-linker` gains a per-target backend abstraction:
+`crates/vut-linker` is organized as focused modules:
+
+```text
+src/
+├── lib.rs                 NativeLinker facade + SystemLinker
+├── plan.rs                LinkPlan (objects, archives, startup, target)
+├── error.rs               LinkError + LinkFailure classification
+├── process.rs             serialized tool execution + artifact flush
+├── target.rs              TargetProfile: kernel / flavor / arch / artifact names
+├── system_libs.rs         per-target system libraries and frameworks
+├── startup.rs             vut-startup resolution and development build
+├── backend.rs             BackendKind, LinkerBackend trait, selection
+├── backend/rustc.rs       rustc backend (development/migration fallback)
+├── backend/system.rs      platform (link.exe / cc) and LLVM lld backends
+├── link_shim.rs           embedded rustc entry shim (include_str!)
+└── ../startup/vut-startup.rs   product startup source (include_str!)
+```
 
 ```rust
 pub trait LinkerBackend {
@@ -138,23 +157,56 @@ pub trait LinkerBackend {
 }
 ```
 
-Selection order must eventually be:
+Backends:
 
 ```text
-VUT_LINKER override (lld | cc | rustc; development only)
-  -> bundled lld, when present            (long-term)
-  -> platform native linker                (MVP)
-  -> rustc                                 (development fallback only)
+BackendKind::Rustc   link_shim.rs compiled by rustc (default during migration)
+BackendKind::System  link.exe (MSVC) / cc (GNU, Darwin)
+BackendKind::Lld     lld-link (MSVC) / ld.lld / ld64.lld
 ```
 
-`LinkError` is classified so `vut doctor` can report
-`MissingSdk | MissingCrt | MissingLibrary | DuplicateSymbol | UnsupportedTarget`.
+Selection reads the `VUT_LINKER` development override (`rustc`, `system`/`cc`,
+`lld`) and defaults to `Rustc`. M-LINK.6 flips the production default and removes
+the rustc dependency.
 
-Requirements:
+Failures are classified as
+`ToolNotFound | MissingSdk | MissingCrt | MissingLibrary | DuplicateSymbol |
+UnsupportedTarget | Other` so a future `vut doctor` can explain them.
 
-* No `env!("CARGO_MANIFEST_DIR")` on any production path.
-* `--target` must be validated; when a target cannot be linked, fail with an
-  explicit diagnostic instead of linking for the host.
+Requirements (met):
+
+* No `env!("CARGO_MANIFEST_DIR")` on any production path: the rustc shim source
+  is embedded with `include_str!` and written to a temporary directory.
+* `--target` is parsed via `target-lexicon`; malformed or unsupported targets
+  fail with `UnsupportedTarget` instead of silently linking for the host.
+
+Verified on Windows: with `VUT_LINKER=system`, the new backend linked
+`fx-core-only` (exit 46) and `fx-stdlib` (`os=windows`, `fs=1`, `has_path=1`)
+through `link.exe` with no rustc in the link step.
+
+## 5.1 Startup object (M-LINK.2)
+
+`crates/vut-linker/startup/vut-startup.rs` is the single product startup source.
+It exports the platform `main` that calls `vut_entry` (which returns the process
+exit code as `i64`; the low 32 bits are consumed). The rustc backend's
+`link_shim.rs` now declares the same `vut_entry() -> i64` signature.
+
+Resolution order (`StartupObject::resolve`):
+
+```text
+plan.startup (explicit config path)
+  -> <runtime dir>/vut-startup.o|.obj
+  -> development build via rustc into a cache directory
+```
+
+In a release distribution the object is prebuilt per target
+(`vut-startup.obj` / `vut-startup.o`) and shipped in
+`lib/runtime/<target>/`; the development build is a convenience only and is not
+used by a production installation.
+
+`CompilerConfig` gained `startup_object: Option<PathBuf>`, and `LinkPlan` carries
+`startup` so `vut build`/`run` link it automatically through the system
+backends. The rustc backend ignores it because its shim supplies `main`.
 
 ---
 
@@ -276,9 +328,9 @@ linker failure.
 ## 10. Migration off `rustc`
 
 ```text
-1. Introduce LinkerBackend; default stays rustc
-2. Add native cc/cl backend; verify on all targets
-3. Add lld backend; verify on all targets          (long-term)
+1. Introduce LinkerBackend; default stays rustc          [done, M-LINK.1]
+2. Add native cc/cl backend; verify on all targets        [done, M-LINK.1; per-OS E2E in M-LINK.3-5]
+3. Add lld backend; verify on all targets                 [backend present, M-LINK.1]
 4. Flip the release default to the native backend
 5. CI clean-environment gate: compile + run with no rustc/cargo on PATH
 6. Remove link_shim.rs and the CARGO_MANIFEST_DIR dependency from production
@@ -369,3 +421,18 @@ Regression:
 **M-LINK.0 DoD met.** T1 link/run is demonstrated on Windows, Linux and both
 macOS architectures. M-LINK.1 is the next milestone and must not rely on
 `rustc`/`cargo` in production.
+
+### M-LINK.1–2 gate
+
+- [x] `vut-linker` split into plan / error / process / target / system_libs /
+      startup / backend modules
+- [x] `LinkerBackend` trait, `Rustc` (default), `System` and `Lld` backends
+- [x] Target profiles and system libraries from the M-LINK.0 measurements
+- [x] No `env!("CARGO_MANIFEST_DIR")` on production paths
+- [x] `LinkError` failure classification
+- [x] `vut-startup` source + resolution + development build; wired through
+      `CompilerConfig`/`LinkPlan`
+- [x] `vut-linker` unit tests, clippy, and full workspace tests pass
+- [x] System backend smoke-tested on Windows (`VUT_LINKER=system` links and runs
+      `fx-core-only` and `fx-stdlib`)
+- [ ] Per-OS system-backend E2E and production default flip (M-LINK.3-6)

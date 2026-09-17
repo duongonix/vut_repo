@@ -1997,6 +1997,9 @@ dependencies = [
 [[package]]
 name = "vut-linker"
 version = "0.1.0"
+dependencies = [
+ "target-lexicon",
+]
 
 [[package]]
 name = "vut-lsp"
