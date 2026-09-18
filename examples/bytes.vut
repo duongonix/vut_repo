@@ -1,58 +1,76 @@
+# `bytes` — managed byte buffer: methods, hex, UTF-8, and endian I/O.
+#
+# `bytes` is a contiguous, growable buffer distinct from `str` and `list(u8)`.
+# Fixed-width reads/writes always state their byte order (`_le`/`_be`).
+
 data Packet:
   label: str
   payload: bytes
 
-fn text_or_error(blob: bytes) -> str:
-  match blob.to_str():
-    ok(value): value
-    err(error): "invalid utf-8 at $(error.valid_up_to) len $(error.error_len)"
-
-fn read_text(blob: bytes) -> result(str, Utf8Error):
-  value = blob.to_str()?
-  ok(value)
-
 fn main():
-  greeting = "Xin chào Vút"
-  blob = greeting.to_bytes()
-  out("bytes: $(blob.len())")
-  out("first: $(blob.first()) last: $(blob.last())")
+  blob = bytes()
+  blob.push(104)
+  blob.push(105)
+  out("blob:", blob)
 
-  copied = blob
-  copied.set(0, 86)
-  out(text_or_error(blob))
-  out(text_or_error(copied))
+  extra: list(u8) = @(33, 33)
+  suffix = bytes.from_list(extra)
+  blob.extend(suffix)
+  out("extended:", blob)
 
-  part = blob.slice(0, 3)
-  out("slice: $(part.len()) $(text_or_error(part))")
+  out("find:", blob.find(suffix))
+  out("starts_with:", blob.starts_with(suffix), "ends_with:", blob.ends_with(suffix))
+  out("compare:", blob.compare(suffix))
 
-  empty = bytes()
-  out("empty: $(empty.is_empty())")
-  empty.reserve(64)
-  out("capacity ok: $(empty.capacity() >= 64)")
+  blob.truncate(2)
+  out("truncated:", blob)
+  blob.resize(4, 65)
+  out("resized:", blob)
 
-  values: list(u8) = blob.to_list()
-  rebuilt = bytes.from_list(values)
-  out("roundtrip: $(text_or_error(rebuilt))")
+  # Hex round-trips; `from_hex` reports the first bad digit via `HexError`.
+  hex = blob.to_hex()
+  out("hex:", hex)
+  match bytes.from_hex(hex):
+    ok(value): out("roundtrip:", value)
+    err(error): out("roundtrip_error:", error.index)
+  match bytes.from_hex("zz"):
+    ok(value): out("bad:", value)
+    err(error): out("bad_index:", error.index)
+  match bytes.from_hex("abc"):
+    ok(value): out("odd:", value)
+    err(error): out("odd_index:", error.index)
 
-  packet = Packet(label = "packet", payload = blob)
-  out("packet: $(packet.payload.len())")
+  # Access and conversion.
+  out("len:", blob.len(), "is_empty:", blob.is_empty())
+  out("first:", blob.first(), "last:", blob.last(), "at(1):", blob.at(1))
+  out("byte_at(1):", blob.byte_at(1))
+  part = blob.slice(0, 2)
+  out("slice:", part)
+  out("capacity_ok:", blob.capacity() >= blob.len())
 
-  many: list(bytes) = @(blob, copied)
-  out("many: $(many.at(0).at(0)) $(many.at(1).at(0))")
+  match blob.to_str():
+    ok(text): out("text:", text)
+    err(error): out("invalid_at:", error.valid_up_to, "error_len:", error.error_len)
 
-  table: map(str, bytes) = map(("greeting", blob))
-  entry = table.get("greeting")
-  out("map: $(entry.len())")
+  packet = Packet(label = "p", payload = blob)
+  out("packet_payload:", packet.payload)
 
-  fixed: array(bytes, 2) = array(blob, copied)
-  out("array: $(fixed.at(0).at(0)) $(fixed.at(1).at(0))")
+  # Explicit-endian fixed-width I/O.
+  buf = bytes()
+  buf.resize(8, 0)
+  buf.write_u32_le(0, 305419896)
+  out("buf_hex:", buf.to_hex())
+  out("read_u32_le:", buf.read_u32_le(0))
+  out("read_u32_be:", buf.read_u32_be(0))
+  buf.write_i16_be(4, 258)
+  out("read_i16_be:", buf.read_i16_be(4))
+  out("read_i16_le:", buf.read_i16_le(4))
+  buf.write_i64_le(0, 0 - 1)
+  out("read_i64_le:", buf.read_i64_le(0))
 
-  binary: list(u8) = @(255, 254)
-  raw = bytes.from_list(binary)
-  out("raw: $(text_or_error(raw))")
-
-  match read_text(blob):
-    ok(text): out("ok: $text")
-    err(error): out("err: $(error.valid_up_to)")
-
-  out("bounds: $(blob.at(999))")
+  # Invalid UTF-8 is reported rather than silently replaced.
+  raw: list(u8) = @(255, 254)
+  broken = bytes.from_list(raw)
+  match broken.to_str():
+    ok(text): out("text:", text)
+    err(error): out("invalid_at:", error.valid_up_to, "error_len:", error.error_len)

@@ -656,3 +656,46 @@ fn variadic_functions_accept_zero_or_more_matching_arguments() {
         codes(&not_last)
     );
 }
+
+#[test]
+fn list_higher_order_builtins_infer_lambda_parameters() {
+    let result = analyze(
+        "fn main():\n  items = @(1, 2, 3)\n  labels = items.map(x => x.to_str())\n  evens = items.filter(x => x % 2 == 0)\n  total = items.fold(0, (acc, x) => acc + x)\n  any = items.any(x => x > 1)\n  all = items.all(x => x > 0)\n  index = items.find_index(x => x == 2)\n  out(labels)\n  out(evens)\n  out(total)\n  out(any)\n  out(all)\n  out(index)\n",
+    );
+    assert!(
+        !result.diagnostics.has_errors(),
+        "{:?}",
+        result.diagnostics.as_slice()
+    );
+    assert!(
+        !codes(&result).contains(&"E1012"),
+        "lambda parameters are inferred from the receiver element type: {:?}",
+        codes(&result)
+    );
+}
+
+#[test]
+fn join_is_only_defined_for_list_str() {
+    let invalid = analyze("fn main():\n  nums = @(1, 2)\n  value = nums.join(\"-\")\n");
+    assert!(codes(&invalid).contains(&"E1028"), "{:?}", codes(&invalid));
+
+    let valid = analyze("fn main():\n  words = @(\"a\", \"b\")\n  value = words.join(\"-\")\n");
+    assert!(
+        !valid.diagnostics.has_errors(),
+        "{:?}",
+        valid.diagnostics.as_slice()
+    );
+}
+
+#[test]
+fn collection_callbacks_are_arity_checked() {
+    let missing = analyze("fn main():\n  items = @(1, 2)\n  value = items.map()\n");
+    assert!(codes(&missing).contains(&"E1003"), "{:?}", codes(&missing));
+
+    let bad_fold = analyze("fn main():\n  items = @(1, 2)\n  value = items.fold(0)\n");
+    assert!(
+        codes(&bad_fold).contains(&"E1003"),
+        "{:?}",
+        codes(&bad_fold)
+    );
+}

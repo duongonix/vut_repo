@@ -98,6 +98,8 @@ pub struct Resolution {
     pub diagnostics: vut_diagnostics::DiagnosticSink,
     /// Builtin nominal `Utf8Error` data type shared by every module.
     pub builtin_utf8_error: SymbolId,
+    /// Builtin nominal `HexError` data type shared by every module.
+    pub builtin_hex_error: SymbolId,
     /// Anonymous functions created by lambda expressions, in resolution order.
     pub lambdas: Vec<LambdaInfo>,
     /// Maps each lambda expression span to its lifted anonymous symbol.

@@ -42,6 +42,7 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::AwaitFuture { value, .. }
         | Instruction::MakeFunction { value, .. }
         | Instruction::Field { value, .. }
+        | Instruction::CopyAggregate { value, .. }
         | Instruction::Construct { value, .. }
         | Instruction::ConstructArray { value, .. }
         | Instruction::ConstructVariadicBuffer { value, .. }
@@ -136,6 +137,7 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
             out.extend(arguments.iter().copied());
         }
         Instruction::Field { base, .. } => out.push(*base),
+        Instruction::CopyAggregate { source, .. } => out.push(*source),
         Instruction::Construct { fields, .. } => {
             out.extend(fields.iter().map(|(_, value)| *value));
         }
@@ -243,6 +245,7 @@ pub(super) fn for_each_operand_mut(
             }
         }
         Instruction::Field { base, .. } => visit(base),
+        Instruction::CopyAggregate { source, .. } => visit(source),
         Instruction::Construct { fields, .. } => {
             for (_, value) in fields.iter_mut() {
                 visit(value);

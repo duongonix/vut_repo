@@ -264,9 +264,14 @@ Feature has been explicitly rejected from the language/toolchain.
 | `bytes` conversions          | Complete    | current |
 | `bytes` bounds safety        | Complete    | current |
 | `bytes` ownership/COW/drop   | Complete    | current |
+| Native `HexError` type       | Complete    | current |
+| `bytes` buffer ops (push/extend/truncate/resize) | Complete | current |
+| `bytes.find` / `starts_with` / `ends_with` / `compare` | Complete | current |
+| `bytes.to_hex` / `bytes.from_hex` (HexError) | Complete | current |
+| Explicit-endian bytes read/write (`_le`/`_be`) | Complete | current |
 | `dyn`                        | Complete    |    07 |
 | `null`                       | Complete    |    07 |
-| Optional `T?`                | Complete    |    07 |
+| Optional `T?`                | In Progress    |    07 |
 | Compiler internal error type | Complete    |    07 |
 
 ---
@@ -287,7 +292,7 @@ Feature has been explicitly rejected from the language/toolchain.
 | `not`                           | Complete    |    07 |
 | Bool-only conditions            | Complete    |    07 |
 | No truthiness                   | Complete    |    07 |
-| Optional/null checking          | Complete    |    07 |
+| Optional/null checking          | In Progress    |    07 |
 | Function-call checking          | Complete    |    08 |
 | Return checking                 | Complete    |    08 |
 | Method-call checking            | Complete    |    08 |
@@ -319,13 +324,29 @@ Feature has been explicitly rejected from the language/toolchain.
 | Array len/at/set/fill        | Complete    |  current |
 | Array first/last             | Complete    |  current |
 | Array iteration              | Complete    |  current |
-| Array `to_list()`            | Not Started |  current |
-| Managed/nested array cleanup | In Progress |  current |
+| Array `to_list()`            | Complete    |  current |
+| Array `contains()`           | Complete    |  current |
+| Array `reverse()` / `sort()` | Complete    |  current |
+| Managed/nested array cleanup | Complete    |  current |
 | `.len()`                     | Complete    | 15/20 |
 | `.is_empty()`                | Complete    |    20 |
 | `.capacity()`                | Complete    | current |
 | `.push()`                    | Complete    | current |
-| `.pop()`                     | Runtime Only |    15 |
+| `.pop()`                     | Complete    | current |
+| `.first()` / `.last()`       | Complete    | current |
+| `.index_of()`                | Complete    | current |
+| `.extend()`                  | Complete    | current |
+| `.reverse()`                 | Complete    | current |
+| `.sort()` (int/float/str/bool) | Complete  | current |
+| `.truncate()`                | Complete    | current |
+| `.swap()`                    | Complete    | current |
+| `.shrink_to_fit()`           | Complete    | current |
+| `.map()` / `.filter()` (compiler-lowered) | Complete | current |
+| `.fold()` (compiler-lowered) | Complete | current |
+| `.any()` / `.all()` (compiler-lowered, short-circuit) | Complete | current |
+| `.find_index()` (compiler-lowered, short-circuit) | Complete | current |
+| `.sort_by()` (compiler-lowered, stable) | Complete | current |
+| `.join()` (`list(str)`, native runtime) | Complete | current |
 | `.at()`                      | Complete    | current |
 | `.set()`                     | Complete    | current |
 | `.slice()`                   | Complete    | current |
@@ -336,6 +357,9 @@ Feature has been explicitly rejected from the language/toolchain.
 | Map get/set/remove           | Complete    | current |
 | Map contains-key/len/clear   | Complete    | current |
 | Map capacity/reserve         | Complete    | current |
+| Map `keys()` (all key types) | Complete    | current |
+| Map `values()`               | Complete    | current |
+| Map `get_or()`               | Complete    | current |
 
 ---
 
@@ -417,9 +441,9 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Method-call type checking      | Complete    |    08 |
 | Method privacy                 | Complete    |    08 |
 | Generated `Type()` constructor | Complete    |    09 |
-| Static methods                 | Deferred    |     — |
-| Extension methods              | Deferred    |     — |
-
+| Static methods                 | Complete    |  08/11 |
+| Extension methods (same module) | Complete   |    05 |
+| Extension methods (cross module)| Deferred   |     - |
 ---
 
 # 15. Control Flow
@@ -448,7 +472,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 
 | Feature                              | Status      | Phase |
 | ------------------------------------ | ----------- | ----: |
-| Interface declarations               | Not Started |    11 |
+| Interface declarations               | Complete    |    11 |
 | Structural satisfaction              | Complete    |    11 |
 | Automatic satisfaction               | Complete    |    11 |
 | Public-method-only satisfaction      | Complete    |    11 |
@@ -482,7 +506,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Cleanup insertion              | Complete    |     12 |
 | Early-return cleanup           | Complete    |     12 |
 | Break cleanup                  | Complete    |     12 |
-| Error-propagation cleanup      | Not Started |     12 |
+| Error-propagation cleanup      | Complete    |     12 |
 | No tracing GC                  | Complete    | Design |
 | No source-level borrow checker | Complete    | Design |
 | No manual free in safe Vut     | Complete    | Design |
@@ -522,16 +546,16 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | ------------------- | ----------- | ----: |
 | Backend abstraction | Complete    |    13 |
 | Cranelift backend   | Complete    |    13 |
-| MIR lowering        | In Progress |    13 |
+| MIR lowering        | Complete    |    13 |
 | Primitive lowering  | Complete    |    13 |
-| Function codegen    | In Progress |    13 |
-| Method codegen      | In Progress |    13 |
+| Function codegen    | Complete    |    13 |
+| Method codegen      | Complete    |    13 |
 | Direct static calls | Complete    |    13 |
 | Branch codegen      | Complete    |    13 |
 | Arithmetic          | Complete    |    13 |
 | Comparisons         | Complete    |    13 |
-| Return ABI          | In Progress |    13 |
-| Data layouts        | In Progress |    13 |
+| Return ABI          | Complete    |    13 |
+| Data layouts        | Complete    |    13 |
 | Field offsets       | Complete    |    13 |
 | Object emission     | Complete    |    13 |
 | Native linking      | Complete    |    13 |
@@ -570,7 +594,8 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Feature                               | Status      |    Phase |
 | ------------------------------------- | ----------- | -------: |
 | UTF-8 `str`                           | Complete    |    14/15 |
-| Static string literals                | Not Started |    13/14 |
+| Static string literals (rodata)       | Complete    |    13/14 |
+| Zero-alloc string literals            | Not Started |  current |
 | String length APIs                    | Complete    |       15 |
 | Byte length                           | Complete    |       15 |
 | Character length                      | Complete    |       15 |
@@ -580,11 +605,23 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Trim                                  | Complete    |       15 |
 | Case conversion                       | Complete    |       15 |
 | Replace                               | Complete    |       15 |
-| Split                                 | Runtime Only |       15 |
-| Lines                                 | Runtime Only |       15 |
+| Split                                 | Complete    |    current |
+| Lines                                 | Complete    |    current |
+| Split whitespace                      | Complete    |    current |
+| `chars` / `char_at` (Unicode scalar)  | Complete    |    current |
+| `repeat` / `pad_left` / `pad_right`   | Complete    |    current |
+| `strip_prefix` / `strip_suffix`       | Complete    |    current |
+| `rfind` / `compare`                   | Complete    |    current |
+| `to_int` / `to_float` aliases         | Complete    |    current |
 | Numeric `.to_str()`                   | Complete     |       20 |
-| Template strings                      | Not Started | 02/03/15 |
-| `$identifier` formatting              | Not Started |       15 |
+| Numeric `abs`/`min`/`max`/`clamp`     | Complete     |  current |
+| `int.pow` / `float.pow`               | Complete     |  current |
+| Float `floor`/`ceil`/`round`/`trunc`/`sqrt` | Complete | current |
+| `float.to_int` / `is_nan` / `is_finite` | Complete   |  current |
+| `bool.to_str`                         | Complete     |  current |
+| `result.is_ok` / `is_err` / `unwrap_or` | Complete   |  current |
+| Template strings                      | Complete    | 02/03/15 |
+| `$identifier` formatting              | Complete    |       15 |
 | `$(expression)` formatting            | Complete    |       15 |
 | Static type checking of interpolation | Complete    |    07/15 |
 | Runtime-free expression parsing       | Complete    |    02/03 |
@@ -619,14 +656,19 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Feature                 | Status      | Phase |
 | ----------------------- | ----------- | ----: |
 | `std.core`              | Complete    |    15 |
-| `std.collections`       | Complete    |    15 |
+| `std.collections`       | Removed (builtin `list` methods) | current |
 | `std.string`            | Complete    |    15 |
 | `std.io`                | Complete    |    15 |
 | `std.fs`                | Complete    |    15 |
 | `std.env`               | Complete    |    15 |
-| `std.math`              | Complete    |    15 |
+| `std.math`              | Not Started |     - |
+| `std.path`              | Complete    |    15 |
+| `std.os`                | Complete    |    15 |
+| `std.process`           | Complete    |    15 |
+| `std.http`              | Complete    | current |
+| `std.json`              | Complete    | current |
 | `std.time`              | Complete    |    15 |
-| Optional support        | Complete    |    15 |
+| Optional support        | In Progress |    15 |
 | Result support          | Complete    |    15 |
 | Numeric conversions     | Complete    |    15 |
 | String conversions      | Complete    |    15 |
@@ -642,7 +684,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Feature                                | Status      |  Phase |
 | -------------------------------------- | ----------- | -----: |
 | Result-style error handling            | Complete    |     15 |
-| Optional absence                       | Complete    |  07/15 |
+| Optional absence                       | In Progress |  07/15 |
 | `?` propagation                        | Complete    |  10/15 |
 | No exception-driven core model         | Complete    | Design |
 | Panic for programmer/invariant failure | Complete    |  14/15 |
@@ -863,7 +905,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Template strings          | Not Started |    19 |
 | Interface dispatch        | Complete    |    19 |
 | Devirtualized interface   | Not Started |    19 |
-| Dyn values                | In Progress |    19 |
+| Dyn values                | Complete    |    19 |
 | Allocation-heavy workload | Not Started |    19 |
 | Peak-memory tracking      | Not Started |    19 |
 | Incremental warm build    | Complete    |    19 |
@@ -881,8 +923,8 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Full generic declaration syntax  | Deferred |
 | Generic constraints              | Deferred |
 | Payload-enum final syntax        | Complete |
-| Static methods                   | Deferred |
-| Extension methods                | Deferred |
+| Static methods                   | Complete |
+| Extension methods (same module)  | Complete |
 | General overloading              | Deferred |
 | Non-capturing lambdas            | Complete |
 | Capturing closures               | Deferred |
@@ -911,7 +953,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | REPL               | Deferred |
 | JIT                | Deferred |
 | VM backend         | Deferred |
-| LSP                | Deferred |
+| LSP                | In Progress |
 | Debugger           | Deferred |
 | Package publishing | Deferred |
 | VPM authentication | Deferred |

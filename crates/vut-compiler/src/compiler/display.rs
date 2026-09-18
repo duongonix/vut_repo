@@ -161,6 +161,12 @@ fn visit_expr(expr: &mut Expr, visitor: &mut Visitor<'_, '_>) {
                     let Some(ty) = visitor.type_of(value) else {
                         continue;
                     };
+                    if matches!(visitor.semantics.types[ty.0], Type::Error) {
+                        // A value that failed to type-check must stay in the
+                        // program so the final check reports the original error
+                        // instead of hiding it behind a placeholder conversion.
+                        continue;
+                    }
                     if !needs_display(visitor.semantics, ty) {
                         continue;
                     }
@@ -286,6 +292,12 @@ impl Visitor<'_, '_> {
             let Some(ty) = self.type_of(&argument.value) else {
                 return;
             };
+            if matches!(self.semantics.types[ty.0], Type::Error) {
+                // Leave the call unchanged when an argument failed to
+                // type-check: rewriting it would replace the offending
+                // expression with a placeholder and swallow the error.
+                return;
+            }
             let displayed = if is_str(self.semantics, ty) {
                 argument.value.clone()
             } else {
@@ -468,7 +480,7 @@ impl<'a> Generator<'a> {
     fn sequence_body(&mut self, element: TypeId) -> String {
         let display = self.display_call(element, "item");
         format!(
-            "  result = \"[\"\n  first = true\n  for item in value:\n    if first:\n      first = false\n    else:\n      result = result + \", \"\n    result = result + {display}\n  result + \"]\""
+            "  __vut_disp_result = \"[\"\n  __vut_disp_first = true\n  for item in value:\n    if __vut_disp_first:\n      __vut_disp_first = false\n    else:\n      __vut_disp_result = __vut_disp_result + \", \"\n    __vut_disp_result = __vut_disp_result + {display}\n  __vut_disp_result + \"]\""
         )
     }
 

@@ -581,3 +581,88 @@ fn converts_iterable_loop_over_a_local_into_a_poll_state_machine() {
         "the iterator state gets a frame region"
     );
 }
+#[test]
+fn higher_order_builtins_lower_inline_without_a_runtime_callback() {
+    let p = program(
+        "fn double(x: int) -> int:\n  x * 2\nfn keep(x: int) -> bool:\n  x > 0\nfn combine(acc: int, x: int) -> int:\n  acc + x\nfn compare(a: int, b: int) -> int:\n  a - b\nfn main():\n  items = @(1, 2, 3)\n  items.map(double)\n  items.filter(keep)\n  items.fold(0, combine)\n  items.any(keep)\n  items.all(keep)\n  items.find_index(keep)\n  items.sort_by(compare)\n",
+    );
+    let instructions: Vec<_> = p
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let indirect = instructions
+        .iter()
+        .filter(|item| matches!(item, Instruction::CallIndirect { .. }))
+        .count();
+    assert!(
+        indirect >= 7,
+        "each higher-order builtin invokes its callback through a normal call: {indirect}"
+    );
+    assert!(
+        !instructions.iter().any(
+            |item| matches!(item, Instruction::RuntimeCall { function, .. } if matches!(
+                function,
+                BuiltinFunction::ListMap
+                    | BuiltinFunction::ListFilter
+                    | BuiltinFunction::ListFold
+                    | BuiltinFunction::ListAny
+                    | BuiltinFunction::ListAll
+                    | BuiltinFunction::ListFindIndexBy
+                    | BuiltinFunction::ListSortBy
+            ))
+        ),
+        "higher-order builtins never reach a native runtime call"
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|item| matches!(item, Instruction::IteratorInit { .. }))
+    );
+}
+#[test]
+fn short_circuit_builtins_jump_directly_to_the_loop_exit() {
+    let p = program(
+        "fn main():\n  items = @(1, 2, 3)\n  items.any(keep)\n\nfn keep(x: int) -> bool:\n  x > 2\n",
+    );
+    let function = p
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|item| matches!(item, Instruction::IteratorInit { .. }))
+        })
+        .expect("the `any` call lowers to an iterator loop");
+    let has_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|item| match item {
+            Instruction::IteratorNext { has_value, .. } => Some(*has_value),
+            _ => None,
+        })
+        .expect("the loop calls IteratorNext");
+    let exit = function
+        .blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Branch {
+                condition,
+                else_block,
+                ..
+            } if *condition == has_value => Some(*else_block),
+            _ => None,
+        })
+        .expect("the loop header branches to the exit");
+    assert!(
+        function
+            .blocks
+            .iter()
+            .any(|block| matches!(&block.terminator, Terminator::Jump(target) if *target == exit)),
+        "a short-circuiting builtin must jump straight to the loop exit"
+    );
+}

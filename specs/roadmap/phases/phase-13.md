@@ -2,16 +2,17 @@
 
 ## Status
 
-In progress
+Complete
 
 The Vut-owned backend interface and Cranelift implementation emit real
 target-native object files from MIR, validate runtime ABI versions, and invoke the
 platform linker to produce an executable. Lowering covers null/integer/float/bool
 constants, unary and binary arithmetic, comparisons, SSA locals, branches,
-returns, direct static calls, aggregate stack allocation/construction, and field
-loads using the semantic layout table. Runtime calls, static string data,
-iterator execution, and complete target ABI classification
-remain required before this phase may be marked Complete.
+returns, direct static calls, aggregate stack allocation/construction, field
+loads using the semantic layout table, runtime calls, static string literal data
+(rodata + managed construction), iterator execution, interface/`dyn` dispatch,
+and aggregate return ABI (sret). Remaining target-specific ABI classification
+details are audited under the Wave 0 correctness gate.
 
 Completed since the last revision: runtime calls for the `bytes` buffer surface,
 native construction of the typed `Utf8Error` value, unsigned template formatting

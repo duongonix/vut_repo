@@ -57,13 +57,19 @@ impl Resolver {
         self.resolve_method_declarations();
         self.resolve_function_receivers();
         let compile_order = self.detect_cycles();
-        let (references, builtin_utf8_error, lambdas, lambda_symbols, implicit_receiver_methods) =
-            crate::scope::resolve_bodies(
-                &self.modules,
-                &mut self.symbols,
-                &mut self.diagnostics,
-                &self.trailing_receivers,
-            );
+        let (
+            references,
+            builtin_utf8_error,
+            builtin_hex_error,
+            lambdas,
+            lambda_symbols,
+            implicit_receiver_methods,
+        ) = crate::scope::resolve_bodies(
+            &self.modules,
+            &mut self.symbols,
+            &mut self.diagnostics,
+            &self.trailing_receivers,
+        );
         self.diagnostics.sort_deterministically();
         let graph = self
             .graph_edges
@@ -78,6 +84,7 @@ impl Resolver {
             compile_order,
             diagnostics: self.diagnostics,
             builtin_utf8_error,
+            builtin_hex_error,
             lambdas,
             lambda_symbols,
             implicit_receiver_methods,

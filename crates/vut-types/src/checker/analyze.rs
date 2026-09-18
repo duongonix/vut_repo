@@ -33,6 +33,7 @@ impl<'a> Analyzer<'a> {
             opaque_data: HashSet::new(),
             attributes: AttributeSemantics::default(),
             builtin_utf8_error: resolution.builtin_utf8_error,
+            builtin_hex_error: resolution.builtin_hex_error,
             reference_symbols: resolution
                 .references
                 .iter()
@@ -207,6 +208,20 @@ impl<'a> Analyzer<'a> {
             }
             data_fields.insert(self.builtin_utf8_error, builtin);
         }
+        if let Some(fields) = self.fields.get(&self.builtin_hex_error) {
+            let mut builtin = Vec::new();
+            for name in ["index"] {
+                if let Some(field) = fields.get(name) {
+                    builtin.push(DataFieldInfo {
+                        name: name.to_owned(),
+                        ty: field.ty,
+                        required: field.required,
+                        public: field.public,
+                    });
+                }
+            }
+            data_fields.insert(self.builtin_hex_error, builtin);
+        }
         for (symbol, order) in &self.data_field_order {
             if !self.instance_symbols.contains_key(symbol)
                 || self.symbol_kind(*symbol) != vut_resolver::SymbolKind::Data
@@ -331,6 +346,7 @@ impl<'a> Analyzer<'a> {
             "str" => self.intern(Type::Str),
             "bytes" => self.intern(Type::Bytes),
             "Utf8Error" => self.intern(Type::Data(self.builtin_utf8_error)),
+            "HexError" => self.intern(Type::Data(self.builtin_hex_error)),
             "dyn" => self.intern(Type::Dyn),
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize"
             | "f32" | "f64" => self.intern(Type::Numeric(name.into())),
@@ -679,6 +695,7 @@ impl<'a> Analyzer<'a> {
         }
         self.detect_recursive_enums();
         self.collect_builtin_utf8_error();
+        self.collect_builtin_hex_error();
     }
     /// Rejects enums whose variants contain themselves by value, which would
     /// have infinite size. Recursive structures must use an indirect container
@@ -738,6 +755,19 @@ impl<'a> Analyzer<'a> {
             },
         );
         self.fields.insert(self.builtin_utf8_error, fields);
+    }
+    pub(super) fn collect_builtin_hex_error(&mut self) {
+        let int = self.intern(Type::Int);
+        let mut fields = HashMap::new();
+        fields.insert(
+            "index".to_owned(),
+            Field {
+                ty: int,
+                required: true,
+                public: true,
+            },
+        );
+        self.fields.insert(self.builtin_hex_error, fields);
     }
     pub(super) fn collect_signatures(&mut self) {
         for module in &self.resolution.modules {

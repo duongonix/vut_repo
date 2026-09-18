@@ -1,12 +1,20 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::SystemTime,
+};
 use vut_compiler::{CompilerConfig, CompilerSession};
+
+static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn project(source: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("system clock must be after the Unix epoch")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("vut-method-syntax-{nonce}"));
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("vut-method-syntax-{nonce}-{sequence}"));
     fs::create_dir(&root).expect("create test source root");
     fs::write(root.join("main.vut"), source).expect("write test module");
     root

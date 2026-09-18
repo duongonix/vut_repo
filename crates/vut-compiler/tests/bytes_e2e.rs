@@ -56,11 +56,11 @@ fn bytes_conversions_preserve_exact_contents() {
 #[test]
 fn bytes_buffer_methods_are_bounds_safe_and_complete() {
     let source = format!(
-        "{DECODE}fn main():\n  empty = bytes()\n  out(\"$(empty.is_empty()) $(empty.len())\")\n  blob = \"abc\".to_bytes()\n  out(\"$(blob.len()) $(blob.at(1)) $(blob.first()) $(blob.last())\")\n  blob.set(1, 90)\n  out(\"$(blob.at(1))\")\n  sliced = blob.slice(1, 3)\n  out(\"$(sliced.len())\")\n  out(text_of(sliced))\n  blob.clear()\n  out(\"$(blob.is_empty()) $(blob.len())\")\n  out(\"$(blob.at(99)) $(blob.first()) $(blob.last())\")\n  out(\"$(blob.slice(5, 9).len())\")\n"
+        "{DECODE}fn main():\n  empty = bytes()\n  out(\"$(empty.is_empty()) $(empty.len())\")\n  blob = \"abc\".to_bytes()\n  out(\"$(blob.len()) $(blob.at(1)) $(blob.first()) $(blob.last())\")\n  blob.set(1, 90)\n  out(\"$(blob.at(1))\")\n  sliced = blob.slice(1, 3)\n  out(\"$(sliced.len())\")\n  out(text_of(sliced))\n  blob.clear()\n  out(\"$(blob.is_empty()) $(blob.len())\")\n  out(\"$(blob.first()) $(blob.last())\")\n  out(\"$(blob.slice(5, 9).len())\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(stdout, "1 0\n3 98 97 99\n90\n2\nZc\n1 0\n0 0 0\n0\n");
+    assert_eq!(stdout, "1 0\n3 98 97 99\n90\n2\nZc\n1 0\n0 0\n0\n");
 }
 
 #[test]

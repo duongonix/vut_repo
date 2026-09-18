@@ -1454,6 +1454,10 @@ Safe collection access must enforce bounds.
 
 Compiler may eliminate bounds checks when proven redundant.
 
+An invalid explicit index (`at`, `set`, `insert`, `remove`) traps via the shared
+runtime bounds-panic path instead of returning a fabricated element; accessors
+with their own fallback contracts (`first`, `last`, `pop`, `char_at`) keep them.
+
 Example:
 
 ```vut

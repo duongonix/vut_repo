@@ -419,6 +419,12 @@ These are recorded separately and must not be mistaken for linking regressions.
    linking; it is a memory-ownership bug in generated enum teardown that was not
    previously exercised on Linux/macOS because baseline CI fail-fast stopped at
    the `vpm` test.
+
+   Wave 0 ownership hardening (aggregate field reads copy instead of releasing in
+   place, managed array elements are owned by the array, builtin receivers borrow
+   fields, `for` borrows collection fields) addresses the same over-release class
+   of bug. The crash is **not yet re-verified on Linux/macOS**; the Wave 0 3-OS
+   gate must confirm it before this note is removed.
 2. **`vpm` unit test failure.** `crates/vpm/src/testing.rs:123`
    (`runner_filters_captures_and_reports_deterministically`) fails on Linux and
    macOS. Unrelated to M-LINK.0.

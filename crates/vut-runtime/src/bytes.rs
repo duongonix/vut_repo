@@ -161,6 +161,14 @@ pub unsafe extern "C" fn vut_rt_bytes_at_v1(
     index: usize,
     out: *mut u8,
 ) -> u8 {
+    let length = unsafe { bytes_ref(value) }.map_or(0, Vec::len);
+    if index >= length {
+        crate::abi::vut_rt_bounds_panic_v1(
+            crate::abi::bounds_op::BYTES_AT,
+            crate::abi::signed_index(index),
+            i64::try_from(length).unwrap_or(i64::MAX),
+        );
+    }
     let reference = unsafe { bytes_ref(value) };
     let byte = reference
         .and_then(|value| value.get(index))
@@ -169,7 +177,7 @@ pub unsafe extern "C" fn vut_rt_bytes_at_v1(
     if !out.is_null() {
         unsafe { *out = byte };
     }
-    u8::from(reference.is_some_and(|value| index < value.len()))
+    1
 }
 
 #[unsafe(no_mangle)]
@@ -183,6 +191,13 @@ pub unsafe extern "C" fn vut_rt_bytes_set_v1(
     let Some(value) = (unsafe { bytes_mut(value) }) else {
         return 0;
     };
+    if index >= value.len() {
+        crate::abi::vut_rt_bounds_panic_v1(
+            crate::abi::bounds_op::BYTES_SET,
+            crate::abi::signed_index(index),
+            i64::try_from(value.len()).unwrap_or(i64::MAX),
+        );
+    }
     let Some(slot) = value.get_mut(index) else {
         return 0;
     };
@@ -194,7 +209,15 @@ pub unsafe extern "C" fn vut_rt_bytes_set_v1(
 /// # Safety
 /// `value` must be null or a live managed-bytes handle and `out` writable.
 pub unsafe extern "C" fn vut_rt_bytes_first_v1(value: *const ManagedBytes, out: *mut u8) -> u8 {
-    unsafe { vut_rt_bytes_at_v1(value, 0, out) }
+    let len = unsafe { vut_rt_bytes_len_v1(value) };
+    if len == 0 {
+        if !out.is_null() {
+            unsafe { *out = 0 };
+        }
+        0
+    } else {
+        unsafe { vut_rt_bytes_at_v1(value, 0, out) }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -298,4 +321,254 @@ pub unsafe extern "C" fn vut_rt_bytes_byte_at_v1(value: *const ManagedBytes, ind
         return -1;
     };
     data.get(index).map_or(-1, |byte| i64::from(*byte))
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle.
+pub unsafe extern "C" fn vut_rt_bytes_push_v1(value: *mut ManagedBytes, byte: usize) {
+    if let Some(value) = unsafe { bytes_mut(value) } {
+        value.push(u8::try_from(byte).unwrap_or(0));
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-bytes handles.
+pub unsafe extern "C" fn vut_rt_bytes_extend_v1(
+    value: *mut ManagedBytes,
+    source: *const ManagedBytes,
+) {
+    let Some(source) = (unsafe { bytes_ref(source) }) else {
+        return;
+    };
+    let extension = source.clone();
+    if let Some(value) = unsafe { bytes_mut(value) } {
+        value.extend_from_slice(&extension);
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle.
+pub unsafe extern "C" fn vut_rt_bytes_truncate_v1(value: *mut ManagedBytes, len: usize) {
+    if let Some(value) = unsafe { bytes_mut(value) } {
+        value.truncate(len);
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle.
+pub unsafe extern "C" fn vut_rt_bytes_resize_v1(value: *mut ManagedBytes, len: usize, byte: usize) {
+    if let Some(value) = unsafe { bytes_mut(value) } {
+        value.resize(len, u8::try_from(byte).unwrap_or(0));
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-bytes handles. Returns the first
+/// occurrence of `needle` or `-1`.
+pub unsafe extern "C" fn vut_rt_bytes_find_v1(
+    value: *const ManagedBytes,
+    needle: *const ManagedBytes,
+) -> i64 {
+    let Some((value, needle)) = (unsafe { bytes_ref(value) }).zip(unsafe { bytes_ref(needle) })
+    else {
+        return -1;
+    };
+    if needle.is_empty() {
+        return 0;
+    }
+    value
+        .windows(needle.len())
+        .position(|window| window == needle.as_slice())
+        .map_or(-1, |index| i64::try_from(index).unwrap_or(i64::MAX))
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-bytes handles.
+pub unsafe extern "C" fn vut_rt_bytes_starts_with_v1(
+    value: *const ManagedBytes,
+    prefix: *const ManagedBytes,
+) -> u8 {
+    u8::from(
+        (unsafe { bytes_ref(value) })
+            .zip(unsafe { bytes_ref(prefix) })
+            .is_some_and(|(value, prefix)| value.starts_with(prefix.as_slice())),
+    )
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-bytes handles.
+pub unsafe extern "C" fn vut_rt_bytes_ends_with_v1(
+    value: *const ManagedBytes,
+    suffix: *const ManagedBytes,
+) -> u8 {
+    u8::from(
+        (unsafe { bytes_ref(value) })
+            .zip(unsafe { bytes_ref(suffix) })
+            .is_some_and(|(value, suffix)| value.ends_with(suffix.as_slice())),
+    )
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-bytes handles. Returns `-1`,
+/// `0`, or `1` by lexicographic byte order.
+pub unsafe extern "C" fn vut_rt_bytes_compare_v1(
+    left: *const ManagedBytes,
+    right: *const ManagedBytes,
+) -> i64 {
+    match (unsafe { bytes_ref(left) }, unsafe { bytes_ref(right) }) {
+        (Some(left), Some(right)) => match left.cmp(right) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        },
+        _ => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle.
+pub unsafe extern "C" fn vut_rt_bytes_to_hex_v1(
+    value: *const ManagedBytes,
+) -> *mut crate::abi::ManagedString {
+    let text: String = unsafe { bytes_ref(value) }.map_or_else(String::new, |bytes| {
+        let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+        for byte in bytes {
+            text.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
+            text.push(char::from_digit(u32::from(byte & 0x0F), 16).unwrap_or('0'));
+        }
+        text
+    });
+    crate::abi::managed_string(&text)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `text` must be null or a live managed-string handle. Returns null when the
+/// text is not valid even-length hexadecimal.
+pub unsafe extern "C" fn vut_rt_bytes_from_hex_v1(
+    text: *const crate::abi::ManagedString,
+) -> *mut ManagedBytes {
+    let Some(text) = (unsafe { crate::abi::string_value(text) }) else {
+        return std::ptr::null_mut();
+    };
+    let bytes = text.as_str().as_bytes();
+    if bytes.len() % 2 != 0 {
+        return std::ptr::null_mut();
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks(2) {
+        let (Some(high), Some(low)) = (hex_value(pair[0]), hex_value(pair[1])) else {
+            return std::ptr::null_mut();
+        };
+        out.push((high << 4) | low);
+    }
+    ManagedBytes::allocate(out)
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `text` must be null or a live managed-string handle. Returns the byte index
+/// of the first invalid hex digit, or `text.byte_len()` when the digit count is
+/// odd.
+pub unsafe extern "C" fn vut_rt_bytes_from_hex_error_index_v1(
+    text: *const crate::abi::ManagedString,
+) -> i64 {
+    let Some(text) = (unsafe { crate::abi::string_value(text) }) else {
+        return 0;
+    };
+    let bytes = text.as_str().as_bytes();
+    if bytes.len() % 2 != 0 {
+        return i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    }
+    for (index, byte) in bytes.iter().enumerate() {
+        if hex_value(*byte).is_none() {
+            return i64::try_from(index).unwrap_or(i64::MAX);
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle. Reads `width` bytes
+/// (`1..=8`) at `offset` in the requested byte order, zero-extended to `i64`.
+pub unsafe extern "C" fn vut_rt_bytes_read_int_v1(
+    value: *const ManagedBytes,
+    offset: i64,
+    width: usize,
+    big_endian: u8,
+    signed: u8,
+) -> i64 {
+    let Some(data) = (unsafe { bytes_ref(value) }) else {
+        return 0;
+    };
+    let Ok(offset) = usize::try_from(offset) else {
+        return 0;
+    };
+    let width = width.clamp(1, 8);
+    let mut accumulator: i64 = 0;
+    for index in 0..width {
+        let byte = i64::from(data.get(offset.saturating_add(index)).copied().unwrap_or(0));
+        if big_endian != 0 {
+            accumulator = (accumulator << 8) | byte;
+        } else {
+            accumulator |= byte << (8 * index);
+        }
+    }
+    if signed != 0 && width < 8 {
+        let shift = 64 - 8 * width;
+        accumulator = (accumulator << shift) >> shift;
+    }
+    accumulator
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-bytes handle. Writes `width` bytes
+/// (`1..=8`) at `offset` in the requested byte order. Returns `0` when the
+/// target range is out of bounds.
+pub unsafe extern "C" fn vut_rt_bytes_write_int_v1(
+    value: *mut ManagedBytes,
+    offset: i64,
+    width: usize,
+    big_endian: u8,
+    data: i64,
+) -> u8 {
+    let Some(bytes) = (unsafe { bytes_mut(value) }) else {
+        return 0;
+    };
+    let Ok(offset) = usize::try_from(offset) else {
+        return 0;
+    };
+    let width = width.clamp(1, 8);
+    if offset.saturating_add(width) > bytes.len() {
+        return 0;
+    }
+    for index in 0..width {
+        let shift = if big_endian != 0 {
+            8 * (width - 1 - index)
+        } else {
+            8 * index
+        };
+        bytes[offset + index] = u8::try_from((data >> shift) & 0xFF).unwrap_or(0);
+    }
+    1
 }

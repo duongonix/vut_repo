@@ -80,3 +80,47 @@ fn generic_function_returns_generic_data_parameterized_by_param() {
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "v=5\n");
 }
+
+#[test]
+fn generic_function_calling_generic_function_is_monomorphized() {
+    // Regression: a generic callee whose type argument is the caller's type
+    // parameter must be enqueued and instantiated for the concrete caller
+    // specialization. It previously produced
+    // `invalid typed MIR: call target N has no declaration`.
+    let source = "fn inner(T)(value: T) -> T:\n  value\n\nfn outer(U)(value: U) -> U:\n  inner(value)\n\nfn main():\n  out(\"$(outer(42))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "42\n");
+}
+
+#[test]
+fn nested_generic_chain_of_three_levels_is_monomorphized() {
+    let source = "fn deep(T)(value: T) -> T:\n  value\n\nfn middle(U)(value: U) -> U:\n  deep(value)\n\nfn outer(V)(value: V) -> V:\n  middle(value)\n\nfn main():\n  out(\"$(outer(7))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "7\n");
+}
+
+#[test]
+fn nested_generic_with_managed_type_argument_is_monomorphized() {
+    let source = "fn deep(T)(value: T) -> T:\n  value\n\nfn middle(U)(value: U) -> U:\n  deep(value)\n\nfn outer(V)(value: V) -> V:\n  middle(value)\n\nfn main():\n  text = \"managed\"\n  out(\"$(outer(text))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "managed\n");
+}
+
+#[test]
+fn nested_generic_collection_substitution_is_monomorphized() {
+    let source = "fn inner(T)(values: list(T)) -> int:\n  values.len()\n\nfn outer(U)(values: list(U)) -> int:\n  inner(values)\n\nfn main():\n  out(\"$(outer(@(1, 2, 3)))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "3\n");
+}
+
+#[test]
+fn nested_generic_with_multiple_parameters_is_monomorphized() {
+    let source = "fn inner(A, B)(a: A, b: B) -> A:\n  a\n\nfn outer(X, Y)(x: X, y: Y) -> X:\n  inner(x, y)\n\nfn main():\n  x = 1\n  y = \"two\"\n  out(\"$(outer(x, y))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "1\n");
+}

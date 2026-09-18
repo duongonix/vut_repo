@@ -323,7 +323,7 @@ fn remove_file(path: str) -> result(bool, FsError):
 fn copy(from: str, to: str) -> result(int, FsError):
   raw = _copy(from, to)
   value: result(int, FsError) = if abi.is_ok(raw):
-    _ok_size(abi.payload(raw).read_i64(0))
+    _ok_size(abi.payload(raw).read_i64_le(0))
   else:
     _err_size(abi.status(raw), raw)
   value

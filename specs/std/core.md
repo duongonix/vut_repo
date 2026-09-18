@@ -158,6 +158,27 @@ Expected failures should use:
 result(T, E)
 ```
 
+### Runtime bounds panic (implementation contract)
+
+The compiler and runtime share one panic path for invalid indexes:
+
+```text
+vut_rt_panic_v1(message_ptr: *const u8, message_len: usize) -> !
+vut_rt_bounds_panic_v1(op_id: i64, index: i64, length: i64) -> !
+vut_rt_bounds_check_v1(op_id: i64, index: i64, length: i64) -> i64
+```
+
+- `op_id` selects a human-readable operation name from a single table (for
+  example `list.at`, `bytes.set`, `array.at`); per-type panic entry points are
+  not introduced.
+- `vut_rt_bounds_panic_v1` formats `<op>: index <index> out of range (length <length>)`
+  and delegates to `vut_rt_panic_v1`.
+- `vut_rt_bounds_check_v1` is used by generated code: it traps for an invalid
+  index and otherwise returns the index unchanged.
+- `vut_rt_panic_v1` writes the message to stderr and aborts the process. It does
+  not unwind across the ABI and does not run destructors: an invalid index is a
+  programming error, so terminating is correct and cannot double-free.
+
 ---
 
 ## 10. Min / Max

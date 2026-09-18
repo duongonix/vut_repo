@@ -67,8 +67,8 @@ fn _decode_text(blob: bytes) -> str:
     err(error): ""
 
 fn _build_output(payload: bytes) -> Output:
-  code = payload.read_i32(0)
-  length = payload.read_i32(4)
+  code = payload.read_i32_le(0)
+  length = payload.read_i32_le(4)
   Output(
     exit_code = code,
     stdout = _decode_text(payload.slice(8, 8 + length)),
@@ -99,7 +99,7 @@ fn exit(code: i32):
 fn status(program: str, args: list(str), cwd: str) -> result(int, ProcessError):
   raw = _status(program, args, cwd)
   value: result(int, ProcessError) = if abi.is_ok(raw):
-    _ok_status(abi.payload(raw).read_i32(0))
+    _ok_status(abi.payload(raw).read_i32_le(0))
   else:
     _err_status(abi.status(raw), raw)
   value

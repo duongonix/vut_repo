@@ -251,6 +251,14 @@ pub enum Instruction {
         value: ValueId,
         ty: TypeId,
     },
+    /// Copies an inline aggregate into fresh storage that owns its managed
+    /// fields. Used when an aggregate value (for example an aggregate field of
+    /// a live aggregate) must escape independently of its source.
+    CopyAggregate {
+        value: ValueId,
+        source: ValueId,
+        ty: TypeId,
+    },
     /// Projects a payload field out of an enum value.
     EnumPayload {
         value: ValueId,

@@ -60,6 +60,7 @@ pub mod codes {
     pub const E1024: DiagnosticCode = DiagnosticCode("E1024");
     pub const E1025: DiagnosticCode = DiagnosticCode("E1025");
     pub const E1026: DiagnosticCode = DiagnosticCode("E1026");
+    pub const E1028: DiagnosticCode = DiagnosticCode("E1028");
     pub const E2004: DiagnosticCode = DiagnosticCode("E2004");
     pub const E2005: DiagnosticCode = DiagnosticCode("E2005");
     pub const E2001: DiagnosticCode = DiagnosticCode("E2001");

@@ -444,6 +444,20 @@ is not known at resolution time.
 
 ---
 
+## E1028 — Invalid Collection Method Element Type
+
+Used when a `list(T)` builtin method is applied to an unsupported element type.
+Currently this covers `join`, which is only defined for `list(str)`.
+
+```vut
+nums = @(1, 2, 3)
+nums.join("-")   # E1028: join is only available for list(str)
+```
+
+Map the elements to `str` first (for example with `map`) when joining is needed.
+
+---
+
 ## E1101 — Invalid Assignment
 
 General assignment error not covered by a more specific code.

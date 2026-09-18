@@ -4,12 +4,12 @@
 //! each specialization this module lowers a dedicated copy of the template
 //! function body against a type-substituted view of the semantics, producing
 //! concrete MIR with specialized layouts.
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use vut_hir::{HirDeclaration, HirModule, HirProgram, TypeId};
 use vut_resolver::SymbolId;
 use vut_types::{
-    DataFieldInfo, FunctionSignatureInfo, SemanticResult, VariantFieldInfo, VariantInfo,
+    DataFieldInfo, FunctionSignatureInfo, SemanticResult, Type, VariantFieldInfo, VariantInfo,
 };
 
 use super::{Function, LayoutTable, Program};
@@ -22,6 +22,15 @@ pub(super) struct Instances {
 }
 
 /// Builds the substituted semantics and MIR for every requested specialization.
+///
+/// Instantiation is transitive: a specialization's body may call other generic
+/// functions whose type arguments are that specialization's type parameters.
+/// The worklist applies the current substitution to every recorded generic
+/// call, derives the nested concrete arguments, composes the nested
+/// substitution, and enqueues it, so arbitrarily deep generic chains are
+/// instantiated. Each specialization lowers with its own call-site retargeting
+/// table, because one template span resolves to different instances under
+/// different substitutions.
 pub(super) fn lower_instances(
     hir: &HirProgram,
     semantics: &SemanticResult,
@@ -30,50 +39,75 @@ pub(super) fn lower_instances(
 ) -> Instances {
     let mut next_symbol = next_instance_symbol(hir).max(semantics.next_instance_symbol);
     let mut symbols: HashMap<(SymbolId, Vec<TypeId>), SymbolId> = HashMap::new();
-    let mut call_sites = HashMap::new();
+    let mut substitutions: HashMap<(SymbolId, Vec<TypeId>), HashMap<TypeId, TypeId>> =
+        HashMap::new();
+    let mut queue: VecDeque<(SymbolId, Vec<TypeId>)> = VecDeque::new();
+    let mut base_call_sites = semantics.call_targets.clone();
     let mut functions = Vec::new();
     let mut diagnostics = vut_diagnostics::DiagnosticSink::new();
 
+    // Seed with concrete specializations. Calls recorded inside a generic body
+    // carry type parameters and are derived transitively by the worklist.
     for call in &semantics.generic_function_calls {
-        let key = (call.template, call.arguments.clone());
-        let instance = *symbols.entry(key).or_insert_with(|| {
-            let symbol = SymbolId(next_symbol);
-            next_symbol += 1;
-            symbol
-        });
-        call_sites.insert(call.call_span, instance);
+        if call
+            .arguments
+            .iter()
+            .any(|argument| contains_param(&semantics.types, *argument))
+        {
+            continue;
+        }
+        let substitution = semantics
+            .generic_substitutions
+            .get(&(call.template, call.arguments.clone()))
+            .cloned()
+            .unwrap_or_default();
+        let instance = ensure_instance(
+            &mut symbols,
+            &mut substitutions,
+            &mut queue,
+            &mut next_symbol,
+            call.template,
+            call.arguments.clone(),
+            substitution,
+        );
+        base_call_sites.insert(call.call_span, instance);
     }
 
-    let mut ordered: Vec<((SymbolId, Vec<TypeId>), SymbolId)> = symbols
-        .iter()
-        .map(|(key, value)| (key.clone(), *value))
-        .collect();
-    ordered.sort_by_key(|(_, instance)| instance.0);
-
-    for ((template, arguments), instance) in ordered {
-        let Some(substitution) = semantics
-            .generic_substitutions
-            .get(&(template, arguments.clone()))
-        else {
+    while let Some((template, arguments)) = queue.pop_front() {
+        let Some(instance) = symbols.get(&(template, arguments.clone())).copied() else {
+            continue;
+        };
+        let Some(substitution) = substitutions.get(&(template, arguments.clone())).cloned() else {
             continue;
         };
         let Some(function) = find_function(hir, template) else {
             continue;
         };
-        let instance_semantics = substitute_semantics(semantics, substitution);
-        let mut instance_semantics = instance_semantics;
-        if let Some(signature) = semantics.function_signatures.get(&template) {
-            let map = |ty: TypeId| substitution.get(&ty).copied().unwrap_or(ty);
-            instance_semantics.function_signatures.insert(
-                instance,
-                FunctionSignatureInfo {
-                    receiver: signature.receiver.map(map),
-                    parameters: signature.parameters.iter().copied().map(map).collect(),
-                    variadic: signature.variadic.map(map),
-                    result: map(signature.result),
-                },
-            );
-        }
+        let Some(signature) = semantics.function_signatures.get(&template).cloned() else {
+            continue;
+        };
+
+        let call_sites = instance_call_sites(
+            semantics,
+            &mut symbols,
+            &mut substitutions,
+            &mut queue,
+            &mut next_symbol,
+            &substitution,
+        );
+
+        let mut instance_semantics = substitute_semantics(semantics, &substitution);
+        let map = |ty: TypeId| substitution.get(&ty).copied().unwrap_or(ty);
+        instance_semantics.function_signatures.insert(
+            instance,
+            FunctionSignatureInfo {
+                receiver: signature.receiver.map(map),
+                parameters: signature.parameters.iter().copied().map(map).collect(),
+                variadic: signature.variadic.map(map),
+                result: map(signature.result),
+            },
+        );
+
         let mut instance_function = function.clone();
         instance_function.symbol = instance;
         instance_function.type_parameters = Vec::new();
@@ -98,8 +132,140 @@ pub(super) fn lower_instances(
     let _ = base_layouts;
     Instances {
         functions,
-        call_sites,
+        call_sites: base_call_sites,
         diagnostics,
+    }
+}
+
+/// Registers a concrete specialization and queues it for lowering.
+fn ensure_instance(
+    symbols: &mut HashMap<(SymbolId, Vec<TypeId>), SymbolId>,
+    substitutions: &mut HashMap<(SymbolId, Vec<TypeId>), HashMap<TypeId, TypeId>>,
+    queue: &mut VecDeque<(SymbolId, Vec<TypeId>)>,
+    next_symbol: &mut usize,
+    template: SymbolId,
+    arguments: Vec<TypeId>,
+    substitution: HashMap<TypeId, TypeId>,
+) -> SymbolId {
+    let key = (template, arguments);
+    if let Some(existing) = symbols.get(&key) {
+        return *existing;
+    }
+    let instance = SymbolId(*next_symbol);
+    *next_symbol += 1;
+    symbols.insert(key.clone(), instance);
+    substitutions.insert(key.clone(), substitution);
+    queue.push_back(key);
+    instance
+}
+
+/// Builds the call-site retargeting table for one specialization.
+///
+/// Concrete generic calls keep their recorded substitution; symbolic calls have
+/// the specialization substitution applied to their arguments, and their
+/// substitution is composed so nested chains stay concrete.
+fn instance_call_sites(
+    semantics: &SemanticResult,
+    symbols: &mut HashMap<(SymbolId, Vec<TypeId>), SymbolId>,
+    substitutions: &mut HashMap<(SymbolId, Vec<TypeId>), HashMap<TypeId, TypeId>>,
+    queue: &mut VecDeque<(SymbolId, Vec<TypeId>)>,
+    next_symbol: &mut usize,
+    substitution: &HashMap<TypeId, TypeId>,
+) -> HashMap<vut_source::Span, SymbolId> {
+    let mut call_sites = semantics.call_targets.clone();
+    for call in &semantics.generic_function_calls {
+        let concrete: Vec<TypeId> = call
+            .arguments
+            .iter()
+            .map(|argument| substitution.get(argument).copied().unwrap_or(*argument))
+            .collect();
+        if concrete
+            .iter()
+            .any(|argument| contains_param(&semantics.types, *argument))
+        {
+            continue;
+        }
+        let symbolic = semantics
+            .generic_substitutions
+            .get(&(call.template, call.arguments.clone()));
+        let nested_substitution = if concrete == call.arguments {
+            symbolic.cloned().unwrap_or_default()
+        } else {
+            compose_substitution(&semantics.types, symbolic, substitution)
+        };
+        let nested = ensure_instance(
+            &mut *symbols,
+            &mut *substitutions,
+            &mut *queue,
+            &mut *next_symbol,
+            call.template,
+            concrete,
+            nested_substitution,
+        );
+        call_sites.insert(call.call_span, nested);
+    }
+    resolve_bound_calls(semantics, substitution, &mut call_sites);
+    call_sites
+}
+
+/// Composes a symbolic substitution with the enclosing concrete substitution.
+///
+/// `symbolic` maps a nested template's `TypeId`s into the enclosing template's
+/// type space (possibly still mentioning its parameters); `outer` maps that
+/// space to concrete types.
+fn compose_substitution(
+    types: &[Type],
+    symbolic: Option<&HashMap<TypeId, TypeId>>,
+    outer: &HashMap<TypeId, TypeId>,
+) -> HashMap<TypeId, TypeId> {
+    let mut composed = HashMap::with_capacity(types.len());
+    for index in 0..types.len() {
+        let ty = TypeId(index);
+        let middle = symbolic.and_then(|map| map.get(&ty).copied()).unwrap_or(ty);
+        let final_type = outer.get(&middle).copied().unwrap_or(middle);
+        composed.insert(ty, final_type);
+    }
+    composed
+}
+
+/// Returns true when `ty` mentions a generic type parameter.
+fn contains_param(types: &[Type], ty: TypeId) -> bool {
+    match &types[ty.0] {
+        Type::Param(_) => true,
+        Type::Optional(inner)
+        | Type::List(inner)
+        | Type::Pointer(inner)
+        | Type::Range(inner)
+        | Type::Vutcon(inner)
+        | Type::Future(inner)
+        | Type::Resource(inner)
+        | Type::Variadic(inner) => contains_param(types, *inner),
+        Type::Result(ok, err) => contains_param(types, *ok) || contains_param(types, *err),
+        Type::Array(element, _) => contains_param(types, *element),
+        Type::Map(key, value) => contains_param(types, *key) || contains_param(types, *value),
+        Type::Applied(_, arguments) => arguments
+            .iter()
+            .any(|argument| contains_param(types, *argument)),
+        Type::Callable {
+            receiver,
+            parameters,
+            result,
+        } => {
+            receiver.is_some_and(|ty| contains_param(types, ty))
+                || parameters
+                    .iter()
+                    .any(|parameter| contains_param(types, *parameter))
+                || contains_param(types, *result)
+        }
+        Type::FunctionPointer {
+            parameters, result, ..
+        } => {
+            parameters
+                .iter()
+                .any(|parameter| contains_param(types, *parameter))
+                || contains_param(types, *result)
+        }
+        _ => false,
     }
 }
 

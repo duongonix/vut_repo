@@ -414,3 +414,205 @@ pub unsafe extern "C" fn vut_rt_char_from_code_v1(code: i64) -> *mut ManagedStri
 pub unsafe extern "C" fn vut_rt_int_to_float_v1(value: i64) -> f64 {
     value as f64
 }
+
+/// Copies the string behind `value`, or returns null for a null handle.
+unsafe fn cloned_string(value: *const ManagedString) -> *mut ManagedString {
+    unsafe { string_ref(value) }.map_or(std::ptr::null_mut(), |value| {
+        ManagedString::allocate(value.clone())
+    })
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-string handle. Splits on newlines
+/// with Rust `str::lines` semantics.
+pub unsafe extern "C" fn vut_rt_string_lines_v1(value: *const ManagedString) -> *mut ManagedList {
+    unsafe { string_ref(value) }.map_or(std::ptr::null_mut(), |value| unsafe {
+        super::list::build_string_list(value.as_str().lines().map(str::to_owned))
+    })
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-string handle. Splits on Unicode
+/// whitespace, collapsing runs.
+pub unsafe extern "C" fn vut_rt_string_split_whitespace_v1(
+    value: *const ManagedString,
+) -> *mut ManagedList {
+    unsafe { string_ref(value) }.map_or(std::ptr::null_mut(), |value| unsafe {
+        super::list::build_string_list(value.as_str().split_whitespace().map(str::to_owned))
+    })
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-string handle. Produces one element
+/// per Unicode scalar value.
+pub unsafe extern "C" fn vut_rt_string_chars_v1(value: *const ManagedString) -> *mut ManagedList {
+    unsafe { string_ref(value) }.map_or(std::ptr::null_mut(), |value| unsafe {
+        super::list::build_string_list(value.as_str().chars().map(|c| c.to_string()))
+    })
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-string handle. `index` is a Unicode
+/// scalar offset; an out-of-range index yields the empty string.
+pub unsafe extern "C" fn vut_rt_string_char_at_v1(
+    value: *const ManagedString,
+    index: i64,
+) -> *mut ManagedString {
+    let Some(value) = (unsafe { string_ref(value) }) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(index) = usize::try_from(index) else {
+        return managed_string("");
+    };
+    let text = value
+        .as_str()
+        .chars()
+        .nth(index)
+        .map_or_else(String::new, |c| c.to_string());
+    managed_string(&text)
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` must be null or a live managed-string handle. `count <= 0` or an
+/// overflowing result yields the empty string.
+pub unsafe extern "C" fn vut_rt_string_repeat_v1(
+    value: *const ManagedString,
+    count: i64,
+) -> *mut ManagedString {
+    let Some(value) = (unsafe { string_ref(value) }) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(count) = usize::try_from(count) else {
+        return managed_string("");
+    };
+    if count == 0 || value.as_str().len().checked_mul(count).is_none() {
+        return managed_string("");
+    }
+    managed_string(&value.as_str().repeat(count))
+}
+
+fn pad(value: &str, width: i64, fill: *const ManagedString, left: bool) -> *mut ManagedString {
+    let Ok(width) = usize::try_from(width) else {
+        return managed_string(value);
+    };
+    let fill = unsafe { string_ref(fill) }.map_or("", crate::VutString::as_str);
+    let mut fill_chars = fill.chars();
+    let (Some(fill_char), None) = (fill_chars.next(), fill_chars.next()) else {
+        // The fill must be exactly one Unicode scalar.
+        return managed_string(value);
+    };
+    let current = value.chars().count();
+    if current >= width {
+        return managed_string(value);
+    }
+    let padding: String = std::iter::repeat_n(fill_char, width - current).collect();
+    let text = if left {
+        format!("{padding}{value}")
+    } else {
+        format!("{value}{padding}")
+    };
+    managed_string(&text)
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `value` and `fill` must be null or live managed-string handles. `width` is a
+/// Unicode scalar width; `fill` must be exactly one scalar or `value` is
+/// returned unchanged.
+pub unsafe extern "C" fn vut_rt_string_pad_left_v1(
+    value: *const ManagedString,
+    width: i64,
+    fill: *const ManagedString,
+) -> *mut ManagedString {
+    let Some(value) = (unsafe { string_ref(value) }) else {
+        return std::ptr::null_mut();
+    };
+    pad(value.as_str(), width, fill, true)
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// See [`vut_rt_string_pad_left_v1`].
+pub unsafe extern "C" fn vut_rt_string_pad_right_v1(
+    value: *const ManagedString,
+    width: i64,
+    fill: *const ManagedString,
+) -> *mut ManagedString {
+    let Some(value) = (unsafe { string_ref(value) }) else {
+        return std::ptr::null_mut();
+    };
+    pad(value.as_str(), width, fill, false)
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-string handles. Returns the
+/// original string when the prefix is absent.
+pub unsafe extern "C" fn vut_rt_string_strip_prefix_v1(
+    value: *const ManagedString,
+    prefix: *const ManagedString,
+) -> *mut ManagedString {
+    let Some((text, prefix)) = (unsafe { string_ref(value) }).zip(unsafe { string_ref(prefix) })
+    else {
+        return unsafe { cloned_string(value) };
+    };
+    match text.as_str().strip_prefix(prefix.as_str()) {
+        Some(stripped) => managed_string(stripped),
+        None => ManagedString::allocate(text.clone()),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-string handles. Returns the
+/// original string when the suffix is absent.
+pub unsafe extern "C" fn vut_rt_string_strip_suffix_v1(
+    value: *const ManagedString,
+    suffix: *const ManagedString,
+) -> *mut ManagedString {
+    let Some((text, suffix)) = (unsafe { string_ref(value) }).zip(unsafe { string_ref(suffix) })
+    else {
+        return unsafe { cloned_string(value) };
+    };
+    match text.as_str().strip_suffix(suffix.as_str()) {
+        Some(stripped) => managed_string(stripped),
+        None => ManagedString::allocate(text.clone()),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-string handles. Returns the byte
+/// index of the last match, or `-1`.
+pub unsafe extern "C" fn vut_rt_string_rfind_v1(
+    value: *const ManagedString,
+    needle: *const ManagedString,
+) -> i64 {
+    unsafe { string_ref(value) }
+        .zip(unsafe { string_ref(needle) })
+        .and_then(|(value, needle)| value.as_str().rfind(needle.as_str()))
+        .map_or(-1, |index| i64::try_from(index).unwrap_or(i64::MAX))
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// Both arguments must be null or live managed-string handles. Returns
+/// `-1`, `0`, or `1` by lexicographic Unicode-scalar order.
+pub unsafe extern "C" fn vut_rt_string_compare_v1(
+    left: *const ManagedString,
+    right: *const ManagedString,
+) -> i64 {
+    match (unsafe { string_ref(left) }, unsafe { string_ref(right) }) {
+        (Some(left), Some(right)) => match left.as_str().cmp(right.as_str()) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        },
+        _ => 0,
+    }
+}

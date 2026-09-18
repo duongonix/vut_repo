@@ -312,8 +312,62 @@ impl Analyzer<'_> {
                     false
                 }
             }
+            Type::Callable {
+                receiver,
+                parameters,
+                result,
+            } => self.unify_callable(receiver, &parameters, result, actual, map),
             _ => self.types[formal.0] == self.types[actual.0],
         }
+    }
+
+    /// Unifies a formal callable type with a concrete function value so generic
+    /// parameters mentioned only in callback positions (`fn(T) -> U`) can be
+    /// inferred and checked.
+    fn unify_callable(
+        &mut self,
+        receiver: Option<TypeId>,
+        parameters: &[TypeId],
+        result: TypeId,
+        actual: TypeId,
+        map: &mut HashMap<SymbolId, TypeId>,
+    ) -> bool {
+        let (actual_receiver, actual_parameters, actual_result) = match self.types[actual.0].clone()
+        {
+            Type::Callable {
+                receiver,
+                parameters,
+                result,
+            } => (receiver, parameters, result),
+            Type::FunctionPointer {
+                parameters, result, ..
+            } => (None, parameters, result),
+            Type::Function(symbol) => {
+                let Some(signature) = self.signatures.get(&symbol).cloned() else {
+                    return false;
+                };
+                (
+                    self.receiver_functions.get(&symbol).copied(),
+                    signature.parameters.into_iter().map(|(_, ty)| ty).collect(),
+                    signature.result,
+                )
+            }
+            _ => return false,
+        };
+        if receiver.is_some() != actual_receiver.is_some() {
+            return false;
+        }
+        if let (Some(formal), Some(actual)) = (receiver, actual_receiver)
+            && !self.unify(formal, actual, map)
+        {
+            return false;
+        }
+        parameters.len() == actual_parameters.len()
+            && parameters
+                .iter()
+                .zip(actual_parameters.iter())
+                .all(|(formal, actual)| self.unify(*formal, *actual, map))
+            && self.unify(result, actual_result, map)
     }
 
     /// Type-checks a call to a generic function, infers its arguments, records
@@ -414,19 +468,19 @@ impl Analyzer<'_> {
         self.substitute_type(signature.result, &map)
     }
 
-    /// Records the full `TypeId` substitution for one concrete specialization.
+    /// Records the full `TypeId` substitution for one specialization.
+    ///
+    /// Substitutions are recorded even when the call's type arguments still
+    /// mention type parameters (a call inside a generic body). Monomorphization
+    /// composes such symbolic substitutions with the enclosing specialization
+    /// to derive the concrete nested substitution, which is what makes nested
+    /// generic chains instantiate correctly.
     pub(super) fn record_substitution(
         &mut self,
         template: SymbolId,
         arguments: &[TypeId],
         map: &HashMap<SymbolId, TypeId>,
     ) {
-        if arguments
-            .iter()
-            .any(|argument| self.type_contains_param(*argument))
-        {
-            return;
-        }
         let count = self.types.len();
         let mut substitution = HashMap::new();
         for index in 0..count {

@@ -428,7 +428,10 @@ impl Analyzer<'_> {
 
     /// Returns the receiver, parameter types, and result of a callable type, or
     /// `None` when the type is not callable.
-    fn callable_shape(&mut self, ty: TypeId) -> Option<(Option<TypeId>, Vec<TypeId>, TypeId)> {
+    pub(super) fn callable_shape(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<(Option<TypeId>, Vec<TypeId>, TypeId)> {
         match self.types[ty.0].clone() {
             Type::Function(symbol) => {
                 let receiver = self.receiver_functions.get(&symbol).copied();

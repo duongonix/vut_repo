@@ -3,7 +3,7 @@ use std::fmt;
 use target_lexicon::Triple;
 use vut_mir::Program;
 
-pub const RUNTIME_ABI_VERSION: u32 = 10;
+pub const RUNTIME_ABI_VERSION: u32 = 13;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Target {
     pub triple: String,

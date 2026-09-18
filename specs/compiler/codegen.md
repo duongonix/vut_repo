@@ -390,7 +390,12 @@ maps naturally to backend control flow.
 
 Safe collection operations that require bounds checking must emit checks unless optimization proves them unnecessary.
 
-Out-of-bounds behavior must follow runtime/std specification.
+Out-of-bounds behavior must follow runtime/std specification. For explicit index
+requests (`at`, `set`, `insert`, `remove`) an invalid index must trap through the
+shared runtime bounds-panic path (`vut_rt_bounds_panic_v1`); the compiler must
+not fabricate a zero/default element. `array` indexing may use a compiler-known
+length check (including compile-time rejection of literal out-of-range indexes),
+but the runtime failure path is the same shared panic.
 
 ---
 

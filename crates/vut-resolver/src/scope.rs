@@ -14,6 +14,7 @@ use vut_source::{SourceId, Span};
 type ResolvedBodies = (
     Vec<ResolvedReference>,
     SymbolId,
+    SymbolId,
     Vec<LambdaInfo>,
     HashMap<Span, SymbolId>,
     HashMap<Span, ImplicitReceiverMethod>,
@@ -49,6 +50,14 @@ pub(crate) fn resolve_bodies(
         Span::new(builtin_source, 0, 0),
         true,
     );
+    let hex_error = allocate(
+        symbols,
+        ModuleId(0),
+        "HexError",
+        SymbolKind::Data,
+        Span::new(builtin_source, 0, 0),
+        true,
+    );
     for module in modules {
         let mut root = module.symbols.clone();
         root.extend(module.imports.iter().map(|(name, id)| (name.clone(), *id)));
@@ -79,6 +88,7 @@ pub(crate) fn resolve_bodies(
             root.entry(name.to_owned()).or_insert(id);
         }
         root.entry("Utf8Error".to_owned()).or_insert(utf8_error);
+        root.entry("HexError".to_owned()).or_insert(hex_error);
         let mut context = Context {
             module: module.id,
             symbols,
@@ -102,6 +112,7 @@ pub(crate) fn resolve_bodies(
     (
         references,
         utf8_error,
+        hex_error,
         lambdas,
         lambda_symbols,
         implicit_receiver_methods,

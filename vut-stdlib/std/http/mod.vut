@@ -196,8 +196,8 @@ fn _text_or(raw: bytes, fallback: str) -> str:
     err(error): fallback
 
 fn _decode_ok(raw: bytes) -> result(Response, Error):
-  status = Status(code = raw.read_i32(4))
-  headers_len = raw.read_i32(8)
+  status = Status(code = raw.read_i32_le(4))
+  headers_len = raw.read_i32_le(8)
   headers_end = 12 + headers_len
   headers = headers_parse(_text_or(raw.slice(12, headers_end), ""))
   ok(Response(status = status, headers = headers, payload = raw.slice(headers_end, raw.len())))
@@ -206,7 +206,7 @@ fn _decode_bad(raw: bytes, kind: int) -> result(Response, Error):
   err(Error(kind = _kind(kind), message = _text_or(raw.slice(4, raw.len()), "http request failed")))
 
 fn _decode(raw: bytes) -> result(Response, Error):
-  kind = raw.read_i32(0)
+  kind = raw.read_i32_le(0)
   value: result(Response, Error) = if kind == 0:
     _decode_ok(raw)
   else:
@@ -398,7 +398,7 @@ fn _err_chunk(kind: int, message: str) -> result(bytes, Error):
   err(Error(kind = _kind(kind), message = message))
 
 fn _read_decode(raw: bytes) -> result(bytes, Error):
-  kind = raw.read_i32(0)
+  kind = raw.read_i32_le(0)
   payload = raw.slice(4, raw.len())
   value: result(bytes, Error) = if kind == 0:
     _ok_chunk(payload)

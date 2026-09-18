@@ -296,19 +296,98 @@ pub unsafe extern "C" fn vut_rt_map_clear_v1(map: *mut ManagedMap) {
 
 #[unsafe(no_mangle)]
 /// # Safety
-/// `map` must be null or a live managed-map handle with string keys.
-/// The returned list owns one reference; the caller must release it.
+/// `map` must be null or a live managed-map handle. Returns a list of the
+/// map's keys in the key element layout (string keys are rebuilt as handles).
+/// The returned list owns one reference.
 pub unsafe extern "C" fn vut_rt_map_keys_v1(
     map: *const ManagedMap,
 ) -> *mut super::list::ManagedList {
-    let keys: Vec<String> = if map.is_null() {
-        Vec::new()
-    } else {
-        unsafe { &*map }
+    if map.is_null() {
+        return unsafe { super::list::build_string_list(Vec::new()) };
+    }
+    let map_ref = unsafe { &*map };
+    if map_ref.key_kind == MAP_KEY_STRING {
+        let keys: Vec<String> = map_ref
             .entries
             .keys()
             .map(|key| String::from_utf8_lossy(key).into_owned())
-            .collect()
+            .collect();
+        return unsafe { super::list::build_string_list(keys) };
+    }
+    let list = unsafe {
+        super::vut_rt_list_new_v1(
+            map_ref.key_size,
+            map_ref.key_align,
+            std::ptr::null(),
+            std::ptr::null(),
+            map_ref.entries.len(),
+        )
     };
-    unsafe { super::list::build_string_list(keys) }
+    if list.is_null() {
+        return std::ptr::null_mut();
+    }
+    for key in map_ref.entries.keys() {
+        unsafe { super::vut_rt_list_push_v1(list, key.as_ptr()) };
+    }
+    list
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `map` must be null or a live managed-map handle. Returns a list of the
+/// map's values in the value element layout. The returned list owns one
+/// reference; managed values are retained into it.
+pub unsafe extern "C" fn vut_rt_map_values_v1(
+    map: *const ManagedMap,
+) -> *mut super::list::ManagedList {
+    if map.is_null() {
+        return unsafe { super::list::build_string_list(Vec::new()) };
+    }
+    let map_ref = unsafe { &*map };
+    let retain = map_ref
+        .value_retain
+        .map_or(std::ptr::null(), |retain| retain as *const ());
+    let release = map_ref
+        .value_release
+        .map_or(std::ptr::null(), |release| release as *const ());
+    let list = unsafe {
+        super::vut_rt_list_new_v1(
+            map_ref.value_size,
+            map_ref.value_align,
+            retain,
+            release,
+            map_ref.entries.len(),
+        )
+    };
+    if list.is_null() {
+        return std::ptr::null_mut();
+    }
+    for value in map_ref.entries.values() {
+        unsafe { super::vut_rt_list_push_v1(list, value.as_ptr()) };
+    }
+    list
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `map` must be live, `key` readable for key size, `out` writable for value
+/// size, and `default` readable for value size. Returns the mapped value, or
+/// `default` when the key is absent.
+pub unsafe extern "C" fn vut_rt_map_get_or_v1(
+    map: *const ManagedMap,
+    key: *const u8,
+    out: *mut u8,
+    default: *const u8,
+) -> u8 {
+    if map.is_null() || key.is_null() || out.is_null() || default.is_null() {
+        return 0;
+    }
+    let map_ref = unsafe { &*map };
+    let Some(key) = (unsafe { map_ref.read_key(key) }) else {
+        return 0;
+    };
+    let source = map_ref.entries.get(&key).map_or(default, Vec::as_ptr);
+    unsafe { std::ptr::copy_nonoverlapping(source, out, map_ref.value_size) };
+    unsafe { map_ref.retain_value(out) };
+    1
 }

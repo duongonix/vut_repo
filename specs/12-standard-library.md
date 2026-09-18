@@ -62,7 +62,6 @@ Initial specification areas:
 ```text
 std/
 ├── core
-├── collections
 ├── string
 ├── io
 ├── fs
@@ -76,7 +75,6 @@ These correspond to:
 
 ```text
 specs/std/core.md
-specs/std/collections.md
 specs/std/string.md
 specs/std/io.md
 specs/std/fs.md
@@ -118,6 +116,12 @@ bytes
 Collection APIs should follow consistent naming and behavior.
 
 Do not introduce multiple unrelated APIs for equivalent operations.
+
+The standard `list(T)` operations (`map`, `filter`, `fold`, `any`, `all`,
+`find_index`, `sort_by`, `join`, ...) are **builtins of the compiler**, not
+standard-library free functions, so no `import collections` is required. See
+`specs/collections.md` for the two implementation tiers (native runtime
+primitives vs. compiler-lowered higher-order builtins).
 
 ---
 

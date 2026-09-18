@@ -13,6 +13,7 @@ use super::{
     ValueId,
 };
 
+mod collections;
 mod control;
 mod expression;
 mod interface;
@@ -126,6 +127,20 @@ impl Builder<'_> {
             storage: LocalStorage::Stack,
         });
         self.locals.insert(name, id);
+        id
+    }
+
+    /// Adds a synthesized local for a loop-carried value. Unlike a user
+    /// binding it is not entered into the name map, so repeated lowering of the
+    /// same builtin cannot collide on a name.
+    pub(super) fn add_temp_local(&mut self, ty: TypeId, span: Span) -> LocalId {
+        let id = LocalId(self.local_data.len());
+        self.local_data.push(Local {
+            name: String::new(),
+            ty: Some(ty),
+            span,
+            storage: LocalStorage::Stack,
+        });
         id
     }
     #[expect(
@@ -293,6 +308,54 @@ impl Builder<'_> {
         }
         self.switch_to(join);
     }
+    /// Lowers a builtin-call receiver as a borrow. Named locals and field
+    /// projections of a local must not be moved or copied: a mutating builtin
+    /// (`set`, `insert`, `push`) acts on the caller's storage, and an aggregate
+    /// field receiver must be its address, not an owned copy. Only a true
+    /// temporary receiver is owned and released after the call.
+    fn lower_builtin_receiver(
+        &mut self,
+        expression: &Expr,
+        lowered: &mut Vec<ValueId>,
+        owned: &mut Vec<(ValueId, TypeId)>,
+    ) -> Option<()> {
+        match expression {
+            Expr::Name(name) => {
+                if let Some(local) = self.locals.get(&name.text).copied() {
+                    self.remaining_uses.consume(&name.text);
+                    let value = self.value();
+                    self.emit(Instruction::Borrow { value, local });
+                    lowered.push(value);
+                    return Some(());
+                }
+            }
+            Expr::Member { object, member, .. } => {
+                if let Expr::Name(base_name) = object.as_ref()
+                    && let Some(base) = self.locals.get(&base_name.text).copied()
+                {
+                    self.remaining_uses.consume(&base_name.text);
+                    // Mirror field access: an aggregate field yields its
+                    // address (mutated in place); a managed handle field is
+                    // loaded. The base stays owned either way.
+                    let base_value = self.value();
+                    self.emit(Instruction::Borrow {
+                        value: base_value,
+                        local: base,
+                    });
+                    let value = self.value();
+                    self.emit(Instruction::Field {
+                        value,
+                        base: base_value,
+                        name: member.text.clone(),
+                    });
+                    lowered.push(value);
+                    return Some(());
+                }
+            }
+            _ => {}
+        }
+        self.lower_builtin_value(expression, lowered, owned)
+    }
     /// Lowers one builtin-call operand. Named locals are borrowed so the
     /// runtime can retain what it stores and read-only operands stay owned by
     /// the caller; only temporaries are recorded for release after the call.
@@ -394,12 +457,46 @@ impl Builder<'_> {
     fn lower_iterable(&mut self, iterable: &Expr) -> Option<ValueId> {
         if let Expr::Name(name) = iterable
             && let Some(local) = self.locals.get(&name.text).copied()
-            && self.local_data[local.0]
-                .ty
-                .is_some_and(|ty| matches!(self.semantics.types[ty.0], Type::List(_)))
+            && self.local_data[local.0].ty.is_some_and(|ty| {
+                matches!(
+                    self.semantics.types[ty.0],
+                    Type::List(_) | Type::Array(_, _)
+                )
+            })
         {
             let value = self.value();
             self.emit(Instruction::Borrow { value, local });
+            return Some(value);
+        }
+        // A collection field is read without taking ownership: the iterator
+        // only reads it, so the owning aggregate must keep its reference. An
+        // array field projects inline storage (its address); a list field loads
+        // the handle; neither is retained here.
+        if let Expr::Member { object, member, .. } = iterable
+            && let Expr::Name(base_name) = object.as_ref()
+            && let Some(base) = self.locals.get(&base_name.text).copied()
+            && self
+                .semantics
+                .expression_types
+                .get(&iterable.span())
+                .is_some_and(|ty| {
+                    matches!(
+                        self.semantics.types[ty.0],
+                        Type::List(_) | Type::Array(_, _)
+                    )
+                })
+        {
+            let base_value = self.value();
+            self.emit(Instruction::Borrow {
+                value: base_value,
+                local: base,
+            });
+            let value = self.value();
+            self.emit(Instruction::Field {
+                value,
+                base: base_value,
+                name: member.text.clone(),
+            });
             return Some(value);
         }
         self.expr(iterable)
@@ -483,17 +580,19 @@ impl Builder<'_> {
                         ));
                     }
                 } else if let Some(iterable_value) = self.lower_iterable(iterable) {
-                    // A named list local stays owned by its owner; any other
-                    // list collection is a temporary this loop must release.
-                    let borrowed = matches!(iterable, Expr::Name(name)
-                    if self.locals.get(&name.text).copied().is_some_and(|local| {
-                        self.local_data[local.0].ty.is_some_and(|ty| {
-                            matches!(self.semantics.types[ty.0], Type::List(_))
-                        })
-                    }));
+                    // A local or field-projected collection stays owned by its
+                    // owner; any other collection is a temporary this loop must
+                    // release after the exit edge.
+                    let borrowed = matches!(iterable, Expr::Name(_))
+                        || matches!(iterable, Expr::Member { object, .. }
+                            if matches!(object.as_ref(), Expr::Name(_)));
                     if !borrowed
-                        && let Some(ty) = iterable_type
-                            .filter(|ty| matches!(self.semantics.types[ty.0], Type::List(_)))
+                        && let Some(ty) = iterable_type.filter(|ty| {
+                            matches!(
+                                self.semantics.types[ty.0],
+                                Type::List(_) | Type::Array(_, _)
+                            )
+                        })
                     {
                         owned_iterable = Some((iterable_value, ty));
                     }

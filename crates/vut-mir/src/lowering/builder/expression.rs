@@ -7,7 +7,7 @@ use vut_types::Type;
 
 use super::super::interface::method_names;
 use super::super::layout::is_unsigned_type;
-use super::super::{BinaryOp, BuiltinFunction, Instruction, ValueId};
+use super::super::{BinaryOp, BuiltinFunction, Instruction, Terminator, ValueId};
 use super::Builder;
 
 impl Builder<'_> {
@@ -613,6 +613,14 @@ impl Builder<'_> {
                 }
                 let builtin_target = self.semantics.builtin_calls.get(span).copied();
                 if let Some(function) = builtin_target {
+                    if super::collections::is_higher_order(function) {
+                        return self.lower_higher_order_builtin(
+                            function,
+                            callee.as_ref(),
+                            arguments,
+                            *span,
+                        );
+                    }
                     if matches!(
                         function,
                         BuiltinFunction::VariadicLen | BuiltinFunction::VariadicAt
@@ -622,10 +630,12 @@ impl Builder<'_> {
                     let mut argument_values = Vec::new();
                     let mut owned: Vec<(ValueId, TypeId)> = Vec::new();
                     if let Expr::Member { object, .. } = callee.as_ref() {
-                        let static_builtin = function == BuiltinFunction::BytesFromList
-                            && matches!(object.as_ref(), Expr::Name(name) if name.text == "bytes");
+                        let static_builtin = matches!(
+                            function,
+                            BuiltinFunction::BytesFromList | BuiltinFunction::BytesFromHex
+                        ) && matches!(object.as_ref(), Expr::Name(name) if name.text == "bytes");
                         if !static_builtin {
-                            self.lower_builtin_value(object, &mut argument_values, &mut owned)?;
+                            self.lower_builtin_receiver(object, &mut argument_values, &mut owned)?;
                         }
                     }
                     for argument in arguments {
@@ -634,6 +644,154 @@ impl Builder<'_> {
                             &mut argument_values,
                             &mut owned,
                         )?;
+                    }
+                    // Derive the receiver's element type for sort kind / array
+                    // layout arguments.
+                    let receiver_element = match callee.as_ref() {
+                        Expr::Member { object, .. } => self
+                            .semantics
+                            .expression_types
+                            .get(&object.span())
+                            .copied()
+                            .and_then(|ty| match self.semantics.types[ty.0] {
+                                Type::List(element) | Type::Array(element, _) => Some(element),
+                                _ => None,
+                            }),
+                        _ => None,
+                    };
+                    // `list.sort` / `array.sort` carry an element-comparison
+                    // kind the runtime uses to pick its ordering.
+                    if matches!(
+                        function,
+                        BuiltinFunction::ListSort | BuiltinFunction::ArraySort
+                    ) {
+                        let kind = receiver_element.map_or(0, |element| {
+                            match self.semantics.types[element.0] {
+                                Type::Float => 1,
+                                Type::Str => 2,
+                                Type::Bool => 3,
+                                _ => 0,
+                            }
+                        });
+                        let value = self.value();
+                        self.emit(Instruction::ConstInt {
+                            value,
+                            literal: kind,
+                        });
+                        argument_values.push(value);
+                    }
+                    // `array.to_list` passes the fixed length, element layout,
+                    // and retain/release callbacks to the runtime.
+                    if function == BuiltinFunction::ArrayToList {
+                        let array = match callee.as_ref() {
+                            Expr::Member { object, .. } => self
+                                .semantics
+                                .expression_types
+                                .get(&object.span())
+                                .copied()
+                                .and_then(|ty| match self.semantics.types[ty.0] {
+                                    Type::Array(element, length) => Some((element, length)),
+                                    _ => None,
+                                }),
+                            _ => None,
+                        };
+                        if let Some((element_ty, length)) = array {
+                            let length_value = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: length_value,
+                                literal: i64::try_from(length).unwrap_or(i64::MAX),
+                            });
+                            argument_values.push(length_value);
+                            let size = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: size,
+                                literal: i64::try_from(
+                                    self.layouts.element_storage_size(element_ty),
+                                )
+                                .unwrap_or(i64::MAX),
+                            });
+                            argument_values.push(size);
+                            let align = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: align,
+                                literal: i64::try_from(
+                                    self.layouts.element_storage_align(element_ty),
+                                )
+                                .unwrap_or(i64::MAX),
+                            });
+                            argument_values.push(align);
+                            let retain = self.value();
+                            self.emit(Instruction::TypeRetain {
+                                value: retain,
+                                ty: element_ty,
+                            });
+                            argument_values.push(retain);
+                            let release = self.value();
+                            self.emit(Instruction::TypeRelease {
+                                value: release,
+                                ty: element_ty,
+                            });
+                            argument_values.push(release);
+                        }
+                    }
+                    // `result.is_ok` / `result.is_err` read the tag directly.
+                    if matches!(
+                        function,
+                        BuiltinFunction::ResultIsOk | BuiltinFunction::ResultIsErr
+                    ) {
+                        let receiver = argument_values[0];
+                        let value = self.value();
+                        self.emit(Instruction::ResultState {
+                            result: value,
+                            value: receiver,
+                            ok: function == BuiltinFunction::ResultIsOk,
+                        });
+                        return Some(value);
+                    }
+                    // `result.unwrap_or(default)` returns the payload on `ok`,
+                    // and the default otherwise.
+                    if function == BuiltinFunction::ResultUnwrapOr {
+                        let receiver = argument_values[0];
+                        let default = argument_values[1];
+                        let result_ty = self.semantics.expression_types.get(span).copied();
+                        let local = self.add_local("$unwrap_or".into(), None, *span);
+                        self.local_data[local.0].ty = result_ty;
+                        let ok_block = self.new_block();
+                        let err_block = self.new_block();
+                        let join = self.new_block();
+                        let condition = self.value();
+                        self.emit(Instruction::ResultState {
+                            result: condition,
+                            value: receiver,
+                            ok: true,
+                        });
+                        self.terminate(Terminator::Branch {
+                            condition,
+                            then_block: ok_block,
+                            else_block: err_block,
+                        });
+                        self.switch_to(ok_block);
+                        let payload = self.value();
+                        self.emit(Instruction::ResultPayload {
+                            value: payload,
+                            source: receiver,
+                            ok: true,
+                        });
+                        self.emit(Instruction::Store {
+                            local,
+                            value: payload,
+                        });
+                        self.terminate(Terminator::Jump(join));
+                        self.switch_to(err_block);
+                        self.emit(Instruction::Store {
+                            local,
+                            value: default,
+                        });
+                        self.terminate(Terminator::Jump(join));
+                        self.switch_to(join);
+                        let out = self.value();
+                        self.emit(Instruction::Copy { value: out, local });
+                        return Some(out);
                     }
                     let result_type = self.semantics.expression_types.get(span).copied();
                     let returns_value = result_type
@@ -980,17 +1138,15 @@ impl Builder<'_> {
                 // `self.field` reads the borrowed receiver by reference: the
                 // base must not be released, and the projected field becomes an
                 // owned reference when its value escapes.
-                let receiver_base = matches!(
-                    object.as_ref(),
-                    Expr::Name(name)
-                        if self.receiver_local.is_some_and(|receiver| {
-                            self.locals.get(&name.text).copied() == Some(receiver)
-                        })
-                );
-                let base = if receiver_base {
-                    let local = self
-                        .receiver_local
-                        .expect("a receiver base implies a receiver");
+                // A field read borrows its base. When the base is a local (or
+                // the receiver) it must stay owned by the caller: aggregate
+                // fields project an address into the base's storage, so
+                // releasing the base here would leave that address dangling.
+                let local_base = match object.as_ref() {
+                    Expr::Name(name) => self.locals.get(&name.text).copied(),
+                    _ => None,
+                };
+                let base = if let Some(local) = local_base {
                     let value = self.value();
                     self.emit(Instruction::Borrow { value, local });
                     value
@@ -1013,6 +1169,7 @@ impl Builder<'_> {
                     base,
                     name: member.text.clone(),
                 });
+                let mut result = value;
                 if let Some(field_ty) = self.semantics.expression_types.get(span).copied() {
                     let info = self.layouts.types[field_ty.0];
                     let field_duplication = info.ownership.duplication(info.is_copy);
@@ -1025,6 +1182,18 @@ impl Builder<'_> {
                             *span,
                             "native resource handles cannot be projected out of an aggregate in this version",
                         ));
+                    } else if self.layouts.is_aggregate(field_ty) {
+                        // An inline aggregate field is projected by address, but
+                        // the produced value must be independent of the base, so
+                        // it is copied into fresh storage that owns its managed
+                        // fields.
+                        let copy = self.value();
+                        self.emit(Instruction::CopyAggregate {
+                            value: copy,
+                            source: value,
+                            ty: field_ty,
+                        });
+                        result = copy;
                     } else if info.needs_drop {
                         self.emit(Instruction::Retain {
                             value,
@@ -1032,7 +1201,7 @@ impl Builder<'_> {
                         });
                     }
                 }
-                if !receiver_base
+                if local_base.is_none()
                     && let Some(base_ty) =
                         self.semantics.expression_types.get(&object.span()).copied()
                     && self.layouts.types[base_ty.0].needs_drop
@@ -1042,7 +1211,7 @@ impl Builder<'_> {
                         ty: base_ty,
                     });
                 }
-                Some(value)
+                Some(result)
             }
             Expr::If(value) => self.lower_if_expression(value),
             Expr::Block(block) => Some(self.lower_block_expression(block)),

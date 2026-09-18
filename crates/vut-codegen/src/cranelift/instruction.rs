@@ -1018,6 +1018,13 @@ pub(super) fn lower_instruction(
             values.insert(*value, element);
             Some((*index, current))
         }
+        Instruction::CopyAggregate { value, source, ty } => {
+            let slot = stack_slot_for_type(builder, layouts, *ty)?;
+            copy_aggregate(builder, layouts, *ty, values[source], slot)?;
+            manage_value(builder, module, layouts, *ty, slot, true)?;
+            value_types.insert(*value, *ty);
+            Some((*value, slot))
+        }
         Instruction::Field { value, base, name } => {
             let ty = value_types.get(base).ok_or_else(|| {
                 CodegenError::Backend(format!("missing aggregate type for field `{name}`"))
@@ -1354,6 +1361,9 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::ArrayFirst
                     | vut_mir::BuiltinFunction::ArrayLast
                     | vut_mir::BuiltinFunction::ArrayFill
+                    | vut_mir::BuiltinFunction::ArrayContains
+                    | vut_mir::BuiltinFunction::ArrayReverse
+                    | vut_mir::BuiltinFunction::ArraySort
             ) {
                 let receiver_id = arguments[0];
                 let receiver = values[&receiver_id];
@@ -1370,16 +1380,29 @@ pub(super) fn lower_instruction(
                     )),
                     vut_mir::BuiltinFunction::ArrayAt | vut_mir::BuiltinFunction::ArraySet => {
                         let index = values[&arguments[1]];
-                        let valid = builder.ins().icmp_imm_u(
-                            IntCC::UnsignedLessThan,
-                            index,
+                        let op = if *function == vut_mir::BuiltinFunction::ArrayAt {
+                            vut_runtime::abi::bounds_op::ARRAY_AT
+                        } else {
+                            vut_runtime::abi::bounds_op::ARRAY_SET
+                        };
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::BOUNDS_CHECK,
+                            &[types::I64, types::I64, types::I64],
+                            &[types::I64],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        let op_value = builder.ins().iconst(types::I64, op);
+                        let length_value = builder.ins().iconst(
+                            types::I64,
                             i64::try_from(length).map_err(|_| {
                                 CodegenError::Backend("array length exceeds target".into())
                             })?,
                         );
-                        builder
+                        let call = builder
                             .ins()
-                            .trapz(valid, cranelift_codegen::ir::TrapCode::unwrap_user(2));
+                            .call(reference, &[op_value, index, length_value]);
+                        let index = builder.inst_results(call)[0];
                         let offset = builder.ins().imul_imm_u(
                             index,
                             i64::try_from(stride).map_err(|_| {
@@ -1388,35 +1411,67 @@ pub(super) fn lower_instruction(
                         );
                         let address = builder.ins().iadd(receiver, offset);
                         if *function == vut_mir::BuiltinFunction::ArrayAt {
-                            Some(element_value(builder, layouts, element_ty, address))
-                        } else if layouts.is_aggregate(element_ty) {
-                            copy_aggregate(
-                                builder,
-                                layouts,
-                                element_ty,
-                                values[&arguments[2]],
-                                address,
-                            )?;
-                            None
+                            Some(read_owned_array_element(
+                                builder, module, layouts, element_ty, address,
+                            )?)
                         } else {
-                            let stored =
-                                coerce_integer(builder, values[&arguments[2]], element_machine_ty);
-                            builder
-                                .ins()
-                                .store(MemFlagsData::trusted(), stored, address, 0);
+                            // `set` releases the previous element and keeps its
+                            // own reference to the new one; the caller still owns
+                            // and releases the argument temporary.
+                            let previous = element_value(builder, layouts, element_ty, address);
+                            manage_value(builder, module, layouts, element_ty, previous, false)?;
+                            if layouts.is_aggregate(element_ty) {
+                                copy_aggregate(
+                                    builder,
+                                    layouts,
+                                    element_ty,
+                                    values[&arguments[2]],
+                                    address,
+                                )?;
+                                manage_value(builder, module, layouts, element_ty, address, true)?;
+                            } else {
+                                let stored = coerce_integer(
+                                    builder,
+                                    values[&arguments[2]],
+                                    element_machine_ty,
+                                );
+                                builder
+                                    .ins()
+                                    .store(MemFlagsData::trusted(), stored, address, 0);
+                                manage_value(builder, module, layouts, element_ty, stored, true)?;
+                            }
                             None
                         }
                     }
                     vut_mir::BuiltinFunction::ArrayFirst | vut_mir::BuiltinFunction::ArrayLast => {
+                        if length == 0 {
+                            let op = if *function == vut_mir::BuiltinFunction::ArrayFirst {
+                                vut_runtime::abi::bounds_op::ARRAY_FIRST
+                            } else {
+                                vut_runtime::abi::bounds_op::ARRAY_LAST
+                            };
+                            let target = runtime_function(
+                                module,
+                                vut_runtime::abi::BOUNDS_PANIC,
+                                &[types::I64, types::I64, types::I64],
+                                &[],
+                            )?;
+                            let reference = module.declare_func_in_func(target, builder.func);
+                            let op_value = builder.ins().iconst(types::I64, op);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            builder.ins().call(reference, &[op_value, zero, zero]);
+                        }
                         let offset = if *function == vut_mir::BuiltinFunction::ArrayFirst {
                             0
                         } else {
-                            i32::try_from((length - 1).saturating_mul(stride)).map_err(|_| {
-                                CodegenError::Backend("array offset exceeds target".into())
-                            })?
+                            i32::try_from(length.saturating_sub(1).saturating_mul(stride)).map_err(
+                                |_| CodegenError::Backend("array offset exceeds target".into()),
+                            )?
                         };
                         let address = builder.ins().iadd_imm_u(receiver, i64::from(offset));
-                        Some(element_value(builder, layouts, element_ty, address))
+                        Some(read_owned_array_element(
+                            builder, module, layouts, element_ty, address,
+                        )?)
                     }
                     vut_mir::BuiltinFunction::ArrayFill => {
                         if layouts.is_aggregate(element_ty) {
@@ -1426,12 +1481,28 @@ pub(super) fn lower_instruction(
                                         CodegenError::Backend("array offset exceeds target".into())
                                     })?;
                                 let destination = builder.ins().iadd_imm_u(receiver, delta);
+                                manage_value(
+                                    builder,
+                                    module,
+                                    layouts,
+                                    element_ty,
+                                    destination,
+                                    false,
+                                )?;
                                 copy_aggregate(
                                     builder,
                                     layouts,
                                     element_ty,
                                     values[&arguments[1]],
                                     destination,
+                                )?;
+                                manage_value(
+                                    builder,
+                                    module,
+                                    layouts,
+                                    element_ty,
+                                    destination,
+                                    true,
                                 )?;
                             }
                         } else {
@@ -1442,13 +1513,92 @@ pub(super) fn lower_instruction(
                                     i32::try_from(index.saturating_mul(stride)).map_err(|_| {
                                         CodegenError::Backend("array offset exceeds target".into())
                                     })?;
+                                if layouts.types[element_ty.0].needs_drop {
+                                    let previous = builder.ins().load(
+                                        machine_type(layouts, element_ty),
+                                        MemFlagsData::trusted(),
+                                        receiver,
+                                        offset,
+                                    );
+                                    manage_value(
+                                        builder, module, layouts, element_ty, previous, false,
+                                    )?;
+                                }
                                 builder.ins().store(
                                     MemFlagsData::trusted(),
                                     stored,
                                     receiver,
                                     offset,
                                 );
+                                manage_value(builder, module, layouts, element_ty, stored, true)?;
                             }
+                        }
+                        None
+                    }
+                    vut_mir::BuiltinFunction::ArrayContains => {
+                        let value_ptr =
+                            element_pointer(builder, layouts, element_ty, values[&arguments[1]])?;
+                        let len = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(length).map_err(|_| {
+                                CodegenError::Backend("array length exceeds target".into())
+                            })?,
+                        );
+                        let stride_value = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(stride).map_err(|_| {
+                                CodegenError::Backend("array stride exceeds target".into())
+                            })?,
+                        );
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::ARRAY_CONTAINS,
+                            &[types::I64, types::I64, types::I64, types::I64],
+                            &[types::I8],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        let call = builder
+                            .ins()
+                            .call(reference, &[receiver, len, stride_value, value_ptr]);
+                        Some(builder.inst_results(call)[0])
+                    }
+                    vut_mir::BuiltinFunction::ArrayReverse
+                    | vut_mir::BuiltinFunction::ArraySort => {
+                        let len = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(length).map_err(|_| {
+                                CodegenError::Backend("array length exceeds target".into())
+                            })?,
+                        );
+                        let stride_value = builder.ins().iconst(
+                            types::I64,
+                            i64::try_from(stride).map_err(|_| {
+                                CodegenError::Backend("array stride exceeds target".into())
+                            })?,
+                        );
+                        if *function == vut_mir::BuiltinFunction::ArrayReverse {
+                            let target = runtime_function(
+                                module,
+                                vut_runtime::abi::ARRAY_REVERSE,
+                                &[types::I64, types::I64, types::I64],
+                                &[],
+                            )?;
+                            let reference = module.declare_func_in_func(target, builder.func);
+                            builder
+                                .ins()
+                                .call(reference, &[receiver, len, stride_value]);
+                        } else {
+                            let target = runtime_function(
+                                module,
+                                vut_runtime::abi::ARRAY_SORT,
+                                &[types::I64, types::I64, types::I64, types::I64],
+                                &[],
+                            )?;
+                            let reference = module.declare_func_in_func(target, builder.func);
+                            builder.ins().call(
+                                reference,
+                                &[receiver, len, stride_value, values[&arguments[1]]],
+                            );
                         }
                         None
                     }
@@ -1508,6 +1658,9 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::BytesToList
                     | vut_mir::BuiltinFunction::BytesFromList
                     | vut_mir::BuiltinFunction::BytesToStr
+                    | vut_mir::BuiltinFunction::BytesFromHex
+                    | vut_mir::BuiltinFunction::BytesReadInt { .. }
+                    | vut_mir::BuiltinFunction::BytesWriteInt { .. }
             ) {
                 let call_result = match function {
                     vut_mir::BuiltinFunction::BytesNew => {
@@ -1746,6 +1899,135 @@ pub(super) fn lower_instruction(
                         }
                         Some(address)
                     }
+                    vut_mir::BuiltinFunction::BytesFromHex => {
+                        let result_ty = result_type.ok_or_else(|| {
+                            CodegenError::Backend("bytes.from_hex missing result type".into())
+                        })?;
+                        let layout = layouts.results.get(&result_ty).ok_or_else(|| {
+                            CodegenError::Backend("bytes.from_hex missing result layout".into())
+                        })?;
+                        let tag_offset = i32::try_from(layout.tag_offset).map_err(|_| {
+                            CodegenError::Backend("result tag offset exceeds backend limit".into())
+                        })?;
+                        let ok_offset = i32::try_from(layout.ok_offset).map_err(|_| {
+                            CodegenError::Backend("result ok offset exceeds backend limit".into())
+                        })?;
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::BYTES_FROM_HEX,
+                            &[types::I64],
+                            &[types::I64],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        let call = builder.ins().call(reference, &[values[&arguments[0]]]);
+                        let bytes = builder.inst_results(call)[0];
+                        let address = stack_slot_for_type(builder, layouts, result_ty)?;
+                        let ok_block = builder.create_block();
+                        let err_block = builder.create_block();
+                        let join = builder.create_block();
+                        let is_ok = builder.ins().icmp_imm_s(IntCC::NotEqual, bytes, 0);
+                        builder.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+                        builder.switch_to_block(ok_block);
+                        let ok_tag = builder.ins().iconst(types::I64, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), ok_tag, address, tag_offset);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), bytes, address, ok_offset);
+                        builder.ins().jump(join, &[]);
+                        builder.switch_to_block(err_block);
+                        let index_target = runtime_function(
+                            module,
+                            vut_runtime::abi::BYTES_FROM_HEX_ERROR_INDEX,
+                            &[types::I64],
+                            &[types::I64],
+                        )?;
+                        let index_ref = module.declare_func_in_func(index_target, builder.func);
+                        let index_call = builder.ins().call(index_ref, &[values[&arguments[0]]]);
+                        let index = builder.inst_results(index_call)[0];
+                        let err_tag = builder.ins().iconst(types::I64, 1);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), err_tag, address, tag_offset);
+                        let err_fields = layouts.fields.get(&layout.err).ok_or_else(|| {
+                            CodegenError::Backend("bytes.from_hex missing HexError layout".into())
+                        })?;
+                        let err_delta = i64::try_from(layout.err_offset).map_err(|_| {
+                            CodegenError::Backend("result err offset exceeds backend limit".into())
+                        })?;
+                        let err_base = builder.ins().iadd_imm_u(address, err_delta);
+                        for field in err_fields {
+                            if field.name != "index" {
+                                continue;
+                            }
+                            builder.ins().store(
+                                MemFlagsData::trusted(),
+                                index,
+                                err_base,
+                                i32::try_from(field.offset).map_err(|_| {
+                                    CodegenError::Backend(
+                                        "HexError field offset exceeds backend limit".into(),
+                                    )
+                                })?,
+                            );
+                        }
+                        builder.ins().jump(join, &[]);
+                        builder.switch_to_block(join);
+                        if let Some(id) = value {
+                            value_types.insert(*id, result_ty);
+                        }
+                        Some(address)
+                    }
+                    vut_mir::BuiltinFunction::BytesReadInt {
+                        width,
+                        big_endian,
+                        signed,
+                    } => {
+                        let width_value = builder.ins().iconst(types::I64, i64::from(*width));
+                        let endian_value = builder.ins().iconst(types::I64, i64::from(*big_endian));
+                        let signed_value = builder.ins().iconst(types::I64, i64::from(*signed));
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::BYTES_READ_INT,
+                            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+                            &[types::I64],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        let call = builder.ins().call(
+                            reference,
+                            &[
+                                values[&arguments[0]],
+                                values[&arguments[1]],
+                                width_value,
+                                endian_value,
+                                signed_value,
+                            ],
+                        );
+                        Some(builder.inst_results(call)[0])
+                    }
+                    vut_mir::BuiltinFunction::BytesWriteInt { width, big_endian } => {
+                        let width_value = builder.ins().iconst(types::I64, i64::from(*width));
+                        let endian_value = builder.ins().iconst(types::I64, i64::from(*big_endian));
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::BYTES_WRITE_INT,
+                            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+                            &[types::I8],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder.ins().call(
+                            reference,
+                            &[
+                                values[&arguments[0]],
+                                values[&arguments[1]],
+                                width_value,
+                                endian_value,
+                                values[&arguments[2]],
+                            ],
+                        );
+                        None
+                    }
                     _ => unreachable!(),
                 };
                 if let Some((id, result)) = value.zip(call_result) {
@@ -1766,6 +2048,16 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::ListClear
                     | vut_mir::BuiltinFunction::ListSlice
                     | vut_mir::BuiltinFunction::ListContains
+                    | vut_mir::BuiltinFunction::ListPop
+                    | vut_mir::BuiltinFunction::ListFirst
+                    | vut_mir::BuiltinFunction::ListLast
+                    | vut_mir::BuiltinFunction::ListFindIndex
+                    | vut_mir::BuiltinFunction::ListExtend
+                    | vut_mir::BuiltinFunction::ListReverse
+                    | vut_mir::BuiltinFunction::ListSort
+                    | vut_mir::BuiltinFunction::ListTruncate
+                    | vut_mir::BuiltinFunction::ListSwap
+                    | vut_mir::BuiltinFunction::ListShrinkToFit
             ) {
                 let call_result = match function {
                     vut_mir::BuiltinFunction::ListNew => {
@@ -1898,6 +2190,112 @@ pub(super) fn lower_instruction(
                         let call = builder.ins().call(reference, &args);
                         Some(builder.inst_results(call)[0])
                     }
+                    vut_mir::BuiltinFunction::ListPop
+                    | vut_mir::BuiltinFunction::ListFirst
+                    | vut_mir::BuiltinFunction::ListLast => {
+                        let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {
+                            CodegenError::Backend("missing list receiver type".into())
+                        })?;
+                        let element_ty = *layouts.lists.get(&receiver_ty).ok_or_else(|| {
+                            CodegenError::Backend("missing list element type".into())
+                        })?;
+                        let out = stack_slot_for_type(builder, layouts, element_ty)?;
+                        zero_stack_value(builder, layouts, element_ty, out);
+                        let name = match function {
+                            vut_mir::BuiltinFunction::ListPop => vut_runtime::abi::LIST_POP,
+                            vut_mir::BuiltinFunction::ListFirst => vut_runtime::abi::LIST_FIRST,
+                            _ => vut_runtime::abi::LIST_LAST,
+                        };
+                        let target = runtime_function(
+                            module,
+                            name,
+                            &[types::I64, types::I64],
+                            &[types::I8],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder.ins().call(reference, &[values[&arguments[0]], out]);
+                        let loaded = element_value(builder, layouts, element_ty, out);
+                        if let Some(id) = value {
+                            value_types.insert(*id, element_ty);
+                        }
+                        Some(loaded)
+                    }
+                    vut_mir::BuiltinFunction::ListFindIndex => {
+                        let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {
+                            CodegenError::Backend("missing list receiver type".into())
+                        })?;
+                        let element = *layouts.lists.get(&receiver_ty).ok_or_else(|| {
+                            CodegenError::Backend("missing list element type".into())
+                        })?;
+                        let element_ptr = element_pointer(
+                            builder,
+                            layouts,
+                            element,
+                            values[&arguments[arguments.len() - 1]],
+                        )?;
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::LIST_FIND_INDEX,
+                            &[types::I64, types::I64],
+                            &[types::I64],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        let call = builder
+                            .ins()
+                            .call(reference, &[values[&arguments[0]], element_ptr]);
+                        Some(builder.inst_results(call)[0])
+                    }
+                    vut_mir::BuiltinFunction::ListExtend => {
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::LIST_EXTEND,
+                            &[types::I64, types::I64],
+                            &[types::I8],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder
+                            .ins()
+                            .call(reference, &[values[&arguments[0]], values[&arguments[1]]]);
+                        None
+                    }
+                    vut_mir::BuiltinFunction::ListReverse
+                    | vut_mir::BuiltinFunction::ListShrinkToFit => {
+                        let name = if *function == vut_mir::BuiltinFunction::ListReverse {
+                            vut_runtime::abi::LIST_REVERSE
+                        } else {
+                            vut_runtime::abi::LIST_SHRINK_TO_FIT
+                        };
+                        let target = runtime_function(module, name, &[types::I64], &[])?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder.ins().call(reference, &[values[&arguments[0]]]);
+                        None
+                    }
+                    vut_mir::BuiltinFunction::ListSort => {
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::LIST_SORT,
+                            &[types::I64, types::I64],
+                            &[],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder
+                            .ins()
+                            .call(reference, &[values[&arguments[0]], values[&arguments[1]]]);
+                        None
+                    }
+                    vut_mir::BuiltinFunction::ListTruncate | vut_mir::BuiltinFunction::ListSwap => {
+                        let name = if *function == vut_mir::BuiltinFunction::ListTruncate {
+                            vut_runtime::abi::LIST_TRUNCATE
+                        } else {
+                            vut_runtime::abi::LIST_SWAP
+                        };
+                        let args: Vec<_> = arguments.iter().map(|id| values[id]).collect();
+                        let params = vec![types::I64; args.len()];
+                        let target = runtime_function(module, name, &params, &[])?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder.ins().call(reference, &args);
+                        None
+                    }
                     _ => unreachable!(),
                 };
                 if let Some((id, result)) = value.zip(call_result) {
@@ -1917,6 +2315,7 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::MapContainsKey
                     | vut_mir::BuiltinFunction::MapRemove
                     | vut_mir::BuiltinFunction::MapClear
+                    | vut_mir::BuiltinFunction::MapGetOr
             ) {
                 let call_result = match function {
                     vut_mir::BuiltinFunction::MapNew => {
@@ -2036,9 +2435,104 @@ pub(super) fn lower_instruction(
                         }
                         Some(loaded)
                     }
+                    vut_mir::BuiltinFunction::MapGetOr => {
+                        let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {
+                            CodegenError::Backend("missing map receiver type".into())
+                        })?;
+                        let (key_ty, value_ty) =
+                            *layouts.maps.get(&receiver_ty).ok_or_else(|| {
+                                CodegenError::Backend("missing map key/value type".into())
+                            })?;
+                        let key_ptr =
+                            element_pointer(builder, layouts, key_ty, values[&arguments[1]])?;
+                        let out = stack_slot_for_type(builder, layouts, value_ty)?;
+                        let default_ptr =
+                            element_pointer(builder, layouts, value_ty, values[&arguments[2]])?;
+                        let target = runtime_function(
+                            module,
+                            vut_runtime::abi::MAP_GET_OR,
+                            &[types::I64, types::I64, types::I64, types::I64],
+                            &[types::I8],
+                        )?;
+                        let reference = module.declare_func_in_func(target, builder.func);
+                        builder.ins().call(
+                            reference,
+                            &[values[&arguments[0]], key_ptr, out, default_ptr],
+                        );
+                        let loaded = element_value(builder, layouts, value_ty, out);
+                        if let Some(id) = value {
+                            value_types.insert(*id, value_ty);
+                        }
+                        Some(loaded)
+                    }
                     _ => unreachable!(),
                 };
                 if let Some((id, result)) = value.zip(call_result) {
+                    values.insert(id, result);
+                }
+                return Ok(());
+            }
+            if matches!(
+                function,
+                vut_mir::BuiltinFunction::FloatAbs
+                    | vut_mir::BuiltinFunction::FloatFloor
+                    | vut_mir::BuiltinFunction::FloatCeil
+                    | vut_mir::BuiltinFunction::FloatRound
+                    | vut_mir::BuiltinFunction::FloatTrunc
+                    | vut_mir::BuiltinFunction::FloatSqrt
+                    | vut_mir::BuiltinFunction::FloatPow
+                    | vut_mir::BuiltinFunction::FloatMin
+                    | vut_mir::BuiltinFunction::FloatMax
+                    | vut_mir::BuiltinFunction::FloatClamp
+                    | vut_mir::BuiltinFunction::FloatToInt
+                    | vut_mir::BuiltinFunction::FloatIsNan
+                    | vut_mir::BuiltinFunction::FloatIsFinite
+            ) {
+                let (name, returns) = match function {
+                    vut_mir::BuiltinFunction::FloatAbs => {
+                        (vut_runtime::abi::F64_ABS, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatFloor => {
+                        (vut_runtime::abi::F64_FLOOR, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatCeil => {
+                        (vut_runtime::abi::F64_CEIL, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatRound => {
+                        (vut_runtime::abi::F64_ROUND, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatTrunc => {
+                        (vut_runtime::abi::F64_TRUNC, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatSqrt => {
+                        (vut_runtime::abi::F64_SQRT, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatPow => {
+                        (vut_runtime::abi::F64_POW, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatMin => {
+                        (vut_runtime::abi::F64_MIN, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatMax => {
+                        (vut_runtime::abi::F64_MAX, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatClamp => {
+                        (vut_runtime::abi::F64_CLAMP, &[types::F64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatToInt => {
+                        (vut_runtime::abi::F64_TO_INT, &[types::I64][..])
+                    }
+                    vut_mir::BuiltinFunction::FloatIsNan => {
+                        (vut_runtime::abi::F64_IS_NAN, &[types::I8][..])
+                    }
+                    _ => (vut_runtime::abi::F64_IS_FINITE, &[types::I8][..]),
+                };
+                let parameters = vec![types::F64; arguments.len()];
+                let target = runtime_function(module, name, &parameters, returns)?;
+                let reference = module.declare_func_in_func(target, builder.func);
+                let args: Vec<_> = arguments.iter().map(|id| values[id]).collect();
+                let call = builder.ins().call(reference, &args);
+                if let Some((id, result)) = value.zip(Some(builder.inst_results(call)[0])) {
                     values.insert(id, result);
                 }
                 return Ok(());
@@ -2092,6 +2586,39 @@ pub(super) fn lower_instruction(
                 vut_mir::BuiltinFunction::StringSubstring => {
                     (vut_runtime::abi::STRING_SUBSTRING, &[types::I64][..])
                 }
+                vut_mir::BuiltinFunction::StringLines => {
+                    (vut_runtime::abi::STRING_LINES, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringSplitWhitespace => {
+                    (vut_runtime::abi::STRING_SPLIT_WHITESPACE, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringChars => {
+                    (vut_runtime::abi::STRING_CHARS, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringCharAt => {
+                    (vut_runtime::abi::STRING_CHAR_AT, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringRepeat => {
+                    (vut_runtime::abi::STRING_REPEAT, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringPadLeft => {
+                    (vut_runtime::abi::STRING_PAD_LEFT, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringPadRight => {
+                    (vut_runtime::abi::STRING_PAD_RIGHT, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringStripPrefix => {
+                    (vut_runtime::abi::STRING_STRIP_PREFIX, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringStripSuffix => {
+                    (vut_runtime::abi::STRING_STRIP_SUFFIX, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringRfind => {
+                    (vut_runtime::abi::STRING_RFIND, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::StringCompare => {
+                    (vut_runtime::abi::STRING_COMPARE, &[types::I64][..])
+                }
                 vut_mir::BuiltinFunction::StringEquals => {
                     (vut_runtime::abi::STRING_EQ, &[types::I8][..])
                 }
@@ -2104,14 +2631,38 @@ pub(super) fn lower_instruction(
                 vut_mir::BuiltinFunction::MapKeys => {
                     (vut_runtime::abi::MAP_KEYS, &[types::I64][..])
                 }
+                vut_mir::BuiltinFunction::MapValues => {
+                    (vut_runtime::abi::MAP_VALUES, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::ArrayToList => {
+                    (vut_runtime::abi::ARRAY_TO_LIST, &[types::I64][..])
+                }
                 vut_mir::BuiltinFunction::ListData => {
                     (vut_runtime::abi::LIST_DATA, &[types::I64][..])
                 }
-                vut_mir::BuiltinFunction::BytesReadI32 => {
-                    (vut_runtime::abi::BYTES_READ_I32, &[types::I64][..])
+                vut_mir::BuiltinFunction::ListJoin => {
+                    (vut_runtime::abi::LIST_JOIN, &[types::I64][..])
                 }
-                vut_mir::BuiltinFunction::BytesReadI64 => {
-                    (vut_runtime::abi::BYTES_READ_I64, &[types::I64][..])
+                vut_mir::BuiltinFunction::BytesPush => (vut_runtime::abi::BYTES_PUSH, &[][..]),
+                vut_mir::BuiltinFunction::BytesExtend => (vut_runtime::abi::BYTES_EXTEND, &[][..]),
+                vut_mir::BuiltinFunction::BytesTruncate => {
+                    (vut_runtime::abi::BYTES_TRUNCATE, &[][..])
+                }
+                vut_mir::BuiltinFunction::BytesResize => (vut_runtime::abi::BYTES_RESIZE, &[][..]),
+                vut_mir::BuiltinFunction::BytesFind => {
+                    (vut_runtime::abi::BYTES_FIND, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::BytesStartsWith => {
+                    (vut_runtime::abi::BYTES_STARTS_WITH, &[types::I8][..])
+                }
+                vut_mir::BuiltinFunction::BytesEndsWith => {
+                    (vut_runtime::abi::BYTES_ENDS_WITH, &[types::I8][..])
+                }
+                vut_mir::BuiltinFunction::BytesCompare => {
+                    (vut_runtime::abi::BYTES_COMPARE, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::BytesToHex => {
+                    (vut_runtime::abi::BYTES_TO_HEX, &[types::I64][..])
                 }
                 vut_mir::BuiltinFunction::BytesByteAt => {
                     (vut_runtime::abi::BYTES_BYTE_AT, &[types::I64][..])
@@ -2121,6 +2672,16 @@ pub(super) fn lower_instruction(
                 }
                 vut_mir::BuiltinFunction::IntToFloat => {
                     (vut_runtime::abi::INT_TO_FLOAT, &[types::F64][..])
+                }
+                vut_mir::BuiltinFunction::IntAbs => (vut_runtime::abi::INT_ABS, &[types::I64][..]),
+                vut_mir::BuiltinFunction::IntPow => (vut_runtime::abi::INT_POW, &[types::I64][..]),
+                vut_mir::BuiltinFunction::IntMin => (vut_runtime::abi::INT_MIN, &[types::I64][..]),
+                vut_mir::BuiltinFunction::IntMax => (vut_runtime::abi::INT_MAX, &[types::I64][..]),
+                vut_mir::BuiltinFunction::IntClamp => {
+                    (vut_runtime::abi::INT_CLAMP, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::BoolToStr => {
+                    (vut_runtime::abi::BOOL_TO_STR, &[types::I64][..])
                 }
                 vut_mir::BuiltinFunction::NumericToStr => {
                     let argument = values[&arguments[0]];
@@ -2147,6 +2708,9 @@ pub(super) fn lower_instruction(
                 | vut_mir::BuiltinFunction::BytesToList
                 | vut_mir::BuiltinFunction::BytesFromList
                 | vut_mir::BuiltinFunction::BytesToStr
+                | vut_mir::BuiltinFunction::BytesFromHex
+                | vut_mir::BuiltinFunction::BytesReadInt { .. }
+                | vut_mir::BuiltinFunction::BytesWriteInt { .. }
                 | vut_mir::BuiltinFunction::ListLen
                 | vut_mir::BuiltinFunction::ListIsEmpty
                 | vut_mir::BuiltinFunction::ListCapacity
@@ -2159,6 +2723,16 @@ pub(super) fn lower_instruction(
                 | vut_mir::BuiltinFunction::ListClear
                 | vut_mir::BuiltinFunction::ListSlice
                 | vut_mir::BuiltinFunction::ListContains
+                | vut_mir::BuiltinFunction::ListPop
+                | vut_mir::BuiltinFunction::ListFirst
+                | vut_mir::BuiltinFunction::ListLast
+                | vut_mir::BuiltinFunction::ListFindIndex
+                | vut_mir::BuiltinFunction::ListExtend
+                | vut_mir::BuiltinFunction::ListReverse
+                | vut_mir::BuiltinFunction::ListSort
+                | vut_mir::BuiltinFunction::ListTruncate
+                | vut_mir::BuiltinFunction::ListSwap
+                | vut_mir::BuiltinFunction::ListShrinkToFit
                 | vut_mir::BuiltinFunction::MapNew
                 | vut_mir::BuiltinFunction::MapLen
                 | vut_mir::BuiltinFunction::MapIsEmpty
@@ -2169,14 +2743,41 @@ pub(super) fn lower_instruction(
                 | vut_mir::BuiltinFunction::MapContainsKey
                 | vut_mir::BuiltinFunction::MapRemove
                 | vut_mir::BuiltinFunction::MapClear
+                | vut_mir::BuiltinFunction::MapGetOr
                 | vut_mir::BuiltinFunction::ArrayLen
                 | vut_mir::BuiltinFunction::ArrayAt
                 | vut_mir::BuiltinFunction::ArraySet
                 | vut_mir::BuiltinFunction::ArrayFirst
                 | vut_mir::BuiltinFunction::ArrayLast
                 | vut_mir::BuiltinFunction::ArrayFill
+                | vut_mir::BuiltinFunction::ArrayContains
+                | vut_mir::BuiltinFunction::ArrayReverse
+                | vut_mir::BuiltinFunction::ArraySort
+                | vut_mir::BuiltinFunction::FloatAbs
+                | vut_mir::BuiltinFunction::FloatFloor
+                | vut_mir::BuiltinFunction::FloatCeil
+                | vut_mir::BuiltinFunction::FloatRound
+                | vut_mir::BuiltinFunction::FloatTrunc
+                | vut_mir::BuiltinFunction::FloatSqrt
+                | vut_mir::BuiltinFunction::FloatPow
+                | vut_mir::BuiltinFunction::FloatMin
+                | vut_mir::BuiltinFunction::FloatMax
+                | vut_mir::BuiltinFunction::FloatClamp
+                | vut_mir::BuiltinFunction::FloatToInt
+                | vut_mir::BuiltinFunction::FloatIsNan
+                | vut_mir::BuiltinFunction::FloatIsFinite
+                | vut_mir::BuiltinFunction::ResultIsOk
+                | vut_mir::BuiltinFunction::ResultIsErr
+                | vut_mir::BuiltinFunction::ResultUnwrapOr
                 | vut_mir::BuiltinFunction::VariadicLen
-                | vut_mir::BuiltinFunction::VariadicAt => unreachable!(),
+                | vut_mir::BuiltinFunction::VariadicAt
+                | vut_mir::BuiltinFunction::ListMap
+                | vut_mir::BuiltinFunction::ListFilter
+                | vut_mir::BuiltinFunction::ListAny
+                | vut_mir::BuiltinFunction::ListAll
+                | vut_mir::BuiltinFunction::ListFold
+                | vut_mir::BuiltinFunction::ListFindIndexBy
+                | vut_mir::BuiltinFunction::ListSortBy => unreachable!(),
             };
             let parameters = if *function == vut_mir::BuiltinFunction::NumericToStr
                 && builder
@@ -2510,5 +3111,27 @@ fn local_write(
                 }
             }
         }
+    }
+}
+
+/// Loads an array element as an owned value: non-aggregate managed elements are
+/// retained, and aggregate elements are copied to a fresh slot whose managed
+/// fields are retained. This matches `list.at`, whose result the caller owns.
+fn read_owned_array_element(
+    builder: &mut FunctionBuilder<'_>,
+    module: &mut ObjectModule,
+    layouts: &LayoutTable,
+    element_ty: vut_hir::TypeId,
+    address: cranelift_codegen::ir::Value,
+) -> Result<cranelift_codegen::ir::Value, CodegenError> {
+    if layouts.is_aggregate(element_ty) {
+        let slot = stack_slot_for_type(builder, layouts, element_ty)?;
+        copy_aggregate(builder, layouts, element_ty, address, slot)?;
+        manage_value(builder, module, layouts, element_ty, slot, true)?;
+        Ok(slot)
+    } else {
+        let value = element_value(builder, layouts, element_ty, address);
+        manage_value(builder, module, layouts, element_ty, value, true)?;
+        Ok(value)
     }
 }
