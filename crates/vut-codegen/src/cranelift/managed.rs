@@ -112,6 +112,42 @@ pub(super) fn manage_value(
             builder.ins().call(reference, &[value]);
         }
         OwnershipKind::Aggregate => {
+            if let Some(inner) = layouts.optionals.get(&ty).copied() {
+                // A tagged optional owns its payload only when present.
+                if layouts.types[inner.0].needs_drop {
+                    let tag = builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), value, 0);
+                    let present_block = builder.create_block();
+                    let join = builder.create_block();
+                    let is_present = builder.ins().icmp_imm_s(IntCC::NotEqual, tag, 0);
+                    builder
+                        .ins()
+                        .brif(is_present, present_block, &[], join, &[]);
+                    builder.switch_to_block(present_block);
+                    let payload_offset = optional_payload_offset(layouts, inner);
+                    let inner_value = if layouts.is_aggregate(inner) {
+                        let delta = i64::try_from(payload_offset).map_err(|_| {
+                            CodegenError::Backend("optional payload offset exceeds limit".into())
+                        })?;
+                        builder.ins().iadd_imm_u(value, delta)
+                    } else {
+                        let offset = i32::try_from(payload_offset).map_err(|_| {
+                            CodegenError::Backend("optional payload offset exceeds limit".into())
+                        })?;
+                        builder.ins().load(
+                            machine_type(layouts, inner),
+                            MemFlagsData::trusted(),
+                            value,
+                            offset,
+                        )
+                    };
+                    manage_value(builder, module, layouts, inner, inner_value, retain)?;
+                    builder.ins().jump(join, &[]);
+                    builder.switch_to_block(join);
+                }
+                return Ok(());
+            }
             if let Some(result) = layouts.results.get(&ty) {
                 let tag = builder.ins().load(
                     types::I64,
@@ -318,6 +354,15 @@ pub(super) fn is_managed_handle(layouts: &LayoutTable, ty: vut_hir::TypeId) -> b
             | OwnershipKind::Interface
             | OwnershipKind::OpaqueManaged
     )
+}
+
+/// Byte offset of the payload inside a tagged optional aggregate: the
+/// discriminant occupies one pointer-sized word, aligned for the inner type.
+#[must_use]
+pub(super) fn optional_payload_offset(layouts: &LayoutTable, inner: vut_hir::TypeId) -> usize {
+    let align = layouts.types[inner.0].alignment.max(1);
+    let pointer = layouts.pointer_size;
+    pointer.div_ceil(align) * align
 }
 
 pub(super) fn stack_slot_for_type(

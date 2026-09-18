@@ -122,34 +122,17 @@ fn scalar_optional_argument_and_narrowing() {
 }
 
 #[test]
-fn scalar_optional_return_is_rejected_with_e1007() {
-    let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("valid clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("vut-optional-check-{nonce}"));
-    fs::create_dir(&root).expect("create root");
-    fs::write(
-        root.join("main.vut"),
-        "fn make() -> int?:\n  5\n\nfn main():\n  out(make())\n",
-    )
-    .expect("write source");
-    let config = CompilerConfig {
-        runtime_library: Some(runtime_library()),
-        ..CompilerConfig::default()
-    };
-    let mut session = CompilerSession::new(config);
-    let checked = session.check_source_root(&root, &[]).expect("check");
-    let codes: Vec<&str> = checked
-        .semantics
-        .diagnostics
-        .as_slice()
-        .iter()
-        .filter_map(|diagnostic| diagnostic.code.as_deref())
-        .collect();
-    fs::remove_dir_all(&root).ok();
-    assert!(
-        codes.contains(&"E1007"),
-        "scalar optional return must be rejected: {codes:?}"
-    );
+fn scalar_optional_return_across_functions() {
+    let source = "fn make() -> int?:\n  5\n\nfn absent() -> int?:\n  null\n\nfn half(flag: bool) -> int?:\n  if flag:\n    return 9\n  null\n\nfn chain() -> int?:\n  make()\n\nfn main():\n  a: int? = make()\n  if a != null:\n    out(a)\n  b: int? = absent()\n  if b == null:\n    out(\"b=absent\")\n  c: int? = half(true)\n  if c != null:\n    out(c)\n  d: int? = half(false)\n  if d == null:\n    out(\"d=absent\")\n  e: int? = chain()\n  if e != null:\n    out(e)\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "5\nb=absent\n9\nd=absent\n5\n");
+}
+
+#[test]
+fn scalar_optional_float_return() {
+    let source = "fn ratio(flag: bool) -> float?:\n  if flag:\n    return 0.5\n  null\n\nfn main():\n  a: float? = ratio(true)\n  if a != null:\n    out(a)\n  b: float? = ratio(false)\n  if b == null:\n    out(\"b=absent\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "0.5\nb=absent\n");
 }

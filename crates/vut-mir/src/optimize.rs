@@ -136,7 +136,7 @@ fn side_effecting(value: &Instruction) -> bool {
 }
 fn result(value: &Instruction) -> Option<ValueId> {
     match value {
-        Instruction::ConstNull { value }
+        Instruction::ConstNull { value, .. }
         | Instruction::ConstInt { value, .. }
         | Instruction::ConstFloat { value, .. }
         | Instruction::ConstBool { value, .. }
@@ -274,6 +274,7 @@ mod tests {
                 maps: HashMap::new(),
                 results: HashMap::new(),
                 enums: HashMap::new(),
+                optionals: HashMap::new(),
                 callables: HashMap::new(),
                 aggregates: std::collections::HashSet::new(),
             },

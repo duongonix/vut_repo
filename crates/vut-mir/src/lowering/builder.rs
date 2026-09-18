@@ -59,6 +59,9 @@ pub(super) struct Builder<'a> {
     pub(super) loop_targets: Vec<LoopTarget>,
     pub(super) terminated: HashSet<BlockId>,
     pub(super) return_type: Option<TypeId>,
+    /// The type of the most recent expression statement, used to coerce an
+    /// implicit return of an optional function result.
+    pub(super) tail_type: Option<TypeId>,
     /// Nesting depth of conditional branches. Values referenced inside a
     /// branch are never moved (they are retained and dropped at cleanup) so
     /// that path-insensitive move tracking cannot leak or double-free.
@@ -103,7 +106,13 @@ impl Builder<'_> {
             if self.is_terminated() {
                 break;
             }
-            value = self.statement(statement).or(value);
+            let produced = self.statement(statement);
+            if produced.is_some()
+                && let Stmt::Expression(expr) = statement
+            {
+                self.tail_type = self.semantics.expression_types.get(&expr.span()).copied();
+            }
+            value = produced.or(value);
         }
         value
     }
@@ -217,30 +226,6 @@ impl Builder<'_> {
                         .copied()
                 {
                     let current = self.coerce_interface(current, actual, expected);
-                    if let Type::Optional(inner) = self.semantics.types[expected.0]
-                        && !matches!(
-                            self.semantics.types[inner.0],
-                            Type::Str
-                                | Type::Bytes
-                                | Type::List(_)
-                                | Type::Map(_, _)
-                                | Type::Vutcon(_)
-                                | Type::Future(_)
-                                | Type::Resource(_)
-                                | Type::Interface(_)
-                                | Type::Dyn
-                        )
-                    {
-                        // Scalar optionals are currently boxed in the callee's
-                        // frame; returning one would dangle. Reject it cleanly
-                        // until the indirect/by-value ABI lands.
-                        self.diagnostics.push(vut_diagnostics::Diagnostic::error(
-                            vut_diagnostics::codes::E1007,
-                            "unsupported optional return",
-                            expression.span(),
-                            "returning a scalar optional across functions is not yet supported",
-                        ));
-                    }
                     value = Some(self.coerce_optional(current, Some(actual), Some(expected)));
                 }
                 // Exit every active loop without running its normal exit edge,
@@ -730,6 +715,31 @@ impl Builder<'_> {
         let Type::Optional(inner) = self.semantics.types[expected.0] else {
             return value;
         };
+        // A `null` literal has the placeholder `Null` type: managed optionals
+        // represent absence as the zero handle, but tagged optionals need a
+        // zeroed aggregate block, so re-emit the constant with the optional type.
+        if matches!(self.semantics.types[actual.0], Type::Null) {
+            if !matches!(
+                self.semantics.types[inner.0],
+                Type::Str
+                    | Type::Bytes
+                    | Type::List(_)
+                    | Type::Map(_, _)
+                    | Type::Vutcon(_)
+                    | Type::Future(_)
+                    | Type::Resource(_)
+                    | Type::Interface(_)
+                    | Type::Dyn
+            ) {
+                let absent = self.value();
+                self.emit(Instruction::ConstNull {
+                    value: absent,
+                    ty: Some(expected),
+                });
+                return absent;
+            }
+            return value;
+        }
         if actual != inner {
             return value;
         }

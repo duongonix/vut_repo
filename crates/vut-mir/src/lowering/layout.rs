@@ -104,6 +104,10 @@ pub struct LayoutTable {
     pub results: HashMap<TypeId, ResultLayout>,
     /// Tagged-union layouts for enums.
     pub enums: HashMap<TypeId, EnumLayout>,
+    /// Tagged optionals whose inner type is not a managed handle, keyed by the
+    /// optional type and mapping to the inner type. Their value is a pointer to
+    /// a `{ discriminant, payload }` block, so they use the aggregate ABI.
+    pub optionals: HashMap<TypeId, TypeId>,
     /// Callable signatures keyed by their type, for indirect calls.
     pub callables: HashMap<TypeId, (Vec<TypeId>, TypeId)>,
     /// Types whose value is a pointer to a contiguous block (aggregate by
@@ -340,7 +344,7 @@ impl LayoutTable {
             matches!(
                 ty,
                 Type::Array(..) | Type::Result(..) | Type::Data(_) | Type::Enum(_)
-            )
+            ) || matches!(ty, Type::Optional(inner) if !is_managed_type(&semantics.types[inner.0]))
         };
         let mut resolved: Vec<bool> = semantics
             .types
@@ -599,7 +603,49 @@ impl LayoutTable {
                 _ => {}
             }
         }
-        let aggregates = semantics
+        // Tagged optionals are `{ discriminant, payload }` blocks. Resolve them
+        // after the aggregates they may embed are laid out; repeated passes
+        // handle optionals nested inside other optionals.
+        let mut optionals: HashMap<TypeId, TypeId> = HashMap::new();
+        for _ in 0..semantics.types.len() {
+            for (type_index, ty) in semantics.types.iter().enumerate() {
+                if optionals.contains_key(&TypeId(type_index)) {
+                    continue;
+                }
+                let Type::Optional(inner) = ty else {
+                    continue;
+                };
+                if is_managed_type(&semantics.types[inner.0]) {
+                    continue;
+                }
+                if matches!(semantics.types[inner.0], Type::Optional(_))
+                    && !optionals.contains_key(inner)
+                {
+                    continue;
+                }
+                let inner_info = types[inner.0];
+                let alignment = pointer_size.max(inner_info.alignment).max(1);
+                let payload_offset = align_up(pointer_size, inner_info.alignment.max(1));
+                let size = align_up(payload_offset + inner_info.size, alignment);
+                types[type_index] = TypeInfo {
+                    size,
+                    alignment,
+                    is_copy: inner_info.is_copy,
+                    needs_drop: inner_info.needs_drop,
+                    contains_managed: inner_info.contains_managed,
+                    contains_linear: inner_info.contains_linear,
+                    abi: AbiClass::Aggregate,
+                    repr: ValueRepr::Pointer,
+                    ownership: if inner_info.needs_drop {
+                        OwnershipKind::Aggregate
+                    } else {
+                        OwnershipKind::None
+                    },
+                };
+                optionals.insert(TypeId(type_index), *inner);
+            }
+        }
+        let mut aggregates: std::collections::HashSet<TypeId> = semantics
             .types
             .iter()
             .enumerate()
@@ -611,6 +657,7 @@ impl LayoutTable {
                 .then_some(TypeId(type_index))
             })
             .collect();
+        aggregates.extend(optionals.keys().copied());
         Self {
             types,
             pointer_size,
@@ -620,6 +667,7 @@ impl LayoutTable {
             maps,
             results,
             enums,
+            optionals,
             callables,
             aggregates,
         }
@@ -696,4 +744,20 @@ fn managed(size: usize, alignment: usize, ownership: OwnershipKind) -> TypeInfo 
 }
 pub(super) fn is_unsigned_type(ty: &Type) -> bool {
     matches!(ty, Type::Numeric(name) if matches!(name.as_str(), "u8" | "u16" | "u32" | "u64"))
+}
+/// Returns true for types whose optional form is a nullable handle rather than
+/// a tagged aggregate.
+fn is_managed_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Str
+            | Type::Bytes
+            | Type::List(_)
+            | Type::Map(_, _)
+            | Type::Vutcon(_)
+            | Type::Future(_)
+            | Type::Resource(_)
+            | Type::Interface(_)
+            | Type::Dyn
+    )
 }

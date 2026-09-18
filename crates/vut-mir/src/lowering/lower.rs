@@ -105,6 +105,7 @@ pub(crate) fn lower_program(
                     loop_targets: Vec::new(),
                     terminated: HashSet::new(),
                     return_type,
+                    tail_type: None,
                     conditional_depth: 0,
                     receiver_local: function.receiver.map(|_| LocalId(0)),
                     pattern_borrowed: false,
@@ -155,33 +156,14 @@ pub(crate) fn lower_program(
                 builder.variadic_param = variadic_param;
                 let returned = builder.lower_statements(&body.statements);
                 if !builder.is_terminated() {
-                    // Scalar optionals are boxed in the callee frame; an implicit
-                    // return of one would dangle until the indirect ABI lands.
-                    if let Some(expected) = return_type
-                        && let Type::Optional(inner) = semantics.types[expected.0]
-                        && !matches!(
-                            semantics.types[inner.0],
-                            Type::Str
-                                | Type::Bytes
-                                | Type::List(_)
-                                | Type::Map(_, _)
-                                | Type::Vutcon(_)
-                                | Type::Future(_)
-                                | Type::Resource(_)
-                                | Type::Interface(_)
-                                | Type::Dyn
-                        )
-                    {
-                        builder.diagnostics.push(vut_diagnostics::Diagnostic::error(
-                            vut_diagnostics::codes::E1007,
-                            "unsupported optional return",
-                            function.span,
-                            "returning a scalar optional across functions is not yet supported",
-                        ));
-                    }
                     let returned = return_type
                         .filter(|ty| !matches!(semantics.types[ty.0], Type::Void))
                         .and(returned);
+                    // Coerce an implicit tail value into an optional result
+                    // (`T` -> `T?`); already-optional values pass through.
+                    let returned = returned.map(|value| {
+                        builder.coerce_optional(value, builder.tail_type, return_type)
+                    });
                     builder.cleanup_except(returned);
                     builder.terminate(Terminator::Return(returned));
                 }

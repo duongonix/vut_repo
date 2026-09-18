@@ -16,7 +16,7 @@ use super::super::{Function, Instruction, Terminator, ValueId};
 )]
 pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
     match instruction {
-        Instruction::ConstNull { value }
+        Instruction::ConstNull { value, .. }
         | Instruction::ConstInt { value, .. }
         | Instruction::ConstFloat { value, .. }
         | Instruction::ConstBool { value, .. }

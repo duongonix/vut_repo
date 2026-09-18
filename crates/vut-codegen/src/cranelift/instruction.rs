@@ -2,7 +2,7 @@
 use super::CodegenError;
 use super::managed::{
     const_runtime_string, element_pointer, element_value, is_managed_handle, manage_value,
-    stack_slot_for_type, store_temp_value, zero_stack_value,
+    optional_payload_offset, stack_slot_for_type, zero_stack_value,
 };
 use super::signatures::{
     c_call_conv, coerce_integer, copy_aggregate, indirect_signature, machine_type, runtime_function,
@@ -56,7 +56,20 @@ pub(super) fn lower_instruction(
             *value,
             const_runtime_string(builder, module, next_data, literal)?,
         )),
-        Instruction::ConstNull { value } => Some((*value, builder.ins().iconst(types::I64, 0))),
+        Instruction::ConstNull { value, ty } => {
+            let result = match ty.and_then(|ty| layouts.optionals.get(&ty).copied()) {
+                Some(_) => {
+                    // A tagged optional absent value is a zeroed aggregate block
+                    // (discriminant 0).
+                    let ty = ty.expect("optional type is present");
+                    let slot = stack_slot_for_type(builder, layouts, ty)?;
+                    zero_stack_value(builder, layouts, ty, slot);
+                    slot
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            Some((*value, result))
+        }
         Instruction::OptionalWrap {
             value,
             operand,
@@ -69,9 +82,31 @@ pub(super) fn lower_instruction(
             let result = if is_managed_handle(layouts, *inner) {
                 operand
             } else {
-                // A scalar optional is a nullable pointer to a boxed payload;
-                // null (0) means absent.
-                store_temp_value(builder, layouts, *inner, operand)?
+                // A tagged optional is `{ discriminant = 1, payload }`.
+                let slot = stack_slot_for_type(builder, layouts, *ty)?;
+                let present = builder.ins().iconst(types::I64, 1);
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), present, slot, 0);
+                let offset =
+                    i32::try_from(optional_payload_offset(layouts, *inner)).map_err(|_| {
+                        CodegenError::Backend(
+                            "optional payload offset exceeds backend limit".into(),
+                        )
+                    })?;
+                if layouts.is_aggregate(*inner) {
+                    let delta =
+                        i64::try_from(optional_payload_offset(layouts, *inner)).map_err(|_| {
+                            CodegenError::Backend("optional payload offset exceeds limit".into())
+                        })?;
+                    let destination = builder.ins().iadd_imm_u(slot, delta);
+                    copy_aggregate(builder, layouts, *inner, operand, destination)?;
+                } else {
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), operand, slot, offset);
+                }
+                slot
             };
             value_types.insert(*value, *ty);
             Some((*value, result))
@@ -87,19 +122,44 @@ pub(super) fn lower_instruction(
             let result = if is_managed_handle(layouts, *inner) {
                 operand
             } else {
-                element_value(builder, layouts, *inner, operand)
+                let offset =
+                    i32::try_from(optional_payload_offset(layouts, *inner)).map_err(|_| {
+                        CodegenError::Backend(
+                            "optional payload offset exceeds backend limit".into(),
+                        )
+                    })?;
+                if layouts.is_aggregate(*inner) {
+                    builder.ins().iadd_imm_u(operand, i64::from(offset))
+                } else {
+                    builder.ins().load(
+                        machine_type(layouts, *inner),
+                        MemFlagsData::trusted(),
+                        operand,
+                        offset,
+                    )
+                }
             };
             value_types.insert(*value, *inner);
             Some((*value, result))
         }
-        Instruction::OptionalIsPresent { value, operand } => {
+        Instruction::OptionalIsPresent {
+            value,
+            operand,
+            inner,
+        } => {
             let operand = values.get(operand).copied().ok_or_else(|| {
                 CodegenError::Backend("invalid typed MIR: optional operand was not produced".into())
             })?;
-            Some((
-                *value,
-                builder.ins().icmp_imm_u(IntCC::NotEqual, operand, 0),
-            ))
+            let result = if is_managed_handle(layouts, *inner) {
+                builder.ins().icmp_imm_u(IntCC::NotEqual, operand, 0)
+            } else {
+                // Tagged optionals carry their discriminant in the first word.
+                let tag = builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::trusted(), operand, 0);
+                builder.ins().icmp_imm_u(IntCC::NotEqual, tag, 0)
+            };
+            Some((*value, result))
         }
         Instruction::FormatValue {
             value,

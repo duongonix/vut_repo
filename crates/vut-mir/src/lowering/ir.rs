@@ -95,6 +95,9 @@ pub struct BasicBlock {
 pub enum Instruction {
     ConstNull {
         value: ValueId,
+        /// The optional type this `null` inhabits, when known. Managed optionals
+        /// are the zero handle; tagged optionals need a zeroed aggregate block.
+        ty: Option<TypeId>,
     },
     /// Wraps a present inner value into an optional value of type `ty`.
     OptionalWrap {
@@ -113,6 +116,7 @@ pub enum Instruction {
     OptionalIsPresent {
         value: ValueId,
         operand: ValueId,
+        inner: TypeId,
     },
     ConstInt {
         value: ValueId,

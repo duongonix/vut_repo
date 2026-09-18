@@ -17,6 +17,7 @@ fn constant() -> Program {
             maps: HashMap::new(),
             results: HashMap::new(),
             enums: HashMap::new(),
+            optionals: HashMap::new(),
             callables: HashMap::new(),
             aggregates: std::collections::HashSet::new(),
             types: vec![TypeInfo {

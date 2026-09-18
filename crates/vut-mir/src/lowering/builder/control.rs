@@ -111,7 +111,8 @@ impl Builder<'_> {
             }
         } else {
             let value = self.value();
-            self.emit(Instruction::ConstNull { value });
+            let ty = self.local_data[result_local.0].ty;
+            self.emit(Instruction::ConstNull { value, ty });
             self.emit(Instruction::Store {
                 local: result_local,
                 value,

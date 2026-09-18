@@ -47,9 +47,10 @@ impl Builder<'_> {
                 });
                 Some(value)
             }
-            Expr::Null(_) => {
+            Expr::Null(span) => {
                 let value = self.value();
-                self.emit(Instruction::ConstNull { value });
+                let ty = self.semantics.expression_types.get(span).copied();
+                self.emit(Instruction::ConstNull { value, ty });
                 Some(value)
             }
             Expr::Unary {
@@ -419,10 +420,56 @@ impl Builder<'_> {
             } => {
                 let left_ty = self.semantics.expression_types.get(&left.span()).copied();
                 let right_ty = self.semantics.expression_types.get(&right.span()).copied();
+                let left_is_null = matches!(left.as_ref(), Expr::Null(_));
+                let right_is_null = matches!(right.as_ref(), Expr::Null(_));
                 let left = self.expr(left)?;
                 let right = self.expr(right)?;
                 let value = self.value();
                 let ty = self.semantics.expression_types.get(span).copied();
+                // `x == null` / `x != null` on an optional is a presence test.
+                // Managed optionals compare their nullable handle to zero;
+                // tagged optionals load their discriminant.
+                if matches!(*op, BinaryOp::Equal | BinaryOp::NotEqual) {
+                    let nullable_ty = if right_is_null {
+                        left_ty
+                    } else if left_is_null {
+                        right_ty
+                    } else {
+                        None
+                    };
+                    let optional_inner =
+                        nullable_ty.and_then(|ty| match self.semantics.types[ty.0] {
+                            Type::Optional(inner) => Some((ty, inner)),
+                            _ => None,
+                        });
+                    if let Some((nullable_ty, inner)) = optional_inner {
+                        let operand = if right_is_null { left } else { right };
+                        let present = self.value();
+                        self.emit(Instruction::OptionalIsPresent {
+                            value: present,
+                            operand,
+                            inner,
+                        });
+                        let result = if *op == BinaryOp::Equal {
+                            let inverted = self.value();
+                            self.emit(Instruction::Unary {
+                                value: inverted,
+                                op: vut_ast::UnaryOp::Not,
+                                operand: present,
+                            });
+                            inverted
+                        } else {
+                            present
+                        };
+                        if self.layouts.types[nullable_ty.0].needs_drop {
+                            self.emit(Instruction::Release {
+                                value: operand,
+                                ty: nullable_ty,
+                            });
+                        }
+                        return Some(result);
+                    }
+                }
                 let operands_are_str = left_ty
                     .is_some_and(|ty| matches!(self.semantics.types[ty.0], Type::Str))
                     && right_ty.is_some_and(|ty| matches!(self.semantics.types[ty.0], Type::Str));
