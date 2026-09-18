@@ -210,9 +210,43 @@ impl Builder<'_> {
             self.switch_to(test_block);
             let arm_block = self.new_block();
             let next = self.new_block();
+            // A present-requiring pattern on an optional narrows to the inner
+            // value, guarded by a presence test so absent values fall through.
+            let arm_inner = if pattern_requires_presence(&arm.pattern) {
+                match self.semantics.types.get(source_ty.0) {
+                    Some(Type::Optional(inner)) => Some(*inner),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let (arm_value, arm_ty) = if let Some(inner) = arm_inner {
+                let present = self.value();
+                self.emit(Instruction::OptionalIsPresent {
+                    value: present,
+                    operand: source,
+                    inner,
+                });
+                let present_block = self.new_block();
+                self.terminate(Terminator::Branch {
+                    condition: present,
+                    then_block: present_block,
+                    else_block: next,
+                });
+                self.switch_to(present_block);
+                let unwrapped = self.value();
+                self.emit(Instruction::OptionalUnwrap {
+                    value: unwrapped,
+                    operand: source,
+                    inner,
+                });
+                (unwrapped, inner)
+            } else {
+                (source, source_ty)
+            };
             let arm_mark = self.local_data.len();
             let mut binding_types = Vec::new();
-            self.collect_pattern_bindings(&arm.pattern, source_ty, &mut binding_types);
+            self.collect_pattern_bindings(&arm.pattern, arm_ty, &mut binding_types);
             let mut previous = Vec::new();
             for (name, ty) in &binding_types {
                 let local = self.add_local(name.clone(), None, arm.span);
@@ -221,7 +255,7 @@ impl Builder<'_> {
                 previous.push((name.clone(), old));
             }
             self.pattern_borrowed = borrowed_source;
-            self.lower_pattern(&arm.pattern, source, source_ty, arm_block, next);
+            self.lower_pattern(&arm.pattern, arm_value, arm_ty, arm_block, next);
             self.switch_to(arm_block);
             self.pattern_borrowed = false;
             if let Some(guard) = &arm.guard {
@@ -877,4 +911,21 @@ fn variant_field_patterns<'a>(
         }
     }
     provided
+}
+
+/// True when a match pattern only matches a present value (so an optional
+/// subject should be narrowed). `null` and wildcard also match absence.
+fn pattern_requires_presence(pattern: &vut_ast::MatchPattern) -> bool {
+    match pattern {
+        vut_ast::MatchPattern::Wildcard(_) | vut_ast::MatchPattern::Error(_) => false,
+        vut_ast::MatchPattern::Literal {
+            value: vut_ast::LiteralPattern::Null,
+            ..
+        } => false,
+        vut_ast::MatchPattern::Group { pattern, .. } => pattern_requires_presence(pattern),
+        vut_ast::MatchPattern::Or { alternatives, .. } => {
+            !alternatives.is_empty() && alternatives.iter().all(pattern_requires_presence)
+        }
+        _ => true,
+    }
 }

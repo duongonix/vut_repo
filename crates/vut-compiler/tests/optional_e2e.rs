@@ -155,10 +155,34 @@ fn map_get_and_remove_managed_values_balance_ownership() {
 
 #[test]
 fn scalar_optional_match_null_pattern() {
-    let source = "fn describe(value: int?) -> str:\n  match value:\n    null: \"none\"\n    _: \"some\"\n\nfn main():\n  out(describe(7))\n  out(describe(null))\n";
+    let source = "fn describe(value: int?) -> str:\n  match value:\n    null: \"none\"\n    v: \"got $(v)\"\n\nfn main():\n  out(describe(7))\n  out(describe(null))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(stdout, "some\nnone\n");
+    assert_eq!(stdout, "got 7\nnone\n");
+}
+
+#[test]
+fn managed_optional_match_binding_narrows() {
+    let source = "fn describe(value: str?) -> str:\n  match value:\n    null: \"none\"\n    v: \"hi $(v)\"\n\nfn main():\n  out(describe(\"ann\"))\n  out(describe(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "hi ann\nnone\n");
+}
+
+#[test]
+fn optional_data_match_binding_is_leak_free() {
+    let source = "data Person:\n  name: str\n  age: int\n\nfn label(person: Person?) -> str:\n  match person:\n    null: \"none\"\n    v: \"$(v.name) $(v.age)\"\n\nfn main():\n  out(label(Person(name = \"Ann\", age = 30)))\n  out(label(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "Ann 30\nnone\n");
+}
+
+#[test]
+fn optional_enum_variant_match_narrows() {
+    let source = "enum Payload:\n  none\n  text(value: str)\n  count(value: int)\n\nfn label(payload: Payload?) -> str:\n  match payload:\n    null: \"absent\"\n    none: \"none\"\n    text(value): \"text $(value)\"\n    count(value): \"count $(value)\"\n\nfn main():\n  out(label(Payload.text(value = \"hi\")))\n  out(label(Payload.count(value = 4)))\n  out(label(Payload.none))\n  out(label(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "text hi\ncount 4\nnone\nabsent\n");
 }
 
 #[test]

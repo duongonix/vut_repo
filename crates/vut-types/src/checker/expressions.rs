@@ -1415,9 +1415,10 @@ impl Analyzer<'_> {
         let mut wildcard_seen = false;
 
         for arm in arms {
+            let arm_subject = self.arm_pattern_subject(subject, &arm.pattern);
             context.scopes.push(HashMap::new());
             let mut bindings = HashMap::new();
-            self.check_pattern(module, &arm.pattern, subject, &mut bindings, context);
+            self.check_pattern(module, &arm.pattern, arm_subject, &mut bindings, context);
             if let Some(guard) = &arm.guard {
                 let guard_ty = self.expr(module, guard, context, None);
                 let bool_ty = self.intern(Type::Bool);
@@ -1441,7 +1442,7 @@ impl Analyzer<'_> {
                         "a previous arm already matches every value",
                     );
                 } else if let Some(head) = pattern_head(
-                    &|name| self.bare_variant(subject, name).is_some(),
+                    &|name| self.bare_variant(arm_subject, name).is_some(),
                     &arm.pattern,
                 ) {
                     if !seen_heads.insert(head.clone()) {
@@ -1456,7 +1457,7 @@ impl Analyzer<'_> {
                         wildcard_seen = true;
                     }
                 }
-                coverage.merge(&self.coverage_of(&arm.pattern, subject));
+                coverage.merge(&self.coverage_of(&arm.pattern, arm_subject));
             }
 
             if let Some(first) = result {
@@ -1696,6 +1697,23 @@ impl Analyzer<'_> {
             return None;
         };
         Some((name.text.clone(), inner, is_eq))
+    }
+
+    /// The type a match arm's pattern is checked against. A present-requiring
+    /// pattern on an optional sees the inner type (`T?` -> `T`); `null` and
+    /// wildcard patterns keep the optional so absence still matches them.
+    fn arm_pattern_subject(&self, subject: TypeId, pattern: &MatchPattern) -> TypeId {
+        match self.optional_value_inner(subject) {
+            Some(inner) if pattern_requires_presence(pattern) => inner,
+            _ => subject,
+        }
+    }
+
+    fn optional_value_inner(&self, ty: TypeId) -> Option<TypeId> {
+        match self.types[ty.0] {
+            Type::Optional(inner) => Some(inner),
+            _ => None,
+        }
     }
 
     /// Checks a block with an optional narrowing binding in scope.
@@ -2207,6 +2225,24 @@ fn pattern_head(is_variant: &impl Fn(&str) -> bool, pattern: &MatchPattern) -> O
             ..
         } => Some(Head::Other(text.clone())),
         _ => None,
+    }
+}
+
+/// Returns true when a pattern only matches a present value, so a match on an
+/// optional should narrow the subject to its inner type for that arm. `null`
+/// and wildcard patterns also match absence, so they keep the optional.
+fn pattern_requires_presence(pattern: &MatchPattern) -> bool {
+    match pattern {
+        MatchPattern::Wildcard(_) | MatchPattern::Error(_) => false,
+        MatchPattern::Literal {
+            value: LiteralPattern::Null,
+            ..
+        } => false,
+        MatchPattern::Group { pattern, .. } => pattern_requires_presence(pattern),
+        MatchPattern::Or { alternatives, .. } => {
+            !alternatives.is_empty() && alternatives.iter().all(pattern_requires_presence)
+        }
+        _ => true,
     }
 }
 
