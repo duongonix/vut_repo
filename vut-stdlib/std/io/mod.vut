@@ -76,6 +76,11 @@ fn _kind(code: int) -> IoErrorKind:
 fn _error(code: int, raw: bytes) -> IoError:
   IoError(kind = _kind(code), message = abi.message(raw))
 
+# Maps a shared native status code to an `IoError`. Used by other stdlib modules
+# (fs/process) whose stream types surface failures through `io.Reader`/`Writer`.
+fn error_from_status(code: int, raw: bytes) -> IoError:
+  _error(code, raw)
+
 fn _ok_bytes(value: bytes) -> result(bytes, IoError):
   ok(value)
 

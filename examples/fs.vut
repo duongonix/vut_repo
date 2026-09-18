@@ -20,7 +20,7 @@ fn main():
     err(error): out("read error: $(error.message)")
 
   match fs.metadata(file):
-    ok(meta): out("size: $(meta.size) file: $(meta.is_file) readonly: $(meta.readonly)")
+    ok(meta): out("size: $(meta.len()) file: $(meta.is_file()) readonly: $(meta.readonly())")
     err(error): out("metadata error: $(error.message)")
 
   copied = "vut_example_fs_copy.txt"
@@ -34,7 +34,7 @@ fn main():
     err(error): out("rename error: $(error.message)")
 
   match fs.read_dir("."):
-    ok(names): out("entries in current directory: $(names.len())")
+    ok(entries): out("entries in current directory: $(entries.len())")
     err(error): out("read_dir error: $(error.message)")
 
   match fs.remove_file(moved):
