@@ -959,9 +959,24 @@ impl<'a> Analyzer<'a> {
         let module = &self.resolution.modules[module_id.0];
         let mut shape = InterfaceShape::default();
         for parent in &declaration.parents {
-            let Some(parent_symbol) = module.symbols.get(&parent.text).copied() else {
+            let parent_symbol = self
+                .reference_symbols
+                .get(&parent.span)
+                .copied()
+                .or_else(|| module.symbols.get(&parent.text).copied());
+            let Some(parent_symbol) = parent_symbol else {
+                // An unresolved parent is reported by the resolver as `E4001`.
                 continue;
             };
+            if !declarations.contains_key(&parent_symbol) {
+                self.error(
+                    codes::E4004,
+                    "invalid interface parent",
+                    parent.span,
+                    "a composed parent must be an interface",
+                );
+                continue;
+            }
             self.build_interface_shape(parent_symbol, declarations, visiting, complete);
             if let Some(parent_shape) = self.interface_shapes.get(&parent_symbol).cloned() {
                 for (name, requirement) in parent_shape.methods {

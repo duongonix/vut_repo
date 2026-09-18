@@ -62,6 +62,7 @@ pub mod codes {
     pub const E1025: DiagnosticCode = DiagnosticCode("E1025");
     pub const E1026: DiagnosticCode = DiagnosticCode("E1026");
     pub const E1028: DiagnosticCode = DiagnosticCode("E1028");
+    pub const E1104: DiagnosticCode = DiagnosticCode("E1104");
     pub const E2004: DiagnosticCode = DiagnosticCode("E2004");
     pub const E2005: DiagnosticCode = DiagnosticCode("E2005");
     pub const E2001: DiagnosticCode = DiagnosticCode("E2001");
@@ -81,6 +82,8 @@ pub mod codes {
     pub const E3010: DiagnosticCode = DiagnosticCode("E3010");
     pub const E4010: DiagnosticCode = DiagnosticCode("E4010");
     pub const E4011: DiagnosticCode = DiagnosticCode("E4011");
+    pub const E4001: DiagnosticCode = DiagnosticCode("E4001");
+    pub const E4004: DiagnosticCode = DiagnosticCode("E4004");
     pub const E4102: DiagnosticCode = DiagnosticCode("E4102");
     pub const E4103: DiagnosticCode = DiagnosticCode("E4103");
     pub const E4104: DiagnosticCode = DiagnosticCode("E4104");

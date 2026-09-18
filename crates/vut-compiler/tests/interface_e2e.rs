@@ -80,3 +80,19 @@ fn concrete_values_convert_at_explicit_returns() {
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "12\n25\n");
 }
+
+#[test]
+fn interface_local_binding_boxes_and_dispatches() {
+    let source = "interface Animal:\n  speak() -> str\n\ndata Dog:\n  name: str\n\nfn Dog.speak() -> str:\n  \"woof\"\n\nfn main():\n  animal: Animal = Dog(name = \"Rex\")\n  out(animal.speak())\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "woof\n");
+}
+
+#[test]
+fn interface_data_field_and_list_are_leak_free() {
+    let source = "interface Animal:\n  speak() -> str\n\ndata Dog:\n  name: str\n\ndata Cat:\n  name: str\n\nfn Dog.speak() -> str:\n  \"woof\"\n\nfn Cat.speak() -> str:\n  \"meow\"\n\ndata Shelter:\n  residents: list(Animal)\n\nfn main():\n  animals: list(Animal) = @(Dog(name = \"Rex\"), Cat(name = \"Milo\"))\n  for animal in animals:\n    out(animal.speak())\n  shelter = Shelter(residents = animals)\n  out(\"$(shelter.residents.len())\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "woof\nmeow\n2\n");
+}

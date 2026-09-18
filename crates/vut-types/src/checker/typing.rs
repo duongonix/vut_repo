@@ -487,6 +487,26 @@ impl Analyzer<'_> {
             _ => false,
         }
     }
+    /// Compares a found method signature against a required one using the type
+    /// system's compatibility relation. Callers pass the required parameter
+    /// types, so parameters compare contravariantly; the result compares
+    /// covariantly. This implements `specs/02` §18 "compatible" rather than
+    /// exact type identity.
+    fn method_signature_compatible(
+        &mut self,
+        found_parameters: &[TypeId],
+        found_result: TypeId,
+        wanted_parameters: &[TypeId],
+        wanted_result: TypeId,
+    ) -> bool {
+        found_parameters.len() == wanted_parameters.len()
+            && found_parameters
+                .iter()
+                .copied()
+                .zip(wanted_parameters.iter().copied())
+                .all(|(found, wanted)| self.is_compatible(wanted, found))
+            && self.is_compatible(found_result, wanted_result)
+    }
     pub(super) fn interface_satisfaction(
         &mut self,
         actual: TypeId,
@@ -516,9 +536,13 @@ impl Analyzer<'_> {
                         break;
                     }
                     Some(found)
-                        if found.parameters != wanted.parameters
-                            || found.result != wanted.result
-                            || found.is_static != wanted.is_static =>
+                        if found.is_static != wanted.is_static
+                            || !self.method_signature_compatible(
+                                &found.parameters,
+                                found.result,
+                                &wanted.parameters,
+                                wanted.result,
+                            ) =>
                     {
                         outcome = Satisfaction::Mismatch {
                             method: name.clone(),
@@ -583,14 +607,19 @@ impl Analyzer<'_> {
                 .map(|ty| self.substitute_self(*ty, actual))
                 .collect();
             let wanted_result = self.substitute_self(wanted.result, actual);
-            match self.signatures.get(&method) {
+            let found = self.signatures.get(&method).cloned();
+            match found {
                 Some(found)
-                    if found
-                        .parameters
-                        .iter()
-                        .map(|(_, ty)| *ty)
-                        .eq(wanted_parameters)
-                        && found.result == wanted_result => {}
+                    if self.method_signature_compatible(
+                        &found
+                            .parameters
+                            .iter()
+                            .map(|(_, ty)| *ty)
+                            .collect::<Vec<_>>(),
+                        found.result,
+                        &wanted_parameters,
+                        wanted_result,
+                    ) => {}
                 _ => {
                     return Satisfaction::Mismatch {
                         method: name.clone(),
@@ -610,6 +639,19 @@ impl Analyzer<'_> {
         title: &str,
     ) {
         if !self.is_compatible(actual, expected) {
+            // Null/optional misuse has dedicated diagnostics (`specs/22`):
+            // `null` where a non-optional `T` is required is `E1006`; using a
+            // `T?` as its present type without narrowing is `E1007`. These take
+            // precedence over the caller's generic mismatch code.
+            if let Some((code, title, message)) = self.null_or_optional_misuse(actual, expected) {
+                self.diagnostics.push(
+                    Diagnostic::error(code, title, span, message).with_expected_found(
+                        format!("{:?}", self.types[expected.0]),
+                        format!("{:?}", self.types[actual.0]),
+                    ),
+                );
+                return;
+            }
             if let Type::Interface(interface) = self.types[expected.0]
                 && let Some(failure) = self.satisfaction.get(&(actual, interface)).cloned()
             {
@@ -644,6 +686,32 @@ impl Analyzer<'_> {
                     .with_expected_found(wanted, found),
             );
         }
+    }
+
+    /// Selects the dedicated diagnostic for a `null`/optional misuse, if the
+    /// incompatibility is one. Returns `None` for ordinary type mismatches.
+    fn null_or_optional_misuse(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Option<(vut_diagnostics::DiagnosticCode, &'static str, &'static str)> {
+        if matches!(self.types[actual.0], Type::Null) {
+            return Some((
+                codes::E1006,
+                "null assigned to a non-optional type",
+                "`null` is only valid where an optional `T?` is expected",
+            ));
+        }
+        if matches!(self.types[actual.0], Type::Optional(_))
+            && !matches!(self.types[expected.0], Type::Optional(_) | Type::Dyn)
+        {
+            return Some((
+                codes::E1007,
+                "optional value used where its present type is required",
+                "narrow with `if value != null`, a `match` null arm, or a non-failing fallback",
+            ));
+        }
+        None
     }
     pub(super) fn error(
         &mut self,

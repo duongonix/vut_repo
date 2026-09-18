@@ -119,9 +119,28 @@ impl Analyzer<'_> {
                     }
                 } else {
                     let first = self.expr(module, &values[0], context, contextual);
+                    if let Some(element) = contextual {
+                        self.compatible(
+                            first,
+                            element,
+                            values[0].span(),
+                            codes::E1005,
+                            "list element type mismatch",
+                        );
+                    }
                     for value in &values[1..] {
                         let found = self.expr(module, value, context, contextual);
-                        if !self.is_compatible(found, first) {
+                        if let Some(element) = contextual {
+                            // A contextual element type may accept heterogeneous
+                            // concrete elements (`list(dyn)`, `list(interface)`).
+                            self.compatible(
+                                found,
+                                element,
+                                value.span(),
+                                codes::E1005,
+                                "list element type mismatch",
+                            );
+                        } else if !self.is_compatible(found, first) {
                             self.error(
                                 codes::E1005,
                                 "heterogeneous list",
@@ -148,9 +167,26 @@ impl Analyzer<'_> {
                     self.intern(Type::Error)
                 } else {
                     let first = self.expr(module, &values[0], context, contextual);
+                    if let Some(element) = contextual {
+                        self.compatible(
+                            first,
+                            element,
+                            values[0].span(),
+                            codes::E1005,
+                            "array element type mismatch",
+                        );
+                    }
                     for value in &values[1..] {
                         let found = self.expr(module, value, context, contextual);
-                        if !self.is_compatible(found, first) {
+                        if let Some(element) = contextual {
+                            self.compatible(
+                                found,
+                                element,
+                                value.span(),
+                                codes::E1005,
+                                "array element type mismatch",
+                            );
+                        } else if !self.is_compatible(found, first) {
                             self.error(
                                 codes::E1005,
                                 "heterogeneous array",
@@ -185,11 +221,37 @@ impl Analyzer<'_> {
                         self.expr(module, &entries[0].key, context, contextual.map(|v| v.0));
                     let first_value =
                         self.expr(module, &entries[0].value, context, contextual.map(|v| v.1));
+                    if let Some((key_ty, _)) = contextual {
+                        self.compatible(
+                            first_key,
+                            key_ty,
+                            entries[0].key.span(),
+                            codes::E1005,
+                            "map key type mismatch",
+                        );
+                    }
+                    if let Some((_, value_ty)) = contextual {
+                        self.compatible(
+                            first_value,
+                            value_ty,
+                            entries[0].value.span(),
+                            codes::E1005,
+                            "map value type mismatch",
+                        );
+                    }
                     for entry in &entries[1..] {
                         let key = self.expr(module, &entry.key, context, contextual.map(|v| v.0));
                         let value =
                             self.expr(module, &entry.value, context, contextual.map(|v| v.1));
-                        if !self.is_compatible(key, first_key) {
+                        if let Some((key_ty, _)) = contextual {
+                            self.compatible(
+                                key,
+                                key_ty,
+                                entry.key.span(),
+                                codes::E1005,
+                                "map key type mismatch",
+                            );
+                        } else if !self.is_compatible(key, first_key) {
                             self.error(
                                 codes::E1005,
                                 "heterogeneous map keys",
@@ -197,7 +259,15 @@ impl Analyzer<'_> {
                                 "all map keys must have one static type",
                             );
                         }
-                        if !self.is_compatible(value, first_value) {
+                        if let Some((_, value_ty)) = contextual {
+                            self.compatible(
+                                value,
+                                value_ty,
+                                entry.value.span(),
+                                codes::E1005,
+                                "map value type mismatch",
+                            );
+                        } else if !self.is_compatible(value, first_value) {
                             self.error(
                                 codes::E1005,
                                 "heterogeneous map values",

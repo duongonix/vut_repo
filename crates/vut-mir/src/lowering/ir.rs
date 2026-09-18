@@ -36,7 +36,9 @@ pub struct Program {
 }
 #[derive(Clone, Debug)]
 pub struct InterfaceVtable {
-    pub concrete: SymbolId,
+    /// The boxed concrete declaration when it is a `data`/`enum` (interface
+    /// targets); `None` for `dyn` boxes of other concrete categories.
+    pub concrete: Option<SymbolId>,
     pub interface: Option<SymbolId>,
     pub concrete_ty: TypeId,
     /// Concrete method symbols in the interface's canonical (sorted) order.
@@ -398,7 +400,6 @@ pub enum Instruction {
         value: ValueId,
         ty: TypeId,
         concrete_ty: TypeId,
-        concrete: SymbolId,
         interface: Option<SymbolId>,
         source: ValueId,
     },

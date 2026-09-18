@@ -160,11 +160,10 @@ pub(crate) fn lower_program(
                     let returned = return_type
                         .filter(|ty| !matches!(semantics.types[ty.0], Type::Void))
                         .and(returned);
-                    // Coerce an implicit tail value into an optional result
-                    // (`T` -> `T?`); already-optional values pass through.
-                    let returned = returned.map(|value| {
-                        builder.coerce_optional(value, builder.tail_type, return_type)
-                    });
+                    // Coerce an implicit tail value into the result type
+                    // (`T` -> `T?`, `T` -> `interface`/`dyn`).
+                    let returned = returned
+                        .map(|value| builder.coerce_value(value, builder.tail_type, return_type));
                     builder.cleanup_except(returned);
                     builder.terminate(Terminator::Return(returned));
                 }

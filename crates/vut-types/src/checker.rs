@@ -407,6 +407,7 @@ pub struct Analyzer<'a> {
 mod analyze;
 mod builtins;
 mod collections;
+mod constants;
 mod context;
 mod expressions;
 mod functions;

@@ -173,16 +173,41 @@ impl Builder<'_> {
                     ],
                 });
                 let mut owned: Vec<(ValueId, TypeId)> = Vec::new();
+                let element_coerced = matches!(
+                    self.semantics.types[element_ty.0],
+                    Type::Dyn | Type::Interface(_) | Type::Optional(_)
+                );
                 for item in values {
-                    let mut operand = Vec::new();
-                    self.lower_builtin_value(item, &mut operand, &mut owned)?;
-                    let element = *operand.first()?;
-                    self.emit(Instruction::RuntimeCall {
-                        value: None,
-                        result_type: None,
-                        function: BuiltinFunction::ListPush,
-                        arguments: vec![value, element],
-                    });
+                    if element_coerced {
+                        // `list(dyn)`/`list(interface)`/`list(T?)` accept
+                        // heterogeneous concrete elements; each element is
+                        // coerced to the element type before it is stored.
+                        let actual = self.semantics.expression_types.get(&item.span()).copied();
+                        let raw = self.expr(item)?;
+                        let element = self.coerce_value(raw, actual, Some(element_ty));
+                        self.emit(Instruction::RuntimeCall {
+                            value: None,
+                            result_type: None,
+                            function: BuiltinFunction::ListPush,
+                            arguments: vec![value, element],
+                        });
+                        if self.layouts.types[element_ty.0].needs_drop {
+                            self.emit(Instruction::Release {
+                                value: element,
+                                ty: element_ty,
+                            });
+                        }
+                    } else {
+                        let mut operand = Vec::new();
+                        self.lower_builtin_value(item, &mut operand, &mut owned)?;
+                        let element = *operand.first()?;
+                        self.emit(Instruction::RuntimeCall {
+                            value: None,
+                            result_type: None,
+                            function: BuiltinFunction::ListPush,
+                            arguments: vec![value, element],
+                        });
+                    }
                 }
                 for (owned_value, owned_ty) in owned {
                     self.emit(Instruction::Release {
@@ -258,19 +283,48 @@ impl Builder<'_> {
                     ],
                 });
                 let mut owned: Vec<(ValueId, TypeId)> = Vec::new();
+                let value_coerced = matches!(
+                    self.semantics.types[value_ty.0],
+                    Type::Dyn | Type::Interface(_) | Type::Optional(_)
+                );
                 for entry in entries {
                     let mut key_operand = Vec::new();
                     self.lower_builtin_value(&entry.key, &mut key_operand, &mut owned)?;
                     let key = *key_operand.first()?;
-                    let mut value_operand = Vec::new();
-                    self.lower_builtin_value(&entry.value, &mut value_operand, &mut owned)?;
-                    let item = *value_operand.first()?;
-                    self.emit(Instruction::RuntimeCall {
-                        value: None,
-                        result_type: None,
-                        function: BuiltinFunction::MapSet,
-                        arguments: vec![value, key, item],
-                    });
+                    if value_coerced {
+                        // `map(K, dyn)`/`map(K, interface)`/`map(K, V?)` accept
+                        // heterogeneous concrete values; coerce each value to
+                        // the declared value type before storing it.
+                        let actual = self
+                            .semantics
+                            .expression_types
+                            .get(&entry.value.span())
+                            .copied();
+                        let raw = self.expr(&entry.value)?;
+                        let item = self.coerce_value(raw, actual, Some(value_ty));
+                        self.emit(Instruction::RuntimeCall {
+                            value: None,
+                            result_type: None,
+                            function: BuiltinFunction::MapSet,
+                            arguments: vec![value, key, item],
+                        });
+                        if self.layouts.types[value_ty.0].needs_drop {
+                            self.emit(Instruction::Release {
+                                value: item,
+                                ty: value_ty,
+                            });
+                        }
+                    } else {
+                        let mut value_operand = Vec::new();
+                        self.lower_builtin_value(&entry.value, &mut value_operand, &mut owned)?;
+                        let item = *value_operand.first()?;
+                        self.emit(Instruction::RuntimeCall {
+                            value: None,
+                            result_type: None,
+                            function: BuiltinFunction::MapSet,
+                            arguments: vec![value, key, item],
+                        });
+                    }
                 }
                 for (owned_value, owned_ty) in owned {
                     self.emit(Instruction::Release {
@@ -722,12 +776,40 @@ impl Builder<'_> {
                             self.lower_builtin_receiver(object, &mut argument_values, &mut owned)?;
                         }
                     }
-                    for argument in arguments {
-                        self.lower_builtin_value(
-                            &argument.value,
-                            &mut argument_values,
-                            &mut owned,
-                        )?;
+                    let receiver_ty = match callee.as_ref() {
+                        Expr::Member { object, .. } => {
+                            self.semantics.expression_types.get(&object.span()).copied()
+                        }
+                        _ => None,
+                    };
+                    let expected_args = self.builtin_argument_types(function, receiver_ty);
+                    for (index, argument) in arguments.iter().enumerate() {
+                        let expected = expected_args.get(index).copied().flatten();
+                        let actual = self
+                            .semantics
+                            .expression_types
+                            .get(&argument.value.span())
+                            .copied();
+                        if let Some(expected) = expected
+                            && self.value_needs_coercion(expected)
+                            && actual != Some(expected)
+                        {
+                            // A `dyn`/`interface`/optional element or value
+                            // argument is boxed/wrapped as an owned value; the
+                            // collection retains its own copy, so release here.
+                            let raw = self.expr(&argument.value)?;
+                            let coerced = self.coerce_value(raw, actual, Some(expected));
+                            argument_values.push(coerced);
+                            if self.layouts.types[expected.0].needs_drop {
+                                owned.push((coerced, expected));
+                            }
+                        } else {
+                            self.lower_builtin_value(
+                                &argument.value,
+                                &mut argument_values,
+                                &mut owned,
+                            )?;
+                        }
                     }
                     // Derive the receiver's element type for sort kind / array
                     // layout arguments.
@@ -1077,8 +1159,7 @@ impl Builder<'_> {
                         };
                         let position = index + receiver_offset;
                         if let Some(slot) = lowered.get_mut(position) {
-                            let coerced = self.coerce_interface(*slot, actual, expected);
-                            *slot = self.coerce_optional(coerced, Some(actual), Some(expected));
+                            *slot = self.coerce_value(*slot, Some(actual), Some(expected));
                         }
                     }
                 }
@@ -1090,20 +1171,32 @@ impl Builder<'_> {
                 {
                     let ty = TypeId(type_index);
                     let value = self.value();
-                    let mut fields: Vec<(String, ValueId)> = arguments
-                        .iter()
-                        .zip(lowered)
-                        .enumerate()
-                        .map(|(index, (argument, value))| {
-                            (
-                                argument
-                                    .name
-                                    .as_ref()
-                                    .map_or_else(|| index.to_string(), |name| name.text.clone()),
-                                value,
-                            )
-                        })
-                        .collect();
+                    let data_fields = self
+                        .semantics
+                        .data_fields
+                        .get(&target)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut fields: Vec<(String, ValueId)> = Vec::with_capacity(arguments.len());
+                    for (index, (argument, field_value)) in
+                        arguments.iter().zip(lowered).enumerate()
+                    {
+                        let name = argument
+                            .name
+                            .as_ref()
+                            .map_or_else(|| index.to_string(), |name| name.text.clone());
+                        let expected = data_fields
+                            .iter()
+                            .find(|field| field.name == name)
+                            .map(|field| field.ty);
+                        let actual = self
+                            .semantics
+                            .expression_types
+                            .get(&argument.value.span())
+                            .copied();
+                        let field_value = self.coerce_value(field_value, actual, expected);
+                        fields.push((name, field_value));
+                    }
                     // Fill omitted fields from their resolved defaults; the
                     // semantic layer already checked them against the field type.
                     let positional = arguments
@@ -1114,9 +1207,7 @@ impl Builder<'_> {
                     {
                         let provided: std::collections::HashSet<&str> =
                             fields.iter().map(|(name, _)| name.as_str()).collect();
-                        if let Some(data_fields) = self.semantics.data_fields.get(&target)
-                            && let Some(defaults) = self.field_defaults.get(&target)
-                        {
+                        if let Some(defaults) = self.field_defaults.get(&target) {
                             for (index, field) in data_fields.iter().enumerate() {
                                 if index < positional || provided.contains(field.name.as_str()) {
                                     continue;
@@ -1129,6 +1220,16 @@ impl Builder<'_> {
                     }
                     for (name, default) in pending {
                         if let Some(field_value) = self.expr(&default) {
+                            let expected = data_fields
+                                .iter()
+                                .find(|field| field.name == name)
+                                .map(|field| field.ty);
+                            let actual = self
+                                .semantics
+                                .expression_types
+                                .get(&default.span())
+                                .copied();
+                            let field_value = self.coerce_value(field_value, actual, expected);
                             fields.push((name, field_value));
                         }
                     }

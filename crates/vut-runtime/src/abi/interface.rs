@@ -79,6 +79,9 @@ pub extern "C" fn vut_rt_interface_vtable(base: *mut u8) -> *const () {
     reason = "the reference counter lives at offset zero of a 16-byte-aligned box"
 )]
 pub extern "C" fn vut_rt_interface_retain(base: *mut u8) {
+    if base.is_null() {
+        return;
+    }
     let references = unsafe { &*base.add(REFS_OFFSET).cast::<AtomicUsize>() };
     references.fetch_add(1, Ordering::Relaxed);
 }
@@ -90,6 +93,9 @@ pub extern "C" fn vut_rt_interface_retain(base: *mut u8) {
     reason = "the reference counter lives at offset zero of a 16-byte-aligned box"
 )]
 pub extern "C" fn vut_rt_interface_release(base: *mut u8) {
+    if base.is_null() {
+        return;
+    }
     let references = unsafe { &*base.add(REFS_OFFSET).cast::<AtomicUsize>() };
     if references.fetch_sub(1, Ordering::AcqRel) != 1 {
         return;

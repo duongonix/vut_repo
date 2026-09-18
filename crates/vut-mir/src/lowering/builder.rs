@@ -225,7 +225,7 @@ impl Builder<'_> {
                 }
                 let target_ty = self.local_data[local.0].ty;
                 let raw_value = self.expr(value)?;
-                let value_id = self.coerce_optional(raw_value, value_ty, target_ty);
+                let value_id = self.coerce_value(raw_value, value_ty, target_ty);
                 if self.initialized.contains(&local)
                     && !self.moved.contains(&local)
                     && self.local_data[local.0]
@@ -275,8 +275,7 @@ impl Builder<'_> {
                         .get(&expression.span())
                         .copied()
                 {
-                    let current = self.coerce_interface(current, actual, expected);
-                    value = Some(self.coerce_optional(current, Some(actual), Some(expected)));
+                    value = Some(self.coerce_value(current, Some(actual), Some(expected)));
                 }
                 // Exit every active loop without running its normal exit edge,
                 // releasing any collection the loop owns (a `for` over a
@@ -836,6 +835,60 @@ impl Builder<'_> {
             inner,
         });
         wrapped
+    }
+    /// Applies the full value coercion toward an expected type: interface/`dyn`
+    /// boxing (`T` -> `interface`/`dyn`) followed by optional wrapping
+    /// (`T` -> `T?`). Used wherever a value is stored into a typed destination.
+    pub(super) fn coerce_value(
+        &mut self,
+        value: ValueId,
+        actual: Option<TypeId>,
+        expected: Option<TypeId>,
+    ) -> ValueId {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return value;
+        };
+        let boxed = self.coerce_interface(value, actual, expected);
+        self.coerce_optional(boxed, Some(actual), Some(expected))
+    }
+    /// Whether storing a value into `expected` requires boxing/wrapping rather
+    /// than a plain bit copy.
+    pub(super) fn value_needs_coercion(&self, expected: TypeId) -> bool {
+        matches!(
+            self.semantics.types[expected.0],
+            Type::Dyn | Type::Interface(_) | Type::Optional(_)
+        )
+    }
+    /// Expected concrete type for each non-receiver argument of a builtin call,
+    /// for arguments that store the receiver's element/value type.
+    pub(super) fn builtin_argument_types(
+        &self,
+        function: crate::BuiltinFunction,
+        receiver_ty: Option<TypeId>,
+    ) -> Vec<Option<TypeId>> {
+        use crate::BuiltinFunction;
+        let Some(receiver) = receiver_ty.and_then(|ty| self.semantics.types.get(ty.0).cloned())
+        else {
+            return Vec::new();
+        };
+        match receiver {
+            Type::List(element) => match function {
+                BuiltinFunction::ListPush | BuiltinFunction::ListContains => {
+                    vec![Some(element)]
+                }
+                BuiltinFunction::ListInsert | BuiltinFunction::ListSet => {
+                    vec![None, Some(element)]
+                }
+                _ => Vec::new(),
+            },
+            Type::Map(_, value) => match function {
+                BuiltinFunction::MapSet | BuiltinFunction::MapGetOr => {
+                    vec![None, Some(value)]
+                }
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
     }
     pub(super) fn cleanup_except(&mut self, returned: Option<ValueId>) {
         let _ = returned;

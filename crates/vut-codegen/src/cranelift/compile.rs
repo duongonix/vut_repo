@@ -197,14 +197,13 @@ pub(super) fn compile(
             .map_err(|error| CodegenError::Backend(error.to_string()))?;
         interface_drops.insert(vtable.concrete_ty.0, id);
     }
-    let mut vtables: HashMap<(vut_mir::SymbolId, Option<vut_mir::SymbolId>), DataId> =
-        HashMap::new();
+    let mut vtables: HashMap<(usize, Option<vut_mir::SymbolId>), DataId> = HashMap::new();
     for (index, vtable) in program.interface_vtables.iter().enumerate() {
         let name = format!("vut_interface_vtable_{index}");
         let data = module
             .declare_data(&name, Linkage::Local, false, false)
             .map_err(|error| CodegenError::Backend(error.to_string()))?;
-        vtables.insert((vtable.concrete, vtable.interface), data);
+        vtables.insert((vtable.concrete_ty.0, vtable.interface), data);
     }
     for mir in &program.functions {
         let (function_id, signature) = declarations[&mir.symbol].clone();
@@ -458,7 +457,7 @@ pub(super) fn compile(
         module.clear_context(&mut context);
     }
     for vtable in &program.interface_vtables {
-        let data_id = vtables[&(vtable.concrete, vtable.interface)];
+        let data_id = vtables[&(vtable.concrete_ty.0, vtable.interface)];
         let drop_id = interface_drops[&vtable.concrete_ty.0];
         let mut description = DataDescription::new();
         let pointer_bytes = module.target_config().pointer_type().bytes() as usize;

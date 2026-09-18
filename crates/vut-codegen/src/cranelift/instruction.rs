@@ -37,7 +37,7 @@ pub(super) fn lower_instruction(
     spill_types: &mut HashMap<usize, (cranelift_codegen::ir::Type, Option<vut_hir::TypeId>)>,
     layouts: &LayoutTable,
     type_functions: &HashMap<(usize, bool), FuncId>,
-    vtables: &HashMap<(vut_mir::SymbolId, Option<vut_mir::SymbolId>), DataId>,
+    vtables: &HashMap<(usize, Option<vut_mir::SymbolId>), DataId>,
     frames: &HashMap<vut_mir::SymbolId, vut_mir::FrameLayout>,
     future_thunks: &HashMap<vut_mir::SymbolId, (FuncId, FuncId)>,
     next_data: &mut usize,
@@ -2946,7 +2946,6 @@ pub(super) fn lower_instruction(
             value,
             ty,
             concrete_ty,
-            concrete,
             interface,
             source,
         } => {
@@ -2986,7 +2985,7 @@ pub(super) fn lower_instruction(
                     .store(MemFlagsData::trusted(), stored, data_ptr, 0);
             }
             let vtable_id = vtables
-                .get(&(*concrete, *interface))
+                .get(&(concrete_ty.0, *interface))
                 .copied()
                 .ok_or_else(|| {
                     CodegenError::Backend("invalid typed MIR: missing interface vtable".into())

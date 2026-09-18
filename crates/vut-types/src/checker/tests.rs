@@ -34,6 +34,37 @@ fn codes(result: &SemanticResult) -> Vec<&str> {
         .collect()
 }
 
+/// Returns all diagnostic codes from both the resolver and the checker. Used by
+/// tests that expect a resolution-stage error (an unknown interface parent).
+fn all_codes(source: &str) -> Vec<String> {
+    let source_id = SourceId::from_index(0);
+    let (tokens, lexical) = Lexer::new(source_id, source).lex();
+    assert!(!lexical.has_errors(), "{:?}", lexical.as_slice());
+    let (file, syntax) = Parser::new(source_id, source, tokens).parse();
+    assert!(!syntax.has_errors(), "{:?}", syntax.as_slice());
+    let resolution = Resolver::new(vec![ModuleInput {
+        logical_path: ModulePath(vec!["main".into()]),
+        filesystem_path: None,
+        file,
+    }])
+    .resolve();
+    let semantic = Analyzer::new(&resolution).analyze();
+    let mut codes: Vec<String> = resolution
+        .diagnostics
+        .as_slice()
+        .iter()
+        .filter_map(|d| d.code.as_deref().map(str::to_owned))
+        .collect();
+    codes.extend(
+        semantic
+            .diagnostics
+            .as_slice()
+            .iter()
+            .filter_map(|d| d.code.as_deref().map(str::to_owned)),
+    );
+    codes
+}
+
 #[test]
 fn type_checks_lambda_callbacks_and_rejects_invalid_calls() {
     let valid = analyze(
@@ -195,7 +226,7 @@ fn rejects_result_in_extern_signatures_for_ffi_v1() {
 #[test]
 fn checks_core_bytes_type_methods_and_conversions() {
     let valid = analyze(
-        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main() -> result(str, Utf8Error):\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list(u8) = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list(bytes) = @(rebuilt)\n  table: map(str, bytes) = map((\"payload\", text))\n  maybe: bytes? = text\n  result_value: result(bytes, str) = ok(text)\n  entry: bytes? = table.get(\"payload\")\n  if entry != null:\n    entry.to_str()\n",
+        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main():\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list(u8) = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list(bytes) = @(rebuilt)\n  table: map(str, bytes) = map((\"payload\", text))\n  maybe: bytes? = text\n  result_value: result(bytes, str) = ok(text)\n  entry: bytes? = table.get(\"payload\")\n  if entry != null:\n    entry.len()\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -321,7 +352,7 @@ fn checks_optional_dyn_empty_list_and_numeric_bounds() {
     );
     let actual = codes(&result);
     assert!(actual.contains(&"E1008"), "{actual:?}");
-    assert!(actual.contains(&"E1003"), "{actual:?}");
+    assert!(actual.contains(&"E1006"), "{actual:?}");
     assert!(!actual.contains(&"E1004"), "{actual:?}");
 }
 
@@ -697,5 +728,100 @@ fn collection_callbacks_are_arity_checked() {
         codes(&bad_fold).contains(&"E1003"),
         "{:?}",
         codes(&bad_fold)
+    );
+}
+
+#[test]
+fn rejects_constant_reassignment_with_e1104() {
+    let declared = analyze("fn main():\n  MAX_SIZE = 100\n  out(\"$(MAX_SIZE)\")\n");
+    assert!(
+        !declared.diagnostics.has_errors(),
+        "{:?}",
+        declared.diagnostics.as_slice()
+    );
+    assert!(!codes(&declared).contains(&"E1104"));
+
+    let reassigned = analyze("fn main():\n  MAX_SIZE = 100\n  MAX_SIZE = 200\n");
+    assert!(
+        codes(&reassigned).contains(&"E1104"),
+        "{:?}",
+        codes(&reassigned)
+    );
+
+    let annotated = analyze("fn main():\n  MAX_SIZE: int = 1\n  MAX_SIZE = 2\n");
+    assert!(
+        codes(&annotated).contains(&"E1104"),
+        "{:?}",
+        codes(&annotated)
+    );
+
+    let lowercase = analyze("fn main():\n  max_size = 1\n  max_size = 2\n");
+    assert!(
+        !codes(&lowercase).contains(&"E1104"),
+        "{:?}",
+        codes(&lowercase)
+    );
+}
+
+#[test]
+fn optional_misuse_uses_e1006_and_e1007() {
+    let null_into_plain = analyze("fn main():\n  name: str = null\n");
+    assert!(
+        codes(&null_into_plain).contains(&"E1006"),
+        "{:?}",
+        codes(&null_into_plain)
+    );
+    assert!(!codes(&null_into_plain).contains(&"E1003"));
+
+    let optional_into_plain = analyze(
+        "fn use(value: str):\n  out(value)\nfn main():\n  name: str? = \"hi\"\n  use(name)\n",
+    );
+    assert!(
+        codes(&optional_into_plain).contains(&"E1007"),
+        "{:?}",
+        codes(&optional_into_plain)
+    );
+
+    let narrowed = analyze(
+        "fn use(value: str):\n  out(value)\nfn main():\n  name: str? = \"hi\"\n  if name != null:\n    use(name)\n",
+    );
+    assert!(
+        !narrowed.diagnostics.has_errors(),
+        "{:?}",
+        narrowed.diagnostics.as_slice()
+    );
+}
+
+#[test]
+fn rejects_unknown_and_invalid_interface_parents() {
+    let unknown = all_codes("interface Child: Missing:\n  run() -> int\n");
+    assert!(unknown.contains(&"E4001".to_owned()), "{unknown:?}");
+
+    let invalid = all_codes(
+        "data NotAnInterface:\n  value: int\ninterface Child: NotAnInterface:\n  run() -> int\n",
+    );
+    assert!(invalid.contains(&"E4004".to_owned()), "{invalid:?}");
+}
+
+#[test]
+fn interface_satisfaction_uses_compatible_signatures() {
+    // A covariant return (`Dog` where `Animal` is required) satisfies the
+    // interface; a contravariant parameter mismatch does not.
+    let covariant = analyze(
+        "interface Animal:\n  speak() -> str\ninterface Producer:\n  make() -> Animal\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.make() -> Dog:\n  Dog(name = \"d\")\nfn accept(producer: Producer) -> str:\n  \"ok\"\nfn main():\n  out(accept(Dog(name = \"d\")))\n",
+    );
+    assert!(
+        !covariant.diagnostics.has_errors(),
+        "{:?}",
+        covariant.diagnostics.as_slice()
+    );
+
+    let wrong_parameter = analyze(
+        "interface Animal:\n  speak() -> str\ninterface Consumer:\n  take(value: Animal)\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.take(value: Dog):\n  value.name\nfn accept(consumer: Consumer) -> int:\n  0\nfn main():\n  value = accept(Dog(name = \"d\"))\n  out(\"$(value)\")\n",
+    );
+    assert!(
+        wrong_parameter.diagnostics.has_errors(),
+        "{:?}",
+        wrong_parameter.diagnostics.as_slice()
     );
 }

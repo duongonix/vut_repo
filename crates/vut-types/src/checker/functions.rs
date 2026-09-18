@@ -1,4 +1,5 @@
 //! Module, function, and statement checking.
+use super::constants::is_constant_name;
 use super::context::Context;
 #[allow(clippy::wildcard_imports)]
 use super::*;
@@ -358,6 +359,14 @@ impl Analyzer<'_> {
                     self.expression_types
                         .insert(name.span, expected.unwrap_or(actual));
                     if let Some(old) = context.lookup(&name.text) {
+                        if is_constant_name(&name.text) {
+                            self.error(
+                                codes::E1104,
+                                "constant reassignment",
+                                name.span,
+                                "ALL-CAPS bindings are constants and cannot be reassigned",
+                            );
+                        }
                         self.compatible(actual, old, *span, codes::E1003, "variable type is fixed");
                     } else {
                         context

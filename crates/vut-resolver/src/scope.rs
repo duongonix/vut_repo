@@ -220,7 +220,7 @@ impl Context<'_> {
                 self.push_scope();
                 self.define_type_parameters(&value.type_parameters);
                 for parent in &value.parents {
-                    self.reference(&parent.text, parent.span);
+                    self.reference_interface_parent(&parent.text, parent.span);
                 }
                 for method in &value.methods {
                     self.push_scope();
@@ -694,6 +694,24 @@ impl Context<'_> {
             }
             self.diagnostics.push(diagnostic);
         }
+    }
+    /// Resolves a composed interface parent. Unlike a generic reference, an
+    /// unresolved parent is reported as `E4001` (unknown interface).
+    fn reference_interface_parent(&mut self, name: &str, span: Span) {
+        if let Some(symbol) = self.lookup(name) {
+            self.references.push(ResolvedReference { span, symbol });
+            return;
+        }
+        let mut diagnostic = Diagnostic::error(
+            codes::E4001,
+            format!("unknown interface `{name}`"),
+            span,
+            "referenced interface is not visible in this scope",
+        );
+        if let Some(suggestion) = self.suggestion(name) {
+            diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+        }
+        self.diagnostics.push(diagnostic);
     }
     fn lookup(&self, name: &str) -> Option<SymbolId> {
         self.scopes
