@@ -524,13 +524,37 @@ impl Analyzer<'_> {
             }
             Expr::If(value) => {
                 self.condition(module, &value.condition, context, codes::E5007);
-                let mut branches = vec![self.block(module, &value.body, context)];
+                let narrowing = self.optional_condition_narrowing(&value.condition, context);
+
+                let then_binding = narrowing
+                    .as_ref()
+                    .map(|(name, inner, is_eq)| (!*is_eq, name, inner));
+                let mut branches =
+                    vec![self.block_narrowed(module, &value.body, context, then_binding)];
+                let mut last_narrowing = narrowing.clone();
                 for (condition, body) in &value.elifs {
                     self.condition(module, condition, context, codes::E5007);
-                    branches.push(self.block(module, body, context));
+                    let elif_narrowing = self.optional_condition_narrowing(condition, context);
+                    let binding = elif_narrowing
+                        .as_ref()
+                        .map(|(name, inner, is_eq)| (!*is_eq, name, inner));
+                    branches.push(self.block_narrowed(module, body, context, binding));
+                    last_narrowing = elif_narrowing;
                 }
                 if let Some(body) = &value.otherwise {
-                    branches.push(self.block(module, body, context));
+                    let binding = last_narrowing
+                        .as_ref()
+                        .map(|(name, inner, is_eq)| (*is_eq, name, inner));
+                    branches.push(self.block_narrowed(module, body, context, binding));
+                }
+                // Guard-clause narrowing: when the absent branch always
+                // terminates, the present type holds for the code after the if.
+                if let Some((name, inner, is_eq)) = &narrowing
+                    && *is_eq
+                    && Self::block_terminates(&value.body)
+                    && let Some(scope) = context.scopes.last_mut()
+                {
+                    scope.insert(name.clone(), *inner);
                 }
                 if branches.len() < 2 {
                     self.error(
@@ -1597,11 +1621,14 @@ impl Analyzer<'_> {
 
     fn check_literal_pattern(&mut self, value: &LiteralPattern, subject: TypeId, span: Span) {
         if matches!(value, LiteralPattern::Null) {
+            if matches!(self.types[subject.0], Type::Optional(_)) {
+                return;
+            }
             self.error(
                 codes::E7107,
                 "pattern type mismatch",
                 span,
-                "optional-value patterns are not yet supported",
+                "`null` patterns require an optional scrutinee",
             );
             return;
         }
@@ -1627,6 +1654,67 @@ impl Analyzer<'_> {
                 &format!("literal pattern requires a {expected} scrutinee"),
             );
         }
+    }
+
+    /// Recognizes `name == null` / `name != null` where `name` is an optional
+    /// place. Returns the name, the present (`T`) type, and whether the
+    /// operator is `==` (`true`) or `!=` (`false`).
+    pub(super) fn optional_condition_narrowing(
+        &self,
+        expr: &Expr,
+        context: &Context,
+    ) -> Option<(String, TypeId, bool)> {
+        let Expr::Binary {
+            left, op, right, ..
+        } = expr
+        else {
+            return None;
+        };
+        let is_eq = match op {
+            BinaryOp::Equal => true,
+            BinaryOp::NotEqual => false,
+            _ => return None,
+        };
+        let name_expr = match (&**left, &**right) {
+            (Expr::Name(_), Expr::Null(_)) => &**left,
+            (Expr::Null(_), Expr::Name(_)) => &**right,
+            _ => return None,
+        };
+        let Expr::Name(name) = name_expr else {
+            return None;
+        };
+        let ty = context.lookup(&name.text)?;
+        let Type::Optional(inner) = self.types[ty.0] else {
+            return None;
+        };
+        Some((name.text.clone(), inner, is_eq))
+    }
+
+    /// Checks a block with an optional narrowing binding in scope.
+    pub(super) fn block_narrowed(
+        &mut self,
+        module: &Module,
+        block: &Block,
+        context: &mut Context,
+        binding: Option<(bool, &String, &TypeId)>,
+    ) -> TypeId {
+        match binding {
+            Some((true, name, inner)) => {
+                context.scopes.push(HashMap::from([(name.clone(), *inner)]));
+                let ty = self.block(module, block, context);
+                context.scopes.pop();
+                ty
+            }
+            _ => self.block(module, block, context),
+        }
+    }
+
+    /// True when the block provably leaves the enclosing flow on every path.
+    pub(super) fn block_terminates(block: &Block) -> bool {
+        matches!(
+            block.statements.last(),
+            Some(Stmt::Return { .. } | Stmt::Break(_) | Stmt::Continue(_))
+        )
     }
 
     #[expect(

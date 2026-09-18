@@ -465,6 +465,21 @@ impl Builder<'_> {
                         left,
                         right,
                     });
+                    // A comparison consumes nothing; owned managed operands are
+                    // temporaries and must be released here (str equality and
+                    // concatenation already release theirs above).
+                    if matches!(*op, BinaryOp::Equal | BinaryOp::NotEqual) {
+                        for (operand, operand_ty) in [(left, left_ty), (right, right_ty)] {
+                            if let Some(operand_ty) = operand_ty
+                                && self.layouts.types[operand_ty.0].needs_drop
+                            {
+                                self.emit(Instruction::Release {
+                                    value: operand,
+                                    ty: operand_ty,
+                                });
+                            }
+                        }
+                    }
                 }
                 Some(value)
             }

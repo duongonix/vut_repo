@@ -371,13 +371,35 @@ impl Analyzer<'_> {
             Stmt::Expression(expr) => self.expr(module, expr, context, contextual),
             Stmt::If(value) => {
                 self.condition(module, &value.condition, context, codes::E5007);
-                self.block(module, &value.body, context);
+                let narrowing = self.optional_condition_narrowing(&value.condition, context);
+                let then_binding = narrowing
+                    .as_ref()
+                    .map(|(name, inner, is_eq)| (!*is_eq, name, inner));
+                self.block_narrowed(module, &value.body, context, then_binding);
+                let mut last_narrowing = narrowing.clone();
                 for (condition, body) in &value.elifs {
                     self.condition(module, condition, context, codes::E5007);
-                    self.block(module, body, context);
+                    let elif_narrowing = self.optional_condition_narrowing(condition, context);
+                    let binding = elif_narrowing
+                        .as_ref()
+                        .map(|(name, inner, is_eq)| (!*is_eq, name, inner));
+                    self.block_narrowed(module, body, context, binding);
+                    last_narrowing = elif_narrowing;
                 }
                 if let Some(body) = &value.otherwise {
-                    self.block(module, body, context);
+                    let binding = last_narrowing
+                        .as_ref()
+                        .map(|(name, inner, is_eq)| (*is_eq, name, inner));
+                    self.block_narrowed(module, body, context, binding);
+                }
+                // Guard clause: `if x == null: continue/return/break` narrows the
+                // present type for the code after the statement.
+                if let Some((name, inner, is_eq)) = &narrowing
+                    && *is_eq
+                    && Self::block_terminates(&value.body)
+                    && let Some(scope) = context.scopes.last_mut()
+                {
+                    scope.insert(name.clone(), *inner);
                 }
                 self.intern(Type::Void)
             }
