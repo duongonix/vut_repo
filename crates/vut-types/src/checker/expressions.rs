@@ -2233,8 +2233,9 @@ fn pattern_head(is_variant: &impl Fn(&str) -> bool, pattern: &MatchPattern) -> O
 /// and wildcard patterns also match absence, so they keep the optional.
 fn pattern_requires_presence(pattern: &MatchPattern) -> bool {
     match pattern {
-        MatchPattern::Wildcard(_) | MatchPattern::Error(_) => false,
-        MatchPattern::Literal {
+        MatchPattern::Wildcard(_)
+        | MatchPattern::Error(_)
+        | MatchPattern::Literal {
             value: LiteralPattern::Null,
             ..
         } => false,

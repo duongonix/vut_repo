@@ -210,40 +210,8 @@ impl Builder<'_> {
             self.switch_to(test_block);
             let arm_block = self.new_block();
             let next = self.new_block();
-            // A present-requiring pattern on an optional narrows to the inner
-            // value, guarded by a presence test so absent values fall through.
-            let arm_inner = if pattern_requires_presence(&arm.pattern) {
-                match self.semantics.types.get(source_ty.0) {
-                    Some(Type::Optional(inner)) => Some(*inner),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            let (arm_value, arm_ty) = if let Some(inner) = arm_inner {
-                let present = self.value();
-                self.emit(Instruction::OptionalIsPresent {
-                    value: present,
-                    operand: source,
-                    inner,
-                });
-                let present_block = self.new_block();
-                self.terminate(Terminator::Branch {
-                    condition: present,
-                    then_block: present_block,
-                    else_block: next,
-                });
-                self.switch_to(present_block);
-                let unwrapped = self.value();
-                self.emit(Instruction::OptionalUnwrap {
-                    value: unwrapped,
-                    operand: source,
-                    inner,
-                });
-                (unwrapped, inner)
-            } else {
-                (source, source_ty)
-            };
+            let (arm_value, arm_ty) =
+                self.narrow_match_subject(&arm.pattern, source, source_ty, next);
             let arm_mark = self.local_data.len();
             let mut binding_types = Vec::new();
             self.collect_pattern_bindings(&arm.pattern, arm_ty, &mut binding_types);
@@ -305,6 +273,49 @@ impl Builder<'_> {
         // it, so the block local must not also be dropped.
         self.moved.insert(result_local);
         Some(value)
+    }
+
+    /// Narrows an optional match subject to its present inner value for a
+    /// present-requiring pattern. Emits a presence test that falls through to
+    /// `absent` when the value is null; otherwise returns the subject unchanged.
+    fn narrow_match_subject(
+        &mut self,
+        pattern: &vut_ast::MatchPattern,
+        source: ValueId,
+        source_ty: TypeId,
+        absent: BlockId,
+    ) -> (ValueId, TypeId) {
+        let inner = if pattern_requires_presence(pattern) {
+            match self.semantics.types.get(source_ty.0) {
+                Some(Type::Optional(inner)) => Some(*inner),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let Some(inner) = inner else {
+            return (source, source_ty);
+        };
+        let present = self.value();
+        self.emit(Instruction::OptionalIsPresent {
+            value: present,
+            operand: source,
+            inner,
+        });
+        let present_block = self.new_block();
+        self.terminate(Terminator::Branch {
+            condition: present,
+            then_block: present_block,
+            else_block: absent,
+        });
+        self.switch_to(present_block);
+        let unwrapped = self.value();
+        self.emit(Instruction::OptionalUnwrap {
+            value: unwrapped,
+            operand: source,
+            inner,
+        });
+        (unwrapped, inner)
     }
 
     /// Emits tests/branches for `pattern` against `value` in the current block,
@@ -917,8 +928,9 @@ fn variant_field_patterns<'a>(
 /// subject should be narrowed). `null` and wildcard also match absence.
 fn pattern_requires_presence(pattern: &vut_ast::MatchPattern) -> bool {
     match pattern {
-        vut_ast::MatchPattern::Wildcard(_) | vut_ast::MatchPattern::Error(_) => false,
-        vut_ast::MatchPattern::Literal {
+        vut_ast::MatchPattern::Wildcard(_)
+        | vut_ast::MatchPattern::Error(_)
+        | vut_ast::MatchPattern::Literal {
             value: vut_ast::LiteralPattern::Null,
             ..
         } => false,
