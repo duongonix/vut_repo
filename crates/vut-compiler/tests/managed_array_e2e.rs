@@ -72,7 +72,7 @@ fn nested_array_and_data_with_array_field_are_leak_free() {
 #[test]
 fn arrays_in_lists_maps_and_results_are_leak_free() {
     expect_clean(
-        "fn first(a: array(str, 1)) -> str:\n  a.at(0)\n\nfn main():\n  rows: list(array(str, 1)) = @(array(\"x\"), array(\"y\"))\n  out(rows.at(0).at(0))\n  out(rows.map(first))\n  table: map(str, array(str, 1)) = map((\"k\", array(\"v\")))\n  out(table.get(\"k\").at(0))\n  out(first(array(\"z\")))\n",
+        "fn first(a: array(str, 1)) -> str:\n  a.at(0)\n\nfn main():\n  rows: list(array(str, 1)) = @(array(\"x\"), array(\"y\"))\n  out(rows.at(0).at(0))\n  out(rows.map(first))\n  table: map(str, array(str, 1)) = map((\"k\", array(\"v\")))\n  entry: array(str, 1)? = table.get(\"k\")\n  if entry != null:\n    out(entry.at(0))\n  out(first(array(\"z\")))\n",
         "x\n[\"x\", \"y\"]\nv\nz\n",
     );
 }

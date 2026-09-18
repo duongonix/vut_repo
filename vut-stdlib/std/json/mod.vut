@@ -596,7 +596,9 @@ fn Value.get(key: str) -> result(Value, Error):
 
 fn _object_lookup(entries: map(str, Value), key: str) -> result(Value, Error):
   if entries.contains_key(key):
-    return _ok_value(entries.get(key))
+    found: Value? = entries.get(key)
+    if found != null:
+      return _ok_value(found)
   _err_value(_missing_field(key))
 
 fn Value.keys() -> result(list(str), Error):
@@ -737,7 +739,9 @@ fn _write_object(entries: map(str, Value), pretty: bool, indent: int, depth: int
       out = out + 32.to_char()
     else:
       out = out + ":"
-    out = out + _write(entries.get(key), pretty, indent, depth + 1)
+    entry: Value? = entries.get(key)
+    if entry != null:
+      out = out + _write(entry, pretty, indent, depth + 1)
     index = index + 1
   if pretty and index > 0:
     out = out + _newline_indent(indent, depth)

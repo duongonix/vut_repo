@@ -119,10 +119,10 @@ pub fn builtin_methods(kind: BuiltinKind) -> &'static [(&'static str, &'static s
             ("is_empty", "is_empty() -> bool"),
             ("capacity", "capacity() -> int"),
             ("reserve", "reserve(capacity: int) -> void"),
-            ("get", "get(key: K) -> V"),
+            ("get", "get(key: K) -> V?"),
             ("set", "set(key: K, value: V) -> void"),
             ("contains_key", "contains_key(key: K) -> bool"),
-            ("remove", "remove(key: K) -> V"),
+            ("remove", "remove(key: K) -> V?"),
             ("clear", "clear() -> void"),
         ],
     }

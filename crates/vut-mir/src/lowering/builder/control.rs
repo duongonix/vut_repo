@@ -61,6 +61,7 @@ impl Builder<'_> {
         Some(value)
     }
     pub(super) fn lower_if_expression(&mut self, expression: &vut_ast::If) -> Option<ValueId> {
+        let narrowing = self.condition_narrowing(&expression.condition);
         let condition = self.expr(&expression.condition)?;
         let then_block = self.new_block();
         let else_block = self.new_block();
@@ -78,12 +79,17 @@ impl Builder<'_> {
         });
         self.switch_to(then_block);
         self.conditional_depth += 1;
+        let then_narrowed = self.narrowed.len();
+        if let Some((name, false)) = &narrowing {
+            self.push_narrowing(name);
+        }
         if let Some(value) = self.lower_statements(&expression.body.statements) {
             self.emit(Instruction::Store {
                 local: result_local,
                 value,
             });
         }
+        self.narrowed.truncate(then_narrowed);
         if !self.is_terminated() {
             self.terminate(Terminator::Jump(join));
         }
@@ -103,12 +109,17 @@ impl Builder<'_> {
                 });
             }
         } else if let Some(body) = &expression.otherwise {
+            let else_narrowed = self.narrowed.len();
+            if let Some((name, true)) = &narrowing {
+                self.push_narrowing(name);
+            }
             if let Some(value) = self.lower_statements(&body.statements) {
                 self.emit(Instruction::Store {
                     local: result_local,
                     value,
                 });
             }
+            self.narrowed.truncate(else_narrowed);
         } else {
             let value = self.value();
             let ty = self.local_data[result_local.0].ty;
@@ -593,8 +604,28 @@ impl Builder<'_> {
         &mut self,
         literal: &vut_ast::LiteralPattern,
         value: ValueId,
-        _ty: TypeId,
+        ty: TypeId,
     ) -> ValueId {
+        // A `null` pattern matches absence. For tagged optionals the presence
+        // discriminant must be tested rather than comparing the block address
+        // to zero; managed optionals also go through the presence test.
+        if matches!(literal, vut_ast::LiteralPattern::Null)
+            && let Type::Optional(inner) = self.semantics.types[ty.0]
+        {
+            let present = self.value();
+            self.emit(Instruction::OptionalIsPresent {
+                value: present,
+                operand: value,
+                inner,
+            });
+            let absent = self.value();
+            self.emit(Instruction::Unary {
+                value: absent,
+                op: vut_ast::UnaryOp::Not,
+                operand: present,
+            });
+            return absent;
+        }
         if let vut_ast::LiteralPattern::Str(text) = literal {
             let constant = self.value();
             self.emit(Instruction::ConstString {

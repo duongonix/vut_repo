@@ -2,7 +2,7 @@
 use super::CodegenError;
 use super::managed::{
     const_runtime_string, element_pointer, element_value, is_managed_handle, manage_value,
-    optional_payload_offset, stack_slot_for_type, zero_stack_value,
+    optional_from_presence, optional_payload_offset, stack_slot_for_type, zero_stack_value,
 };
 use super::signatures::{
     c_call_conv, coerce_integer, copy_aggregate, indirect_signature, machine_type, runtime_function,
@@ -1472,7 +1472,12 @@ pub(super) fn lower_instruction(
                 let receiver_id = arguments[0];
                 let receiver = values[&receiver_id];
                 let array_ty = value_types[&receiver_id];
-                let (element_ty, length) = layouts.arrays[&array_ty];
+                let (element_ty, length) = *layouts.arrays.get(&array_ty).ok_or_else(|| {
+                    CodegenError::Backend(format!(
+                        "array method receiver type {} is not an array",
+                        array_ty.0
+                    ))
+                })?;
                 let element_machine_ty = machine_type(layouts, element_ty);
                 let stride = layouts.types[element_ty.0].size;
                 let result = match function {
@@ -2518,6 +2523,7 @@ pub(super) fn lower_instruction(
                         let key_ptr =
                             element_pointer(builder, layouts, key_ty, values[&arguments[1]])?;
                         let out = stack_slot_for_type(builder, layouts, value_ty)?;
+                        zero_stack_value(builder, layouts, value_ty, out);
                         let name = if *function == vut_mir::BuiltinFunction::MapGet {
                             vut_runtime::abi::MAP_GET
                         } else {
@@ -2530,14 +2536,24 @@ pub(super) fn lower_instruction(
                             &[types::I8],
                         )?;
                         let reference = module.declare_func_in_func(target, builder.func);
-                        builder
+                        let call = builder
                             .ins()
                             .call(reference, &[values[&arguments[0]], key_ptr, out]);
-                        let loaded = element_value(builder, layouts, value_ty, out);
-                        if let Some(id) = value {
-                            value_types.insert(*id, value_ty);
-                        }
-                        Some(loaded)
+                        let present = builder.inst_results(call)[0];
+                        let optional_ty = (*result_type).ok_or_else(|| {
+                            CodegenError::Backend(
+                                "map lookup without an optional result type".into(),
+                            )
+                        })?;
+                        let result = optional_from_presence(
+                            builder,
+                            layouts,
+                            optional_ty,
+                            value_ty,
+                            present,
+                            out,
+                        )?;
+                        Some(result)
                     }
                     vut_mir::BuiltinFunction::MapGetOr => {
                         let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {

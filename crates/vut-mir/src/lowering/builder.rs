@@ -1,7 +1,7 @@
 //! Expression/statement lowering builder.
 use std::collections::{HashMap, HashSet};
 
-use vut_ast::{Expr, Stmt};
+use vut_ast::{BinaryOp, Expr, Stmt};
 use vut_hir::TypeId;
 use vut_memory::LastUse;
 use vut_resolver::SymbolId;
@@ -62,6 +62,9 @@ pub(super) struct Builder<'a> {
     /// The type of the most recent expression statement, used to coerce an
     /// implicit return of an optional function result.
     pub(super) tail_type: Option<TypeId>,
+    /// Names currently narrowed to their optional's present (inner) type by an
+    /// enclosing `if value != null` / `if value == null` guard or branch.
+    pub(super) narrowed: Vec<(String, TypeId)>,
     /// Nesting depth of conditional branches. Values referenced inside a
     /// branch are never moved (they are retained and dropped at cleanup) so
     /// that path-insensitive move tracking cannot leak or double-free.
@@ -101,6 +104,7 @@ impl Builder<'_> {
         self.current = block;
     }
     pub(super) fn lower_statements(&mut self, statements: &[Stmt]) -> Option<ValueId> {
+        let narrowed_mark = self.narrowed.len();
         let mut value = None;
         for statement in statements {
             if self.is_terminated() {
@@ -114,7 +118,53 @@ impl Builder<'_> {
             }
             value = produced.or(value);
         }
+        self.narrowed.truncate(narrowed_mark);
         value
+    }
+    /// Returns true when a guard clause has narrowed `name` to its present type
+    /// in the current scope.
+    pub(super) fn is_narrowed(&self, name: &str) -> bool {
+        self.narrowed.iter().any(|(narrowed, _)| narrowed == name)
+    }
+    /// Narrows `name` to its optional's inner type for the current scope.
+    fn push_narrowing(&mut self, name: &str) {
+        let Some(local) = self.locals.get(name).copied() else {
+            return;
+        };
+        let Some(ty) = self.local_data[local.0].ty else {
+            return;
+        };
+        if let Type::Optional(inner) = self.semantics.types[ty.0] {
+            self.narrowed.push((name.to_string(), inner));
+        }
+    }
+    /// Recognizes `name == null` / `name != null` on an optional local. Returns
+    /// the name and whether the operator is `==` (`true`) or `!=` (`false`).
+    fn condition_narrowing(&self, condition: &Expr) -> Option<(String, bool)> {
+        let Expr::Binary {
+            left, op, right, ..
+        } = condition
+        else {
+            return None;
+        };
+        let is_eq = match op {
+            BinaryOp::Equal => true,
+            BinaryOp::NotEqual => false,
+            _ => return None,
+        };
+        let name = match (left.as_ref(), right.as_ref()) {
+            (Expr::Name(name), Expr::Null(_)) | (Expr::Null(_), Expr::Name(name)) => {
+                name.text.clone()
+            }
+            _ => return None,
+        };
+        let local = *self.locals.get(&name)?;
+        let ty = self.local_data[local.0].ty?;
+        if matches!(self.semantics.types[ty.0], Type::Optional(_)) {
+            Some((name, is_eq))
+        } else {
+            None
+        }
     }
     fn value(&mut self) -> ValueId {
         let value = ValueId(self.next_value);
@@ -279,6 +329,7 @@ impl Builder<'_> {
         }
     }
     fn lower_if(&mut self, statement: &vut_ast::If) {
+        let narrowing = self.condition_narrowing(&statement.condition);
         let Some(condition) = self.expr(&statement.condition) else {
             return;
         };
@@ -292,10 +343,15 @@ impl Builder<'_> {
         });
         self.switch_to(then_block);
         self.conditional_depth += 1;
+        let then_narrowed = self.narrowed.len();
+        if let Some((name, false)) = &narrowing {
+            self.push_narrowing(name);
+        }
         let then_mark = self.local_data.len();
         self.lower_statements(&statement.body.statements);
+        self.narrowed.truncate(then_narrowed);
         if !self.is_terminated() {
-            self.cleanup_from(then_mark);
+            self.close_scope(then_mark);
             self.terminate(Terminator::Jump(join));
         }
         self.switch_to(else_block);
@@ -309,10 +365,15 @@ impl Builder<'_> {
             };
             self.lower_if(&nested);
         } else if let Some(body) = &statement.otherwise {
+            let else_narrowed = self.narrowed.len();
+            if let Some((name, true)) = &narrowing {
+                self.push_narrowing(name);
+            }
             let else_mark = self.local_data.len();
             self.lower_statements(&body.statements);
+            self.narrowed.truncate(else_narrowed);
             if !self.is_terminated() {
-                self.cleanup_from(else_mark);
+                self.close_scope(else_mark);
             }
         }
         self.conditional_depth -= 1;
@@ -320,6 +381,14 @@ impl Builder<'_> {
             self.terminate(Terminator::Jump(join));
         }
         self.switch_to(join);
+        // `if value == null: <terminating>` leaves `value` present afterwards.
+        if let Some((name, true)) = &narrowing
+            && statement.elifs.is_empty()
+            && statement.otherwise.is_none()
+            && block_terminates(&statement.body)
+        {
+            self.push_narrowing(name);
+        }
     }
     /// Lowers a builtin-call receiver as a borrow. Named locals and field
     /// projections of a local must not be moved or copied: a mutating builtin
@@ -338,7 +407,23 @@ impl Builder<'_> {
                     self.remaining_uses.consume(&name.text);
                     let value = self.value();
                     self.emit(Instruction::Borrow { value, local });
-                    lowered.push(value);
+                    // A narrowed optional receiver borrows the optional storage
+                    // and then unwraps to the present inner value (its address
+                    // for aggregates, the handle/payload for others).
+                    let mut receiver = value;
+                    if self.is_narrowed(&name.text)
+                        && let Some(ty) = self.local_data[local.0].ty
+                        && let Type::Optional(inner) = self.semantics.types[ty.0]
+                    {
+                        let unwrapped = self.value();
+                        self.emit(Instruction::OptionalUnwrap {
+                            value: unwrapped,
+                            operand: value,
+                            inner,
+                        });
+                        receiver = unwrapped;
+                    }
+                    lowered.push(receiver);
                     return Some(());
                 }
             }
@@ -791,4 +876,12 @@ impl Builder<'_> {
             self.moved.insert(LocalId(index));
         }
     }
+}
+
+/// True when a block provably leaves the enclosing flow on every path.
+fn block_terminates(block: &vut_ast::Block) -> bool {
+    matches!(
+        block.statements.last(),
+        Some(Stmt::Return { .. } | Stmt::Break(_) | Stmt::Continue(_))
+    )
 }

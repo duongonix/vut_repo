@@ -393,14 +393,17 @@ impl Builder<'_> {
                     self.emit(Instruction::Retain { value, ty });
                 }
                 // A narrowed optional read carries the inner type: unwrap it
-                // (identity for managed handles, payload load for scalars).
+                // (identity for managed handles, payload load for scalars). A
+                // read is narrowed either by the checker's per-expression type
+                // or by an active MIR narrowing scope from an `if`/guard.
                 if let Some(declared) = ty
                     && let Type::Optional(inner) = self.semantics.types[declared.0]
-                    && self
-                        .semantics
-                        .expression_types
-                        .get(&name.span)
-                        .is_some_and(|expr_ty| *expr_ty == inner)
+                    && (self.is_narrowed(&name.text)
+                        || self
+                            .semantics
+                            .expression_types
+                            .get(&name.span)
+                            .is_some_and(|expr_ty| *expr_ty == inner))
                 {
                     let unwrapped = self.value();
                     self.emit(Instruction::OptionalUnwrap {
@@ -1231,7 +1234,23 @@ impl Builder<'_> {
                 let base = if let Some(local) = local_base {
                     let value = self.value();
                     self.emit(Instruction::Borrow { value, local });
-                    value
+                    // A narrowed optional base is unwrapped so the projection
+                    // reads a field of the present inner aggregate.
+                    let mut base = value;
+                    if let Expr::Name(name) = object.as_ref()
+                        && self.is_narrowed(&name.text)
+                        && let Some(ty) = self.local_data[local.0].ty
+                        && let Type::Optional(inner) = self.semantics.types[ty.0]
+                    {
+                        let unwrapped = self.value();
+                        self.emit(Instruction::OptionalUnwrap {
+                            value: unwrapped,
+                            operand: value,
+                            inner,
+                        });
+                        base = unwrapped;
+                    }
+                    base
                 } else {
                     let Some(base) = self.expr(object) else {
                         let value = self.value();

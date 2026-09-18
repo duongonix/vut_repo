@@ -136,3 +136,43 @@ fn scalar_optional_float_return() {
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "0.5\nb=absent\n");
 }
+
+#[test]
+fn map_get_and_remove_report_absence_as_null() {
+    let source = "fn main():\n  scores: map(str, int) = map((\"ann\", 30))\n  a: int? = scores.get(\"ann\")\n  if a != null:\n    out(\"ann=$(a)\")\n  missing: int? = scores.get(\"bob\")\n  if missing == null:\n    out(\"bob=absent\")\n  removed: int? = scores.remove(\"ann\")\n  if removed != null:\n    out(\"removed=$(removed)\")\n  gone: int? = scores.remove(\"ann\")\n  if gone == null:\n    out(\"gone=absent\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "ann=30\nbob=absent\nremoved=30\ngone=absent\n");
+}
+
+#[test]
+fn map_get_and_remove_managed_values_balance_ownership() {
+    let source = "fn main():\n  names: map(str, str) = map((\"a\", \"alpha\"))\n  hit: str? = names.get(\"a\")\n  if hit != null:\n    out(hit)\n  miss: str? = names.get(\"z\")\n  if miss == null:\n    out(\"missing\")\n  taken: str? = names.remove(\"a\")\n  if taken != null:\n    out(taken)\n  empty: str? = names.remove(\"a\")\n  if empty == null:\n    out(\"empty\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "alpha\nmissing\nalpha\nempty\n");
+}
+
+#[test]
+fn scalar_optional_match_null_pattern() {
+    let source = "fn describe(value: int?) -> str:\n  match value:\n    null: \"none\"\n    _: \"some\"\n\nfn main():\n  out(describe(7))\n  out(describe(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "some\nnone\n");
+}
+
+#[test]
+fn optional_data_with_managed_fields_is_leak_free() {
+    let source = "data Person:\n  name: str\n  age: int\n\nfn find(flag: bool) -> Person?:\n  if flag:\n    return Person(name = \"Ann\", age = 30)\n  null\n\nfn main():\n  a: Person? = find(true)\n  if a != null:\n    out(\"$(a.name) $(a.age)\")\n  b: Person? = find(false)\n  if b == null:\n    out(\"none\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "Ann 30\nnone\n");
+}
+
+#[test]
+fn optional_list_handle_narrowing_is_leak_free() {
+    let source = "fn total(values: list(int)?) -> int:\n  if values == null:\n    return 0\n  values.len()\n\nfn main():\n  items: list(int) = @(1, 2, 3)\n  out(total(items))\n  out(total(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "3\n0\n");
+}

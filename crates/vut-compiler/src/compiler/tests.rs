@@ -331,7 +331,7 @@ fn builtin_map_methods_execute_natively() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn main():\n  scores = map((1, 10), (2, 20))\n  scores.reserve(16)\n  scores.set(1, 30)\n  scores.set(3, 40)\n  old = scores.remove(2)\n  enough = scores.capacity() >= 16\n  out(\"$(scores.len()) $enough $(scores.get(1)) $old $(scores.contains_key(3))\")\n  scores.clear()\n  out(\"$(scores.is_empty())\")\n",
+            "fn main():\n  scores = map((1, 10), (2, 20))\n  scores.reserve(16)\n  scores.set(1, 30)\n  scores.set(3, 40)\n  old: int? = scores.remove(2)\n  current: int? = scores.get(1)\n  removed_text = 0\n  if old != null:\n    removed_text = old\n  current_text = 0\n  if current != null:\n    current_text = current\n  out(\"$(scores.len()) $(scores.capacity() >= 16) $current_text $removed_text $(scores.contains_key(3))\")\n  scores.clear()\n  out(\"$(scores.is_empty())\")\n",
         )
         .unwrap();
     let executable = root.join("program.exe");

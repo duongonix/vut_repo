@@ -85,7 +85,15 @@ impl Analyzer<'_> {
             Expr::String { segments, .. } => {
                 for segment in segments {
                     if let vut_ast::TemplateSegment::Expression(value) = segment {
-                        self.expr(module, value, context, None);
+                        let ty = self.expr(module, value, context, None);
+                        if matches!(self.types[ty.0], Type::Optional(_)) {
+                            self.error(
+                                codes::E1007,
+                                "cannot format an optional value",
+                                value.span(),
+                                "narrow it with `if value != null` or use `get_or`",
+                            );
+                        }
                     }
                 }
                 self.intern(Type::Str)

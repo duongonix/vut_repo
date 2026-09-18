@@ -812,7 +812,7 @@ impl Analyzer<'_> {
                 BuiltinFunction::MapGet,
                 Signature {
                     parameters: vec![("key".into(), key)],
-                    result: value,
+                    result: self.intern(Type::Optional(value)),
                 },
             )),
             "set" => Some((
@@ -833,7 +833,7 @@ impl Analyzer<'_> {
                 BuiltinFunction::MapRemove,
                 Signature {
                     parameters: vec![("key".into(), key)],
-                    result: value,
+                    result: self.intern(Type::Optional(value)),
                 },
             )),
             "clear" => Some((BuiltinFunction::MapClear, no_args(void))),

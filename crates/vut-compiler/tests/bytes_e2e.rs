@@ -76,7 +76,7 @@ fn bytes_utf8_validation_handles_multibyte_and_invalid_input() {
 #[test]
 fn bytes_value_semantics_isolate_copies_across_fields_and_collections() {
     let source = format!(
-        "{DECODE}data Packet:\n  payload: bytes\nfn touch(blob: bytes) -> int:\n  blob.len()\nfn main():\n  blob = \"Xin chào Vut\".to_bytes()\n  copied = blob\n  copied.set(0, 86)\n  out(text_of(blob))\n  out(text_of(copied))\n  packet = Packet(payload = blob)\n  out(\"$(packet.payload.len())\")\n  values: list(bytes) = @(blob, copied)\n  out(\"$(values.at(0).at(0)) $(values.at(1).at(0))\")\n  table: map(str, bytes) = map((\"a\", blob))\n  entry = table.get(\"a\")\n  out(\"$(entry.len())\")\n  items: array(bytes, 2) = array(blob, copied)\n  out(\"$(items.at(0).at(0)) $(items.at(1).at(0))\")\n  out(\"$(touch(blob))\")\n"
+        "{DECODE}data Packet:\n  payload: bytes\nfn touch(blob: bytes) -> int:\n  blob.len()\nfn main():\n  blob = \"Xin chào Vut\".to_bytes()\n  copied = blob\n  copied.set(0, 86)\n  out(text_of(blob))\n  out(text_of(copied))\n  packet = Packet(payload = blob)\n  out(\"$(packet.payload.len())\")\n  values: list(bytes) = @(blob, copied)\n  out(\"$(values.at(0).at(0)) $(values.at(1).at(0))\")\n  table: map(str, bytes) = map((\"a\", blob))\n  entry: bytes? = table.get(\"a\")\n  entry_text = 0\n  if entry != null:\n    entry_text = entry.len()\n  out(\"$(entry_text)\")\n  items: array(bytes, 2) = array(blob, copied)\n  out(\"$(items.at(0).at(0)) $(items.at(1).at(0))\")\n  out(\"$(touch(blob))\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "leak or crash: {stdout}");

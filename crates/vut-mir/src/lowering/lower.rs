@@ -106,6 +106,7 @@ pub(crate) fn lower_program(
                     terminated: HashSet::new(),
                     return_type,
                     tail_type: None,
+                    narrowed: Vec::new(),
                     conditional_depth: 0,
                     receiver_local: function.receiver.map(|_| LocalId(0)),
                     pattern_borrowed: false,

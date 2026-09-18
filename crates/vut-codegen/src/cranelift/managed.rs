@@ -1,6 +1,6 @@
 //! Managed-value retain/release and temporary storage helpers.
 use super::CodegenError;
-use super::signatures::{coerce_integer, machine_type, runtime_function};
+use super::signatures::{coerce_integer, copy_aggregate, machine_type, runtime_function};
 
 use cranelift_codegen::ir::{
     InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, condcodes::IntCC, types,
@@ -433,6 +433,45 @@ pub(super) fn element_value(
             0,
         )
     }
+}
+
+/// Builds an optional value of type `optional_ty` from a presence flag and a
+/// payload stored at `payload`.
+///
+/// Managed payloads become a nullable handle (`select(present, handle, 0)`);
+/// other payloads become a tagged aggregate `{ discriminant, payload }`.
+pub(super) fn optional_from_presence(
+    builder: &mut FunctionBuilder<'_>,
+    layouts: &LayoutTable,
+    optional_ty: vut_hir::TypeId,
+    inner: vut_hir::TypeId,
+    present: cranelift_codegen::ir::Value,
+    payload: cranelift_codegen::ir::Value,
+) -> Result<cranelift_codegen::ir::Value, CodegenError> {
+    if is_managed_handle(layouts, inner) {
+        let loaded = element_value(builder, layouts, inner, payload);
+        let condition = builder.ins().icmp_imm_u(IntCC::NotEqual, present, 0);
+        let zero = builder.ins().iconst(types::I64, 0);
+        return Ok(builder.ins().select(condition, loaded, zero));
+    }
+    let slot = stack_slot_for_type(builder, layouts, optional_ty)?;
+    let tag = coerce_integer(builder, present, types::I64);
+    builder.ins().store(MemFlagsData::trusted(), tag, slot, 0);
+    let offset = optional_payload_offset(layouts, inner);
+    if layouts.is_aggregate(inner) {
+        let delta = i64::try_from(offset)
+            .map_err(|_| CodegenError::Backend("optional payload offset exceeds limit".into()))?;
+        let destination = builder.ins().iadd_imm_u(slot, delta);
+        copy_aggregate(builder, layouts, inner, payload, destination)?;
+    } else {
+        let loaded = element_value(builder, layouts, inner, payload);
+        let index = i32::try_from(offset)
+            .map_err(|_| CodegenError::Backend("optional payload offset exceeds limit".into()))?;
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), loaded, slot, index);
+    }
+    Ok(slot)
 }
 
 /// Zeroes a stack slot so that a subsequent unconditional load is defined even

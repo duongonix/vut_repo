@@ -1,8 +1,8 @@
 # `map(K,V)` — every built-in method.
 #
 # Key iteration order is unspecified, so examples that print keys/values sort
-# them first. `get`/`remove` on a missing key use the runtime key/bounds error
-# behavior; `get_or` is the non-failing fallback.
+# them first. `get`/`remove` report a missing key through the optional model
+# (`V?`); `get_or` is the non-failing fallback.
 
 fn main():
   scores: map(str, int) = map(("ann", 10), ("bob", 20))
@@ -13,11 +13,17 @@ fn main():
 
   scores.set("cara", 30)
   out("contains_key(ann):", scores.contains_key("ann"))
-  out("get(ann):", scores.get("ann"))
+  ann: int? = scores.get("ann")
+  if ann != null:
+    out("get(ann):", ann)
+  missing: int? = scores.get("zed")
+  if missing == null:
+    out("get(zed): absent")
   out("get_or(missing):", scores.get_or("zed", 0))
 
-  removed = scores.remove("bob")
-  out("removed:", removed)
+  removed: int? = scores.remove("bob")
+  if removed != null:
+    out("removed:", removed)
 
   keys = scores.keys()
   keys.sort()

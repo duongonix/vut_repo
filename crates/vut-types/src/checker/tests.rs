@@ -195,7 +195,7 @@ fn rejects_result_in_extern_signatures_for_ffi_v1() {
 #[test]
 fn checks_core_bytes_type_methods_and_conversions() {
     let valid = analyze(
-        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main() -> result(str, Utf8Error):\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list(u8) = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list(bytes) = @(rebuilt)\n  table: map(str, bytes) = map((\"payload\", text))\n  maybe: bytes? = text\n  result_value: result(bytes, str) = ok(text)\n  table.get(\"payload\").to_str()\n",
+        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main() -> result(str, Utf8Error):\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list(u8) = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list(bytes) = @(rebuilt)\n  table: map(str, bytes) = map((\"payload\", text))\n  maybe: bytes? = text\n  result_value: result(bytes, str) = ok(text)\n  entry: bytes? = table.get(\"payload\")\n  if entry != null:\n    entry.to_str()\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),

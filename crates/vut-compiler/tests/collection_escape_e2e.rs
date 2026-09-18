@@ -43,7 +43,7 @@ fn run(source: &str) -> (Option<i32>, String) {
 
 #[test]
 fn aggregate_enum_in_map_escapes_function_without_leaking() {
-    let source = "enum Payload:\n  none\n  text(value: str)\n\ndata Envelope:\n  entries: map(str, Payload)\n\nfn build() -> Envelope:\n  entries: map(str, Payload) = map()\n  entries.set(\"greeting\", Payload.text(value = \"hi\"))\n  Envelope(entries = entries)\n\nfn main():\n  env = build()\n  match env.entries.get(\"greeting\"):\n    text(value): out(\"text=$value\")\n    none: out(\"none\")\n";
+    let source = "enum Payload:\n  none\n  text(value: str)\n\ndata Envelope:\n  entries: map(str, Payload)\n\nfn build() -> Envelope:\n  entries: map(str, Payload) = map()\n  entries.set(\"greeting\", Payload.text(value = \"hi\"))\n  Envelope(entries = entries)\n\nfn main():\n  env = build()\n  entry: Payload? = env.entries.get(\"greeting\")\n  if entry == null:\n    out(\"none\")\n  else:\n    match entry:\n      text(value): out(\"text=$value\")\n      none: out(\"none\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "text=hi\n");
