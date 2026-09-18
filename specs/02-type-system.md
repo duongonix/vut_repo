@@ -351,7 +351,7 @@ A non-null value of the underlying type is also valid:
 nickname: str? = "Ha"
 ```
 
-A normal non-optional value cannot accept `null`.
+A normal non-optional value cannot accept `null` (`E1006`).
 
 Invalid:
 
@@ -359,9 +359,11 @@ Invalid:
 name: str = null
 ```
 
-The exact narrowing/unwrapping syntax will be defined before optional values are fully implemented.
-
-Unsafe access to an optional value must not silently succeed.
+Narrowing and unwrapping are defined in `specs/optional/00-overview.md`:
+`if x == null` / `if x != null` narrow within branches, a terminating guard
+clause narrows the code after the `if`, and `match` accepts a `null` pattern.
+`T?` is not implicitly converted to `T` (`E1007`), and there is no unchecked
+unwrap operator.
 
 ---
 

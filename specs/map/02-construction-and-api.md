@@ -25,7 +25,17 @@ m.remove(key)
 m.clear()
 ```
 
-`set` inserts missing keys and replaces existing keys. `get` and `remove` report absence through the optional/result model when that representation is fully lowered; current native MVP returns the value storage and a runtime presence flag internally.
+`set` inserts missing keys and replaces existing keys.
+
+```text
+get(key)    -> V?
+remove(key) -> V?
+```
+
+`get` and `remove` report absence through the optional model
+(`specs/optional/00-overview.md`): a missing key yields `null` and does not
+trap. `get_or(key, default)` is the non-failing fallback. `contains_key` is
+unchanged.
 
 Indexing syntax is not supported:
 

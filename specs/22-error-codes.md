@@ -292,7 +292,17 @@ name: str = null
 
 ## E1007 — Invalid Optional Operation
 
-Reserved for invalid optional-value usage once narrowing/unwrapping semantics are finalized.
+An optional value was used where its present type is required without
+narrowing, or an otherwise invalid optional operation was attempted.
+
+Example:
+
+```vut
+nickname: str? = null
+out(nickname.byte_len())   # E1007: narrow with `if nickname != null`
+```
+
+See `specs/optional/00-overview.md`.
 
 ---
 

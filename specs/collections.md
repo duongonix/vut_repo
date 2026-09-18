@@ -117,8 +117,9 @@ sort_by(fn(T, T) -> int) -> void
 `remove`, `clear`, **[A]** `keys() -> list(K)` (all key types), `values() ->
 list(V)`, `get_or(key, default: V) -> V`.
 
-`get`/`remove` on a missing key use the established runtime key/bounds error
-behavior; `get_or` is the non-failing fallback. Key iteration order is
+`get`/`remove` report absence through the optional model
+(`specs/optional/00-overview.md`): a missing key yields `null` and does not
+trap; `get_or` is the non-failing fallback. Key iteration order is
 unspecified. `keys()` rebuilds string keys as handles and returns other keys in
 their key layout; `values()` retains managed values into the returned list.
 
