@@ -906,18 +906,22 @@ specs/async/02-type-system.md
 
 ## 33. Deferred Type-System Details
 
-The following require dedicated specification before implementation is considered complete:
+The following now have dedicated finalized specifications and implementations
+(see the referenced documents); they are no longer deferred here:
 
-- generic function declaration syntax
-- generic constraints
+- generic function declaration syntax → `specs/04`, `specs/06`
+- generic constraints → `specs/06`
+- optional narrowing and unwrapping → `specs/optional/`
+- `result(T, E)` semantics → `specs/result/`
+- `?` propagation → `specs/result/03-question-operator.md`
+- map typing → `specs/map/`
+- pointer types → `specs/ffi/`, `specs/19-ffi-unsafe.md`
+
+Still deferred (no finalized specification yet):
+
 - exact `int` ABI
 - exact `float` ABI
-- optional narrowing and unwrapping
-- `result(T, E)` semantics
-- `?` propagation
-- pointer types
-- ownership/reference semantics
-- map typing
+- ownership/reference semantics beyond `specs/08` const-depth
 - capturing closure typing
 
 These details must not be guessed by the implementation.

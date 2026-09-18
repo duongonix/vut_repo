@@ -1635,28 +1635,23 @@ a named function may be used where a function type is expected
 The following syntax is intentionally not finalized:
 
 ```text
-generic function declarations
-generic constraints
-payload enum patterns
-static methods
-extension methods
 unsafe pointer operations
 function-level unsafe
-FFI annotations
 threads
 channels
 atomics
-spawn
 select
-advanced map literal syntax
-optional unwrapping/narrowing
-Result construction syntax
+cross-module extension methods
 ```
 
 The parser must not invent these features.
 
-`async fn` and `await` are no longer deferred; their grammar is defined in this
-document and `specs/async/01-syntax.md`.
+The following are no longer deferred; their grammar is defined in this document
+and their dedicated specifications (and is implemented): `async fn`/`await`
+(`specs/async/01-syntax.md`), generic declarations and constraints (`specs/04`,
+`specs/06`), payload enum patterns (`specs/05`), static methods and same-module
+extension methods (`specs/04`), `spawn`/`vut(...)` (`specs/vutcom/`), optional
+narrowing (`specs/optional/`), and result construction (`specs/result/`).
 
 ---
 

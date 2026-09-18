@@ -67,7 +67,13 @@ non-`str` operands.
 
 ## 6. Deferred
 
-- Optional `T?` is displayed as `<optional>` until optional narrowing is
-  specified.
 - `map(K, V)` is displayed as `<map>` (map value access is `optional`).
 - A user-defined `to_str`/display override is not supported yet.
+
+## 7. Non-displayable values
+
+- Optional `T?` values are not displayable directly: an optional used where a
+  value is required is `E1007` (`specs/optional/00-overview.md`). Narrow with
+  `if value != null` or a `match` null arm first.
+- `dyn` is displayed as the opaque `<dyn>` form (see §2). There is no runtime
+  type-directed display of the concrete boxed value.

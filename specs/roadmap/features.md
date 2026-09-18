@@ -169,6 +169,13 @@ Feature has been explicitly rejected from the language/toolchain.
 | Invalid template expression diagnostic | Complete    |    04 |
 | Invalid escape diagnostic              | Complete    |    04 |
 
+Diagnostic-code status (M1.1 audit, `specs/22`): `E4001` (unknown interface
+parent, resolver) and `E4004` (invalid interface parent, checker) are emitted.
+`E1006`/`E1007`/`E1104` are emitted. `E1002`, `E1011`, `E4002`, `E4003`,
+`E5008`, and `E5010` currently have no reachable compiler scenario and are
+reserved; they must not be emitted speculatively. `E1105` (mutation through a
+constant binding) is blocked on const-depth semantics in `specs/08`.
+
 ---
 
 # 7. Modules and Name Resolution
@@ -214,8 +221,8 @@ Feature has been explicitly rejected from the language/toolchain.
 | Method normalization       | Complete    |    06 |
 | Compiler-injected `self`   | Complete    |    06 |
 | HIR source spans           | Complete    |    06 |
-| HIR side tables            | Complete    |    06 |
-| HIR template strings       | Complete    |    06 |
+| HIR side tables            | Partial     |    06 |
+| HIR template strings       | Partial     |    06 |
 
 ---
 
@@ -269,9 +276,9 @@ Feature has been explicitly rejected from the language/toolchain.
 | `bytes.find` / `starts_with` / `ends_with` / `compare` | Complete | current |
 | `bytes.to_hex` / `bytes.from_hex` (HexError) | Complete | current |
 | Explicit-endian bytes read/write (`_le`/`_be`) | Complete | current |
-| `dyn`                        | Complete    |    07 |
+| `dyn`                        | In Progress |    07 |
 | `null`                       | Complete    |    07 |
-| Optional `T?`                | In Progress    |    07 |
+| Optional `T?`                | Complete    |    07 |
 | Compiler internal error type | Complete    |    07 |
 
 ---
@@ -292,7 +299,7 @@ Feature has been explicitly rejected from the language/toolchain.
 | `not`                           | Complete    |    07 |
 | Bool-only conditions            | Complete    |    07 |
 | No truthiness                   | Complete    |    07 |
-| Optional/null checking          | In Progress    |    07 |
+| Optional/null checking          | Complete    |    07 |
 | Function-call checking          | Complete    |    08 |
 | Return checking                 | Complete    |    08 |
 | Method-call checking            | Complete    |    08 |
@@ -583,7 +590,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Panic runtime                    | Complete    |    14 |
 | Bounds-check failure             | Complete    |    14 |
 | Interface runtime representation | Complete    |    14 |
-| Dyn runtime representation       | Complete    |    14 |
+| Dyn runtime representation       | In Progress |    14 |
 | Basic I/O bridge                 | Complete    |    14 |
 | Tracing GC                       | Removed     |     — |
 
@@ -668,7 +675,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | `std.http`              | Complete    | current |
 | `std.json`              | Complete    | current |
 | `std.time`              | Complete    |    15 |
-| Optional support        | In Progress |    15 |
+| Optional support        | Complete    |    15 |
 | Result support          | Complete    |    15 |
 | Numeric conversions     | Complete    |    15 |
 | String conversions      | Complete    |    15 |
@@ -684,11 +691,11 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Feature                                | Status      |  Phase |
 | -------------------------------------- | ----------- | -----: |
 | Result-style error handling            | Complete    |     15 |
-| Optional absence                       | In Progress |  07/15 |
+| Optional absence                       | Complete    |  07/15 |
 | `?` propagation                        | Complete    |  10/15 |
 | No exception-driven core model         | Complete    | Design |
 | Panic for programmer/invariant failure | Complete    |  14/15 |
-| Payload enum final syntax              | Deferred    |      — |
+| Payload enum final syntax              | Complete    |  09/10 |
 
 ---
 
@@ -784,46 +791,56 @@ escape/ownership rules when implemented, with no receiver-specific box.
 
 # 30. Optimization
 
+Status reflects the M1.1 audit: `vut-mir::optimize` implements constant
+folding, dead-branch elimination, and per-block dead-code elimination. Every
+other pass below is not yet implemented as a pass (release relies on
+Cranelift's machine-level optimizer).
+
 | Feature                    | Status      | Phase |
 | -------------------------- | ----------- | ----: |
 | Constant folding           | Complete    |    19 |
-| Constant propagation       | Complete    |    19 |
+| Constant propagation       | Not Started |    19 |
 | Dead-code elimination      | Complete    |    19 |
 | Dead-branch elimination    | Complete    |    19 |
-| Copy elision               | Complete    |    19 |
-| Drop elimination           | Complete    |    19 |
-| Last-use move optimization | Complete    |    19 |
-| Escape analysis            | Complete    |    19 |
-| Stack promotion            | Complete    |    19 |
-| Scalar replacement         | Complete    |    19 |
-| Allocation elimination     | Complete    |    19 |
-| Allocation sinking         | Complete    |    19 |
-| Bounds-check elimination   | Complete    |    19 |
-| Interface devirtualization | Complete    |    19 |
-| Retain/release elimination | Complete    |    19 |
-| Basic inlining             | Complete    |    19 |
-| CSE                        | Complete    |    19 |
-| Expression simplification  | Complete    |    19 |
+| Copy elision               | Not Started |    19 |
+| Drop elimination           | Not Started |    19 |
+| Last-use move optimization | Partial     |    19 |
+| Escape analysis            | Not Started |    19 |
+| Stack promotion            | Not Started |    19 |
+| Scalar replacement         | Not Started |    19 |
+| Allocation elimination     | Not Started |    19 |
+| Allocation sinking         | Not Started |    19 |
+| Bounds-check elimination   | Not Started |    19 |
+| Interface devirtualization | Not Started |    19 |
+| Retain/release elimination | Not Started |    19 |
+| Basic inlining             | Not Started |    19 |
+| CSE                        | Not Started |    19 |
+| Expression simplification  | Not Started |    19 |
 
 ---
 
 # 31. Incremental Compilation
 
+Status reflects the M1.1 audit: the compiler uses a whole-program BLAKE3
+fingerprint plus an object/executable artifact cache. There are no staged
+parse/HIR/type-check/MIR caches and the dependency graph is not wired into
+invalidation.
+
 | Feature                        | Status      | Phase |
 | ------------------------------ | ----------- | ----: |
 | Source hashing                 | Complete    |    19 |
 | BLAKE3 fingerprints            | Complete    |    19 |
-| Module dependency invalidation | Complete    |    19 |
-| Reverse dependency graph       | Complete    |    19 |
+| Module dependency invalidation | Not Started |    19 |
+| Reverse dependency graph       | Not Started |    19 |
 | Cache keys                     | Complete    |    19 |
 | Cache schema version           | Complete    |    19 |
-| Parse cache                    | Complete    |    19 |
-| HIR cache                      | Complete    |    19 |
-| Type-check cache               | Complete    |    19 |
-| MIR cache                      | Complete    |    19 |
+| Parse cache                    | Not Started |    19 |
+| HIR cache                      | Not Started |    19 |
+| Type-check cache               | Not Started |    19 |
+| MIR cache                      | Not Started |    19 |
 | Object cache                   | Complete    |    19 |
-| Dependency build cache         | Complete    |    19 |
-| Target-specific cache          | Complete    |    19 |
+| Dependency build cache         | Not Started |    19 |
+| Target-specific cache          | Partial     |    19 |
 | Debug/release cache separation | Complete    |    19 |
 | Corruption recovery            | Complete    |    19 |
 | No-change minimal rebuild      | Complete    |    19 |
@@ -856,8 +873,8 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Unit tests             | Complete    |   All |
 | Integration tests      | Complete    |   All |
 | Compile-pass tests     | Complete    |    20 |
-| Compile-fail tests     | Complete    |    20 |
-| Diagnostic snapshots   | Complete    | 04/20 |
+| Compile-fail tests     | Partial     |    20 |
+| Diagnostic snapshots   | Not Started | 04/20 |
 | Lexer fuzzing          | Complete    | 02/20 |
 | Parser fuzzing         | Complete    | 03/20 |
 | Scheduled corpus fuzzing | Complete  |    20 |
@@ -875,12 +892,12 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Cross-platform CI      | Complete    |    20 |
 | Native codegen tests   | Complete    |    13 |
 | Runtime tests          | Complete    |    14 |
-| Standard-library tests | Complete    |    15 |
+| Standard-library tests | Partial     |    15 |
 | CLI tests              | Complete    |    16 |
 | VPM tests              | Complete    | 17/18 |
 | Package-provider tests | Complete    |    18 |
 | Incremental tests      | Complete    |    19 |
-| Benchmark suite        | Complete    | 19/20 |
+| Benchmark suite        | Partial     | 19/20 |
 
 ---
 
@@ -920,8 +937,8 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Async/await (single-thread)      | Complete |
 | Full concurrency                 | Deferred |
 | Thread-sharing model             | Deferred |
-| Full generic declaration syntax  | Deferred |
-| Generic constraints              | Deferred |
+| Full generic declaration syntax  | Complete |
+| Generic constraints              | Complete |
 | Payload-enum final syntax        | Complete |
 | Static methods                   | Complete |
 | Extension methods (same module)  | Complete |
@@ -932,13 +949,17 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Explicit reference syntax        | Deferred |
 | Source-level borrow checker      | Deferred |
 | General user-defined destructors | Deferred |
+| `dyn` value boxing/ownership/transport/display | Complete |
+| `dyn` runtime type test / downcast / dispatch  | Deferred (no normative syntax) |
+| Cross-module extension methods   | Deferred |
 | FFI v1: `extern "C"`, `ptr(T)`, `@repr(C)`, `@link_name`, `unsafe:` | Complete |
 | FFI callbacks (non-capturing Vut functions/lambdas) | Complete |
 | Native static-library linking (`[native]`, CLI, LinkPlan) | Complete |
 | `opaque data` native handles       | Complete |
 | Raw pointer dereference/arithmetic | Deferred |
 | By-value `repr(C)` struct ABI      | Deferred |
-| Variadic parameters (`...args`)    | Complete |
+| Variadic parameters (`...args`)    | Partial  |
+| Variadic view escape rejection     | Blocked (spec `04` §47a r3 forbids escape; `specs/22` defines no diagnostic code) |
 | FFI varargs                        | Deferred |
 | FFI dynamic libraries              | Deferred |
 | Foreign-thread callbacks           | Deferred |
@@ -961,7 +982,22 @@ escape/ownership rules when implemented, with no receiver-specific box.
 
 ---
 
-# 37. Removed Language Features
+# 37. Implemented Post-MVP Subsystems
+
+These are implemented and tested beyond the original MVP scope but were missing
+from earlier tracker revisions (M1.1 audit).
+
+| Subsystem                              | Status   | Evidence |
+| -------------------------------------- | -------- | -------- |
+| Generics (monomorphization, nested)    | Complete | `generics_e2e`, `generic_bounds_e2e` |
+| Single-thread async / `Vutcon`         | Complete | `async*`, `vutcon*` e2e suites |
+| Distribution/installer (`vut-dist`)    | Complete | `vut-dist` unit tests, `install/`, `specs/deploy/` |
+| Receiver functions (`specs/receiver/`) | Complete | `receiver_e2e` |
+| `dyn` boxing/ownership/display         | Complete | `dyn_e2e` (transport/store; dispatch is a separate gap) |
+
+---
+
+# 38. Removed Language Features
 
 | Feature                                   | Status  |
 | ----------------------------------------- | ------- |
