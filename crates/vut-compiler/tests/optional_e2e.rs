@@ -96,3 +96,60 @@ fn optional_bytes_narrowing_balances_ownership() {
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "3\n0\n");
 }
+
+#[test]
+fn scalar_optional_distinguishes_zero_value_from_absent() {
+    let source = "fn main():\n  a: int? = 5\n  b: int? = 0\n  c: int? = null\n  if a != null:\n    out(\"a=$(a)\")\n  if b != null:\n    out(\"b=$(b)\")\n  if c == null:\n    out(\"c=absent\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "a=5\nb=0\nc=absent\n");
+}
+
+#[test]
+fn scalar_optional_float_and_bool() {
+    let source = "fn main():\n  f: float? = 1.5\n  g: bool? = true\n  h: bool? = null\n  if f != null:\n    out(f)\n  if g != null:\n    out(g)\n  if h == null:\n    out(\"absent\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "1.5\ntrue\nabsent\n");
+}
+
+#[test]
+fn scalar_optional_argument_and_narrowing() {
+    let source = "fn plus(value: int?) -> int:\n  if value != null:\n    return value + 1\n  -1\n\nfn main():\n  x: int? = 4\n  out(plus(x))\n  out(plus(null))\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "5\n-1\n");
+}
+
+#[test]
+fn scalar_optional_return_is_rejected_with_e1007() {
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("valid clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("vut-optional-check-{nonce}"));
+    fs::create_dir(&root).expect("create root");
+    fs::write(
+        root.join("main.vut"),
+        "fn make() -> int?:\n  5\n\nfn main():\n  out(make())\n",
+    )
+    .expect("write source");
+    let config = CompilerConfig {
+        runtime_library: Some(runtime_library()),
+        ..CompilerConfig::default()
+    };
+    let mut session = CompilerSession::new(config);
+    let checked = session.check_source_root(&root, &[]).expect("check");
+    let codes: Vec<&str> = checked
+        .semantics
+        .diagnostics
+        .as_slice()
+        .iter()
+        .filter_map(|diagnostic| diagnostic.code.as_deref())
+        .collect();
+    fs::remove_dir_all(&root).ok();
+    assert!(
+        codes.contains(&"E1007"),
+        "scalar optional return must be rejected: {codes:?}"
+    );
+}

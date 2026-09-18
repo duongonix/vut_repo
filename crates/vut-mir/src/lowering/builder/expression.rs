@@ -304,6 +304,7 @@ impl Builder<'_> {
                     return None;
                 };
                 let value = self.value();
+                let mut value = value;
                 let last_use = self.remaining_uses.consume(&name.text);
                 let ty = self.local_data[local.0].ty;
                 let is_copy = ty.is_none_or(|ty| self.layouts.types[ty.0].is_copy);
@@ -389,6 +390,24 @@ impl Builder<'_> {
                     && let Some(ty) = self.local_data[local.0].ty
                 {
                     self.emit(Instruction::Retain { value, ty });
+                }
+                // A narrowed optional read carries the inner type: unwrap it
+                // (identity for managed handles, payload load for scalars).
+                if let Some(declared) = ty
+                    && let Type::Optional(inner) = self.semantics.types[declared.0]
+                    && self
+                        .semantics
+                        .expression_types
+                        .get(&name.span)
+                        .is_some_and(|expr_ty| *expr_ty == inner)
+                {
+                    let unwrapped = self.value();
+                    self.emit(Instruction::OptionalUnwrap {
+                        value: unwrapped,
+                        operand: value,
+                        inner,
+                    });
+                    value = unwrapped;
                 }
                 Some(value)
             }
@@ -1008,7 +1027,8 @@ impl Builder<'_> {
                         };
                         let position = index + receiver_offset;
                         if let Some(slot) = lowered.get_mut(position) {
-                            *slot = self.coerce_interface(*slot, actual, expected);
+                            let coerced = self.coerce_interface(*slot, actual, expected);
+                            *slot = self.coerce_optional(coerced, Some(actual), Some(expected));
                         }
                     }
                 }

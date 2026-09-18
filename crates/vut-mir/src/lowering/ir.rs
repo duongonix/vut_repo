@@ -96,6 +96,24 @@ pub enum Instruction {
     ConstNull {
         value: ValueId,
     },
+    /// Wraps a present inner value into an optional value of type `ty`.
+    OptionalWrap {
+        value: ValueId,
+        operand: ValueId,
+        ty: TypeId,
+        inner: TypeId,
+    },
+    /// Unwraps a present optional value to its inner type.
+    OptionalUnwrap {
+        value: ValueId,
+        operand: ValueId,
+        inner: TypeId,
+    },
+    /// Tests an optional value: nonzero when present.
+    OptionalIsPresent {
+        value: ValueId,
+        operand: ValueId,
+    },
     ConstInt {
         value: ValueId,
         literal: i64,

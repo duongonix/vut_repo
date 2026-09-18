@@ -353,6 +353,10 @@ impl Analyzer<'_> {
                     );
                 }
                 if let Expr::Name(name) = target {
+                    // Record the variable's declared type at its binding span so
+                    // MIR lowering stores it with the annotated (optional) type.
+                    self.expression_types
+                        .insert(name.span, expected.unwrap_or(actual));
                     if let Some(old) = context.lookup(&name.text) {
                         self.compatible(actual, old, *span, codes::E1003, "variable type is fixed");
                     } else {

@@ -47,7 +47,10 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::ConstructArray { value, .. }
         | Instruction::ConstructVariadicBuffer { value, .. }
         | Instruction::VariadicAt { value, .. }
-        | Instruction::ConstructInterface { value, .. } => out.push(*value),
+        | Instruction::ConstructInterface { value, .. }
+        | Instruction::OptionalWrap { value, .. }
+        | Instruction::OptionalUnwrap { value, .. }
+        | Instruction::OptionalIsPresent { value, .. } => out.push(*value),
         Instruction::IteratorInit { iterator, .. } => out.push(*iterator),
         Instruction::IteratorNext {
             has_value,
@@ -93,6 +96,9 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
         Instruction::FormatValue { operand, .. } | Instruction::Unary { operand, .. } => {
             out.push(*operand);
         }
+        Instruction::OptionalWrap { operand, .. }
+        | Instruction::OptionalUnwrap { operand, .. }
+        | Instruction::OptionalIsPresent { operand, .. } => out.push(*operand),
         Instruction::ConcatString { left, right, .. } => {
             out.push(*left);
             out.push(*right);
@@ -178,6 +184,7 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
 /// its result slots untouched. Mirrors [`used`].
 #[expect(
     clippy::match_same_arms,
+    clippy::too_many_lines,
     reason = "exhaustive MIR instruction scanner; arms differ only in value names"
 )]
 pub(super) fn for_each_operand_mut(
@@ -188,6 +195,9 @@ pub(super) fn for_each_operand_mut(
         Instruction::FormatValue { operand, .. } | Instruction::Unary { operand, .. } => {
             visit(operand);
         }
+        Instruction::OptionalWrap { operand, .. }
+        | Instruction::OptionalUnwrap { operand, .. }
+        | Instruction::OptionalIsPresent { operand, .. } => visit(operand),
         Instruction::ConcatString { left, right, .. } => {
             visit(left);
             visit(right);

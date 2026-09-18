@@ -155,6 +155,30 @@ pub(crate) fn lower_program(
                 builder.variadic_param = variadic_param;
                 let returned = builder.lower_statements(&body.statements);
                 if !builder.is_terminated() {
+                    // Scalar optionals are boxed in the callee frame; an implicit
+                    // return of one would dangle until the indirect ABI lands.
+                    if let Some(expected) = return_type
+                        && let Type::Optional(inner) = semantics.types[expected.0]
+                        && !matches!(
+                            semantics.types[inner.0],
+                            Type::Str
+                                | Type::Bytes
+                                | Type::List(_)
+                                | Type::Map(_, _)
+                                | Type::Vutcon(_)
+                                | Type::Future(_)
+                                | Type::Resource(_)
+                                | Type::Interface(_)
+                                | Type::Dyn
+                        )
+                    {
+                        builder.diagnostics.push(vut_diagnostics::Diagnostic::error(
+                            vut_diagnostics::codes::E1007,
+                            "unsupported optional return",
+                            function.span,
+                            "returning a scalar optional across functions is not yet supported",
+                        ));
+                    }
                     let returned = return_type
                         .filter(|ty| !matches!(semantics.types[ty.0], Type::Void))
                         .and(returned);

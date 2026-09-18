@@ -302,6 +302,24 @@ fn load_aggregate_payload(
     }
 }
 
+/// Returns true when `ty` is a managed handle whose optional form is a nullable
+/// handle rather than a boxed scalar.
+#[must_use]
+pub(super) fn is_managed_handle(layouts: &LayoutTable, ty: vut_hir::TypeId) -> bool {
+    matches!(
+        layouts.types[ty.0].ownership,
+        OwnershipKind::RcString
+            | OwnershipKind::RcBytes
+            | OwnershipKind::RcList
+            | OwnershipKind::RcMap
+            | OwnershipKind::RcVutcon
+            | OwnershipKind::Resource
+            | OwnershipKind::Future
+            | OwnershipKind::Interface
+            | OwnershipKind::OpaqueManaged
+    )
+}
+
 pub(super) fn stack_slot_for_type(
     builder: &mut FunctionBuilder<'_>,
     layouts: &LayoutTable,

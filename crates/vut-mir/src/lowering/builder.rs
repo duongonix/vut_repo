@@ -154,16 +154,19 @@ impl Builder<'_> {
                 value,
                 ..
             } => {
-                let value_id = self.expr(value)?;
-                let ty = self.semantics.expression_types.get(&value.span()).copied();
+                let value_ty = self.semantics.expression_types.get(&value.span()).copied();
+                let declared = self.semantics.expression_types.get(&name.span).copied();
                 let local = self
                     .locals
                     .get(&name.text)
                     .copied()
                     .unwrap_or_else(|| self.add_local(name.text.clone(), None, name.span));
                 if self.local_data[local.0].ty.is_none() {
-                    self.local_data[local.0].ty = ty;
+                    self.local_data[local.0].ty = declared.or(value_ty);
                 }
+                let target_ty = self.local_data[local.0].ty;
+                let raw_value = self.expr(value)?;
+                let value_id = self.coerce_optional(raw_value, value_ty, target_ty);
                 if self.initialized.contains(&local)
                     && !self.moved.contains(&local)
                     && self.local_data[local.0]
@@ -213,7 +216,32 @@ impl Builder<'_> {
                         .get(&expression.span())
                         .copied()
                 {
-                    value = Some(self.coerce_interface(current, actual, expected));
+                    let current = self.coerce_interface(current, actual, expected);
+                    if let Type::Optional(inner) = self.semantics.types[expected.0]
+                        && !matches!(
+                            self.semantics.types[inner.0],
+                            Type::Str
+                                | Type::Bytes
+                                | Type::List(_)
+                                | Type::Map(_, _)
+                                | Type::Vutcon(_)
+                                | Type::Future(_)
+                                | Type::Resource(_)
+                                | Type::Interface(_)
+                                | Type::Dyn
+                        )
+                    {
+                        // Scalar optionals are currently boxed in the callee's
+                        // frame; returning one would dangle. Reject it cleanly
+                        // until the indirect/by-value ABI lands.
+                        self.diagnostics.push(vut_diagnostics::Diagnostic::error(
+                            vut_diagnostics::codes::E1007,
+                            "unsupported optional return",
+                            expression.span(),
+                            "returning a scalar optional across functions is not yet supported",
+                        ));
+                    }
+                    value = Some(self.coerce_optional(current, Some(actual), Some(expected)));
                 }
                 // Exit every active loop without running its normal exit edge,
                 // releasing any collection the loop owns (a `for` over a
@@ -687,6 +715,32 @@ impl Builder<'_> {
         if let Some((value, ty)) = owned_iterable {
             self.emit(Instruction::Release { value, ty });
         }
+    }
+    /// Wraps `value` into an optional when `expected` is `T?` and `actual` is
+    /// `T`. Managed handles wrap by identity; scalars are boxed.
+    pub(super) fn coerce_optional(
+        &mut self,
+        value: ValueId,
+        actual: Option<TypeId>,
+        expected: Option<TypeId>,
+    ) -> ValueId {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return value;
+        };
+        let Type::Optional(inner) = self.semantics.types[expected.0] else {
+            return value;
+        };
+        if actual != inner {
+            return value;
+        }
+        let wrapped = self.value();
+        self.emit(Instruction::OptionalWrap {
+            value: wrapped,
+            operand: value,
+            ty: expected,
+            inner,
+        });
+        wrapped
     }
     pub(super) fn cleanup_except(&mut self, returned: Option<ValueId>) {
         let _ = returned;

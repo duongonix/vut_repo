@@ -43,6 +43,7 @@ pub mod codes {
     pub const E1004: DiagnosticCode = DiagnosticCode("E1004");
     pub const E1005: DiagnosticCode = DiagnosticCode("E1005");
     pub const E1006: DiagnosticCode = DiagnosticCode("E1006");
+    pub const E1007: DiagnosticCode = DiagnosticCode("E1007");
     pub const E1008: DiagnosticCode = DiagnosticCode("E1008");
     pub const E1009: DiagnosticCode = DiagnosticCode("E1009");
     pub const E1010: DiagnosticCode = DiagnosticCode("E1010");

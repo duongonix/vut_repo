@@ -1,8 +1,8 @@
 //! MIR instruction selection.
 use super::CodegenError;
 use super::managed::{
-    const_runtime_string, element_pointer, element_value, manage_value, stack_slot_for_type,
-    zero_stack_value,
+    const_runtime_string, element_pointer, element_value, is_managed_handle, manage_value,
+    stack_slot_for_type, store_temp_value, zero_stack_value,
 };
 use super::signatures::{
     c_call_conv, coerce_integer, copy_aggregate, indirect_signature, machine_type, runtime_function,
@@ -57,6 +57,50 @@ pub(super) fn lower_instruction(
             const_runtime_string(builder, module, next_data, literal)?,
         )),
         Instruction::ConstNull { value } => Some((*value, builder.ins().iconst(types::I64, 0))),
+        Instruction::OptionalWrap {
+            value,
+            operand,
+            ty,
+            inner,
+        } => {
+            let operand = values.get(operand).copied().ok_or_else(|| {
+                CodegenError::Backend("invalid typed MIR: optional operand was not produced".into())
+            })?;
+            let result = if is_managed_handle(layouts, *inner) {
+                operand
+            } else {
+                // A scalar optional is a nullable pointer to a boxed payload;
+                // null (0) means absent.
+                store_temp_value(builder, layouts, *inner, operand)?
+            };
+            value_types.insert(*value, *ty);
+            Some((*value, result))
+        }
+        Instruction::OptionalUnwrap {
+            value,
+            operand,
+            inner,
+        } => {
+            let operand = values.get(operand).copied().ok_or_else(|| {
+                CodegenError::Backend("invalid typed MIR: optional operand was not produced".into())
+            })?;
+            let result = if is_managed_handle(layouts, *inner) {
+                operand
+            } else {
+                element_value(builder, layouts, *inner, operand)
+            };
+            value_types.insert(*value, *inner);
+            Some((*value, result))
+        }
+        Instruction::OptionalIsPresent { value, operand } => {
+            let operand = values.get(operand).copied().ok_or_else(|| {
+                CodegenError::Backend("invalid typed MIR: optional operand was not produced".into())
+            })?;
+            Some((
+                *value,
+                builder.ins().icmp_imm_u(IntCC::NotEqual, operand, 0),
+            ))
+        }
         Instruction::FormatValue {
             value,
             operand,
