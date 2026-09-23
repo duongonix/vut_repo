@@ -230,12 +230,18 @@ jobs:
         with:
           name: dist-${{ matrix.target }}
           path: artifacts
+      - name: Locate archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(ls artifacts/*.zip artifacts/*.tar.gz 2>/dev/null | head -n1)"
+          test -n "$archive"
+          echo "path=${archive}" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            artifacts/*.zip
-            artifacts/*.tar.gz
+          subject-path: ${{ steps.archive.outputs.path }}
           bundle-path: artifacts/${{ matrix.target }}.sigstore.json
       - name: Upload attestation bundle
         uses: actions/upload-artifact@v4
@@ -278,7 +284,7 @@ jobs:
 
   sync-public:
     name: Sync public distribution files
-    needs: [validate, release-manifest]
+    needs: [validate, release-manifest, publish]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
