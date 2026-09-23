@@ -11,14 +11,18 @@ path = "src/main.rs"
 [dependencies]
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+serde_json = "1"
 vut-ast = { path = "../vut-ast" }
+vut-compiler = { path = "../vut-compiler" }
 vut-diagnostics = { path = "../vut-diagnostics" }
+vut-hir = { path = "../vut-hir" }
 vut-lexer = { path = "../vut-lexer" }
 vut-parser = { path = "../vut-parser" }
 vut-resolver = { path = "../vut-resolver" }
 vut-source = { path = "../vut-source" }
 vut-tooling = { path = "../vut-tooling" }
 vut-types = { path = "../vut-types" }
+vpm = { path = "../vpm" }
 
 [lints]
 workspace = true

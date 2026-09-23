@@ -113,7 +113,7 @@ fn non_callable_result_at_a_deeper_level_is_an_error() {
 
 #[test]
 fn method_returning_a_function_is_chained() {
-    let source = "data Factory:\n  unused: int\n\nfn Factory.build() -> fn(int) -> int:\n  fn(x):\n    x + 1\n\nfn main():\n  factory = Factory(unused = 0)\n  result = factory.build()(5)\n  out(\"result=$result\")\n";
+    let source = "data Factory:\n  unused: int\n\nfn Factory.build() -> fn(int) -> int:\n  fn(x):\n    x + 1\n\nfn main():\n  factory = Factory(unused: 0)\n  result = factory.build()(5)\n  out(\"result=$result\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "result=6\n");
@@ -121,7 +121,7 @@ fn method_returning_a_function_is_chained() {
 
 #[test]
 fn generic_function_returns_a_callable_value() {
-    let source = "fn double(x: int) -> int:\n  x * 2\n\nfn identity(T)(value: T) -> T:\n  value\n\nfn select() -> fn(int) -> int:\n  identity(double)\n\nfn main():\n  result = select()(6)\n  out(\"result=$result\")\n";
+    let source = "fn double(x: int) -> int:\n  x * 2\n\nfn identity[T](value: T) -> T:\n  value\n\nfn select() -> fn(int) -> int:\n  identity(double)\n\nfn main():\n  result = select()(6)\n  out(\"result=$result\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "result=12\n");
@@ -129,7 +129,7 @@ fn generic_function_returns_a_callable_value() {
 
 #[test]
 fn function_stored_in_a_data_field_is_callable() {
-    let source = "fn double(x: int) -> int:\n  x * 2\n\ndata Holder:\n  op: fn(int) -> int\n\nfn main():\n  holder = Holder(op = double)\n  result = holder.op(5)\n  out(\"result=$result\")\n";
+    let source = "fn double(x: int) -> int:\n  x * 2\n\ndata Holder:\n  op: fn(int) -> int\n\nfn main():\n  holder = Holder(op: double)\n  result = holder.op(5)\n  out(\"result=$result\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "result=10\n");

@@ -52,7 +52,9 @@
           >{/if}
       </nav>
     </main>
-    <aside class="toc" aria-label="Article contents"><TableOfContents headings={fm.headings} /></aside>
+    <aside class="toc" aria-label="Article contents">
+      <TableOfContents headings={fm.headings} />
+    </aside>
   </div>
 {:else}
   {@render children()}

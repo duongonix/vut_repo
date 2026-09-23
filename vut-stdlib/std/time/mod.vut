@@ -1,72 +1,87 @@
-# Wall-clock and monotonic time.
-#
-# `Timestamp` is an absolute point on the system clock; `Instant` is a
-# monotonic reading suitable only for measuring elapsed time; `Duration` is a
-# signed span in nanoseconds.
-#
-# Native scalars cross the ABI as `usize`/`isize` because the FFI boundary
-# only accepts fixed-width numeric types, not the language's `int`.
-@link_name("vut_rt_time_now_nanos_v1")
-extern "C" fn _native_now_nanos() -> usize
-
-@link_name("vut_rt_time_instant_nanos_v1")
-extern "C" fn _native_instant_nanos() -> usize
-
-@link_name("vut_rt_time_sleep_nanos_v1")
-extern "C" fn _native_sleep_nanos(nanos: usize)
-
-fn _now_nanos() -> usize:
-  unsafe:
-    _native_now_nanos()
-
-fn _instant_nanos() -> usize:
-  unsafe:
-    _native_instant_nanos()
-
-fn _sleep_nanos(nanos: usize):
-  unsafe:
-    _native_sleep_nanos(nanos)
+# Signed nanosecond spans; wall-clock and monotonic readings remain distinct.
+import time._native as native
+import time._checked as checked
+data Duration:
+  nanos: i64
 
 data Timestamp:
-  nanos: usize
+  nanos: i64
 
 data Instant:
-  nanos: usize
+  nanos: i64
 
-data Duration:
-  nanos: usize
-
-# Current wall-clock time.
 fn now() -> Timestamp:
-  Timestamp(nanos = _now_nanos())
+  unsafe:
+    Timestamp(nanos: native.now_nanos())
 
-# A monotonic reading for measuring elapsed time.
 fn instant() -> Instant:
-  Instant(nanos = _instant_nanos())
+  unsafe:
+    Instant(nanos: native.instant_nanos())
 
-fn nanoseconds(count: usize) -> Duration:
-  Duration(nanos = count)
+fn nanoseconds(count: i64) -> Duration:
+  Duration(nanos: count)
 
-fn milliseconds(count: usize) -> Duration:
-  Duration(nanos = count * 1000000)
+fn microseconds(count: i64) -> Duration:
+  Duration(nanos: checked.scale(count, 1000))
 
-fn seconds(count: usize) -> Duration:
-  Duration(nanos = count * 1000000000)
+fn milliseconds(count: i64) -> Duration:
+  Duration(nanos: checked.scale(count, 1000000))
 
-fn sleep(duration: Duration):
-  _sleep_nanos(duration.nanos)
+fn seconds(count: i64) -> Duration:
+  Duration(nanos: checked.scale(count, 1000000000))
+
+fn minutes(count: i64) -> Duration:
+  Duration(nanos: checked.scale(count, 60000000000))
+
+fn hours(count: i64) -> Duration:
+  Duration(nanos: checked.scale(count, 3600000000000))
+
+fn from_unix_seconds(count: i64) -> Timestamp:
+  Timestamp(nanos: checked.scale(count, 1000000000))
+
+fn from_unix_milliseconds(count: i64) -> Timestamp:
+  Timestamp(nanos: checked.scale(count, 1000000))
+
+fn sleep(span: Duration):
+  unsafe:
+    native.sleep_nanos(span.nanos)
 
 fn elapsed(start: Instant, finish: Instant) -> Duration:
-  Duration(nanos = finish.nanos - start.nanos)
+  Duration(nanos: checked.subtract(finish.nanos, start.nanos))
 
-fn Timestamp.seconds() -> usize:
-  self.nanos / 1000000000
+fn Duration.as_nanoseconds() -> i64:
+  self.nanos
 
-fn Timestamp.milliseconds() -> usize:
+fn Duration.as_microseconds() -> i64:
+  self.nanos / 1000
+
+fn Duration.as_milliseconds() -> i64:
   self.nanos / 1000000
 
-fn Duration.milliseconds() -> usize:
+fn Duration.as_seconds() -> i64:
+  self.nanos / 1000000000
+
+fn Duration.add(other: Duration) -> Duration:
+  Duration(nanos: checked.add(self.nanos, other.nanos))
+
+fn Duration.subtract(other: Duration) -> Duration:
+  Duration(nanos: checked.subtract(self.nanos, other.nanos))
+
+fn Timestamp.unix_seconds() -> i64:
+  self.nanos / 1000000000
+
+fn Timestamp.unix_milliseconds() -> i64:
   self.nanos / 1000000
 
-fn Duration.seconds() -> usize:
-  self.nanos / 1000000000
+fn Timestamp.add(span: Duration) -> Timestamp:
+  Timestamp(nanos: checked.add(self.nanos, span.nanos))
+
+fn Timestamp.subtract(span: Duration) -> Timestamp:
+  Timestamp(nanos: checked.subtract(self.nanos, span.nanos))
+
+fn Timestamp.duration_since(other: Timestamp) -> Duration:
+  Duration(nanos: checked.subtract(self.nanos, other.nanos))
+
+fn Instant.elapsed() -> Duration:
+  unsafe:
+    Duration(nanos: checked.subtract(native.instant_nanos(), self.nanos))

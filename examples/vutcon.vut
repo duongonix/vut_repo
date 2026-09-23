@@ -1,6 +1,6 @@
 # Vutcon: lightweight concurrent execution units.
 #
-# `vut(<callable>)` spawns a Vutcon, `vutcon(T)` is its typed handle, and
+# `vut(<callable>)` spawns a Vutcon, `vutcon[T]` is its typed handle, and
 # `await handle` suspends until it completes. This phase runs all Vutcons on a
 # single-thread scheduler; the surface syntax stays fixed for a future M:N pool.
 
@@ -9,16 +9,16 @@ data Pair:
   value: int
 
 fn make_pair() -> Pair:
-  Pair(label = "p", value = 7)
+  Pair(label: "p", value: 7)
 
-fn load() -> result(int, int):
+fn load() -> result[int, int]:
   ok(5)
 
 fn compute_once() -> int:
   20
 
-async fn compute() -> result(int, int):
-  job: vutcon(result(int, int)) = vut(() => load())
+async fn compute() -> result[int, int]:
+  job: vutcon[result[int, int]] = vut(() => load())
   inner = await job?
   ok(inner + 1)
 
@@ -34,7 +34,7 @@ async fn main():
   out("a=$x b=$y")
 
   # An aggregate result typed through the handle.
-  p: vutcon(Pair) = vut(() => make_pair())
+  p: vutcon[Pair] = vut(() => make_pair())
   pair = await p
   out("pair=$(pair.label)=$(pair.value)")
 

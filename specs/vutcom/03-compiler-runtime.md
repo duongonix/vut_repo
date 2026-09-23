@@ -47,7 +47,7 @@ and trailing composition blocks:
 
 ```vut
 Column():
-  Text(value = "Hello")
+  Text(value: "Hello")
 ```
 
 The parser must NOT create UI-specific AST nodes.
@@ -125,7 +125,7 @@ HIR should retain enough information for:
 Type checking must verify:
 
 - valid `composition D`
-- valid `vutcom(D)`
+- valid `vutcom[D]`
 - function return domain
 - nested composition domain
 - trailing block compatibility
@@ -241,10 +241,10 @@ The compiler should be capable of distinguishing static and dynamic composition 
 Example:
 
 ```vut
-fn Home(name: str) -> vutcom(UI):
+fn Home(name: str) -> vutcom[UI]:
   Column():
-    Text(value = "Vut")
-    Text(value = name)
+    Text(value: "Vut")
+    Text(value: name)
 ```
 
 Conceptually:
@@ -280,7 +280,7 @@ Likewise:
 ```vut
 Column():
   for user in users:
-    UserCard(user = user)
+    UserCard(user: user)
 ```
 
 may become a generic repeated region.
@@ -304,7 +304,7 @@ Source:
 ui.run(Home())
 ```
 
-is semantically equivalent to producing a `vutcom(UI)` and passing it to `run`.
+is semantically equivalent to producing a `vutcom[UI]` and passing it to `run`.
 
 However, the optimizer should be free to eliminate the intermediate value.
 
@@ -339,12 +339,12 @@ Composition-producing functions should participate in ordinary compiler inlining
 Example:
 
 ```vut
-fn Label(value: str) -> vutcom(UI):
-  Text(value = value)
+fn Label(value: str) -> vutcom[UI]:
+  Text(value: value)
 
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
-    Label(value = "Hello")
+    Label(value: "Hello")
 ```
 
 The optimizer may inline `Label`.
@@ -360,10 +360,10 @@ Vutcom should work with Vut's generic monomorphization.
 Example:
 
 ```vut
-fn ListView(T)(
-  items: list(T),
-  render: fn(T) -> vutcom(UI)
-) -> vutcom(UI):
+fn ListView[T](
+  items: list[T],
+  render: fn(T) -> vutcom[UI]
+) -> vutcom[UI]:
   ...
 ```
 
@@ -531,12 +531,12 @@ Primitive resolution should be statically typed whenever possible.
 Source:
 
 ```vut
-fn Home(users: list(User)) -> vutcom(UI):
+fn Home(users: list[User]) -> vutcom[UI]:
   Column():
-    Text(value = "Users")
+    Text(value: "Users")
 
     for user in users:
-      UserCard(user = user)
+      UserCard(user: user)
 ```
 
 Conceptual compiler pipeline:
@@ -544,7 +544,7 @@ Conceptual compiler pipeline:
 ```text
 Home
  ↓
-typed vutcom(UI)
+typed vutcom[UI]
  ↓
 ComposeCall(Column)
  ├── ComposeCall(Text)
@@ -631,7 +631,7 @@ Do NOT:
 - allocate a Node for every composition call
 - use runtime strings for domain type checking
 - bypass ownership rules
-- implicitly clone `vutcom(D)`
+- implicitly clone `vutcom[D]`
 - introduce a tracing GC for Vutcom
 - create special callback semantics only for UI
 - create Vutcom-specific `if` or `for`
@@ -649,10 +649,10 @@ Create dedicated modules/files where necessary.
 The architecture is successful when the same compiler mechanism can support:
 
 ```text
-vutcom(UI)
-vutcom(Build)
-vutcom(Route)
-vutcom(Workflow)
+vutcom[UI]
+vutcom[Build]
+vutcom[Route]
+vutcom[Workflow]
 ```
 
 without adding domain-specific compiler logic for each new domain.

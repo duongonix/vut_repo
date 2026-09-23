@@ -3,15 +3,15 @@
 The postfix `?` operator unwraps a successful result or propagates an error:
 
 ```vut
-fn load_name() -> result(str, LoadError):
+fn load_name() -> result[str, LoadError]:
   user = load_user()?
   ok(user.name)
 ```
 
-The operand must have type `result(T, E)`. The expression type of `value?` is
+The operand must have type `result[T, E]`. The expression type of `value?` is
 `T`.
 
-The current function must return `result(_, E2)` where `E` is compatible with
+The current function must return `result[_, E2]` where `E` is compatible with
 `E2`. Vut performs no implicit error conversion.
 
 Invalid examples:
@@ -20,7 +20,7 @@ Invalid examples:
 fn bad() -> int:
   load_user()?
 
-fn mismatch() -> result(User, OtherError):
+fn mismatch() -> result[User, OtherError]:
   load_user()?
 ```
 
@@ -40,8 +40,8 @@ parses as:
 (await read_async())?
 ```
 
-where `read_async` is an `async fn` returning `result(T, E)`. The `await`
-produces `result(T, E)`; `?` then propagates or unwraps it. See:
+where `read_async` is an `async fn` returning `result[T, E]`. The `await`
+produces `result[T, E]`; `?` then propagates or unwraps it. See:
 
 ```text
 specs/async/02-type-system.md

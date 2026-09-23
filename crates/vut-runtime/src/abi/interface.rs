@@ -40,7 +40,7 @@ fn write_word(base: *mut u8, offset: usize, value: usize) {
 
 /// Allocates an interface box with `data_size` bytes of inline storage.
 #[unsafe(no_mangle)]
-pub extern "C" fn vut_rt_interface_new(data_size: usize, _data_align: usize) -> *mut u8 {
+pub extern "C" fn vut_rt_interface_new_v1(data_size: usize, _data_align: usize) -> *mut u8 {
     let (layout, offset) = box_layout(data_size);
     let base = unsafe { alloc(layout) };
     if base.is_null() {
@@ -55,20 +55,29 @@ pub extern "C" fn vut_rt_interface_new(data_size: usize, _data_align: usize) -> 
 
 /// Returns the address of the box's inline concrete-value storage.
 #[unsafe(no_mangle)]
-pub extern "C" fn vut_rt_interface_data(base: *mut u8) -> *mut u8 {
+pub extern "C" fn vut_rt_interface_data_v1(base: *mut u8) -> *mut u8 {
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
     let offset = read_word(base, DATA_OFFSET_OFFSET);
     unsafe { base.add(offset) }
 }
 
 /// Attaches the static vtable that describes the boxed concrete type.
 #[unsafe(no_mangle)]
-pub extern "C" fn vut_rt_interface_set_vtable(base: *mut u8, vtable: *const ()) {
+pub extern "C" fn vut_rt_interface_set_vtable_v1(base: *mut u8, vtable: *const ()) {
+    if base.is_null() {
+        return;
+    }
     write_word(base, VTABLE_OFFSET, vtable as usize);
 }
 
 /// Reads the attached vtable.
 #[unsafe(no_mangle)]
-pub extern "C" fn vut_rt_interface_vtable(base: *mut u8) -> *const () {
+pub extern "C" fn vut_rt_interface_vtable_v1(base: *mut u8) -> *const () {
+    if base.is_null() {
+        return std::ptr::null();
+    }
     read_word(base, VTABLE_OFFSET) as *const ()
 }
 
@@ -78,7 +87,7 @@ pub extern "C" fn vut_rt_interface_vtable(base: *mut u8) -> *const () {
     clippy::cast_ptr_alignment,
     reason = "the reference counter lives at offset zero of a 16-byte-aligned box"
 )]
-pub extern "C" fn vut_rt_interface_retain(base: *mut u8) {
+pub extern "C" fn vut_rt_interface_retain_v1(base: *mut u8) {
     if base.is_null() {
         return;
     }
@@ -92,7 +101,7 @@ pub extern "C" fn vut_rt_interface_retain(base: *mut u8) {
     clippy::cast_ptr_alignment,
     reason = "the reference counter lives at offset zero of a 16-byte-aligned box"
 )]
-pub extern "C" fn vut_rt_interface_release(base: *mut u8) {
+pub extern "C" fn vut_rt_interface_release_v1(base: *mut u8) {
     if base.is_null() {
         return;
     }
@@ -103,7 +112,7 @@ pub extern "C" fn vut_rt_interface_release(base: *mut u8) {
     let vtable = read_word(base, VTABLE_OFFSET) as *const usize;
     if !vtable.is_null() {
         let drop_fn = unsafe { mem::transmute::<usize, unsafe extern "C" fn(*mut u8)>(*vtable) };
-        let data = vut_rt_interface_data(base);
+        let data = vut_rt_interface_data_v1(base);
         unsafe { drop_fn(data) };
     }
     let data_size = read_word(base, DATA_SIZE_OFFSET);
@@ -124,17 +133,17 @@ mod tests {
     )]
     fn box_round_trip_and_release() {
         unsafe {
-            let base = vut_rt_interface_new(8, 8);
+            let base = vut_rt_interface_new_v1(8, 8);
             assert!(!base.is_null());
-            let data = vut_rt_interface_data(base);
+            let data = vut_rt_interface_data_v1(base);
             std::ptr::write(data.cast::<u64>(), 42);
             assert_eq!(std::ptr::read(data.cast::<u64>()), 42);
             let vtable: [usize; 1] = [drop_stub as *const () as usize];
-            vut_rt_interface_set_vtable(base, vtable.as_ptr().cast());
-            assert_eq!(vut_rt_interface_vtable(base), vtable.as_ptr().cast());
-            vut_rt_interface_retain(base);
-            vut_rt_interface_release(base);
-            vut_rt_interface_release(base);
+            vut_rt_interface_set_vtable_v1(base, vtable.as_ptr().cast());
+            assert_eq!(vut_rt_interface_vtable_v1(base), vtable.as_ptr().cast());
+            vut_rt_interface_retain_v1(base);
+            vut_rt_interface_release_v1(base);
+            vut_rt_interface_release_v1(base);
         }
     }
 }

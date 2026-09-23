@@ -92,7 +92,7 @@ HirExpr
 The type checker records:
 
 ```text
-async call expression -> internal future(T)
+async call expression -> internal future[T]
 await expression      -> logical T
 ```
 

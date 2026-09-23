@@ -261,7 +261,7 @@ age: int = "20"
 Example:
 
 ```vut
-items = @()
+items = @[]
 ```
 
 when no context exists to infer the list element type.
@@ -273,10 +273,10 @@ when no context exists to infer the list element type.
 Example:
 
 ```vut
-@(1, "hello", true)
+@[1, "hello", true]
 ```
 
-without explicit `list(dyn)`.
+without explicit `list[dyn]`.
 
 ---
 
@@ -354,17 +354,10 @@ type; add annotations when no context exists.
 
 ---
 
-## E1013 — Closure Capture Not Supported
+## E1013 — Closure Capture Not Supported (Removed)
 
-Used when a lambda references a local or parameter from an enclosing scope.
-Vut lambdas are non-capturing; only their own parameters and locals are visible.
-
-```vut
-fn main():
-  base = 10
-  add = fn(x):
-    x + base
-```
+Removed. Capturing closures are supported; see `specs/04` §46a. The code is
+retired and must not be emitted.
 
 ---
 
@@ -377,6 +370,30 @@ fn main():
   value = 1
   value(2)
 ```
+
+---
+
+## E1027 — Invalid Closure Capture
+
+Used when a closure capture is syntactically or semantically invalid: assigning
+to a captured binding, or capturing a binding that cannot be captured.
+
+```vut
+fn main():
+  base = 10
+  add = fn(x):
+    base = x
+    x + base
+```
+
+Captured bindings are read-only inside the closure (`specs/04` §46a).
+
+---
+
+## E1029 — Unsupported Closure Capture (Removed)
+
+Removed. Managed and move-only captures are supported (`specs/04` §46a). The
+code is retired and must not be emitted.
 
 ---
 
@@ -456,12 +473,12 @@ is not known at resolution time.
 
 ## E1028 — Invalid Collection Method Element Type
 
-Used when a `list(T)` builtin method is applied to an unsupported element type.
-Currently this covers `join`, which is only defined for `list(str)`.
+Used when a `list[T]` builtin method is applied to an unsupported element type.
+Currently this covers `join`, which is only defined for `list[str]`.
 
 ```vut
-nums = @(1, 2, 3)
-nums.join("-")   # E1028: join is only available for list(str)
+nums = @[1, 2, 3]
+nums.join("-")   # E1028: join is only available for list[str]
 ```
 
 Map the elements to `str` first (for example with `map`) when joining is needed.
@@ -876,7 +893,7 @@ Example:
 
 ```vut
 User(
-  unknown = 10
+  unknown: 10
 )
 ```
 
@@ -991,6 +1008,24 @@ async fn load() -> int:
 
 ---
 
+## E6015 — Invalid Default Parameter
+
+Used when a default parameter value is declared in an invalid position or on an
+unsupported parameter:
+
+* a required parameter follows a parameter with a default;
+* a variadic parameter declares a default;
+* an `extern` parameter declares a default.
+
+Example:
+
+```vut
+fn f(a: int = 1, b: int):    // required parameter after a default
+  a + b
+```
+
+---
+
 ## E6020 — Invalid `vut(...)` Callable
 
 Used when `vut(...)` does not receive an anonymous callable.
@@ -1018,7 +1053,7 @@ Used when `vut(...)` appears where no async execution context exists.
 ## E6023 — Invalid Vutcon Result Handling
 
 Used for unsupported Vutcon result usage (for example an invalid `await ...?`
-when the handle's result is not `result(_, E)`).
+when the handle's result is not `result[_, E]`).
 
 ---
 
@@ -1049,7 +1084,7 @@ Example:
 
 ```vut
 User(
-  name = "Ha"
+  name: "Ha"
 )
 ```
 
@@ -1063,8 +1098,8 @@ Example:
 
 ```vut
 User(
-  name = "Ha",
-  unknown = true
+  name: "Ha",
+  unknown: true
 )
 ```
 
@@ -1076,8 +1111,8 @@ Example:
 
 ```vut
 User(
-  name = "Ha",
-  name = "Nam"
+  name: "Ha",
+  name: "Nam"
 )
 ```
 
@@ -1123,7 +1158,7 @@ Used for an enum pattern that does not match the scrutinee.
 ## E7105 — Recursive Enum Payload
 
 Used when an enum variant contains the enum by value, which would have infinite
-size. Use an indirect container such as `list(T)`.
+size. Use an indirect container such as `list[T]`.
 
 ---
 
@@ -1230,7 +1265,7 @@ Reserved for invalid unsafe/raw memory operations.
 
 ## E8009 — Value Used After Move
 
-Raised when a move-only value (`resource(T)` or a `vutcon(T)` handle) is read
+Raised when a move-only value (`resource[T]` or a `vutcon[T]` handle) is read
 after it was moved or awaited.
 
 ---

@@ -10,9 +10,10 @@ order: 5
 ```text
 vut run [source.vut] [-- program-arguments]
 vut build [source.vut]
+vut doctor [--target target]
 ```
 
-The compiler has two primary commands: `run` and `build`. Package management, formatting, linting, and testing belong to VPM.
+The compiler exposes `run`, `build`, and `doctor`. Doctor checks toolchain prerequisites for a target without compiling an application. Package management, formatting, linting, and testing belong to VPM.
 
 ## Arguments
 
@@ -41,7 +42,9 @@ vut run --help
 vut build --help
 ```
 
-Consult your installed toolchain's command help for supported target, output, color, and diagnostic-format flags. The CLI specification describes these capabilities, but not every proposed flag is a stable release guarantee.
+The current CLI accepts `--release`, `-O/--opt-level 0..3`, `--target`, `-o/--output`, repeatable `--native-lib PATH`, and `--system-lib NAME` on build/run. Release implies O2 unless an explicit optimization level is supplied. Default artifacts are under `build/debug` or `build/release`.
+
+Global options include `--color auto|always|never` and `--diagnostic-format human|json`. Use JSON diagnostics for tooling, not text scraping. Verify help when using an older installed toolchain.
 
 ## Exit status
 

@@ -7,14 +7,14 @@ order: 1
 
 ## Choose the right type
 
-Use `T?` for a value that may be absent, and `result(T, E)` for an operation with an expected error. Neither changes ordinary values into `dyn`.
+Use `T?` for a value that may be absent, and `result[T, E]` for an operation with an expected error. Neither changes ordinary values into `dyn`.
 
 ## Handle a result
 
 A result holds exactly one active state: `ok(value)` or `err(error)`. Match both cases explicitly.
 
 ```vut
-fn divide(a: int, b: int) -> result(int, str):
+fn divide(a: int, b: int) -> result[int, str]:
   if b == 0:
     return err("division by zero")
   ok(a / b)

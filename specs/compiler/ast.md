@@ -107,7 +107,7 @@ Conceptually:
 ```text
 AstFile
 ├── SourceId
-└── items: list(AstItem)
+└── items: list[AstItem]
 ```
 
 ---
@@ -290,8 +290,8 @@ Examples:
 ```text
 int
 User
-list(int)
-map(str, int)
+list[int]
+map[str, int]
 User?
 ```
 
@@ -351,7 +351,7 @@ represented as a call or a string flag.
 Methods carry the same `is_async` flag as free functions.
 
 `List` and `Array` are distinct syntax nodes. The parser emits `List` only for
-`@(...)` and `Array` only for `array(...)`; neither is represented as a generic
+`@[...]` and `Array` only for `[...]`; neither is represented as a generic
 call or reinterpreted using its expected type.
 
 ---

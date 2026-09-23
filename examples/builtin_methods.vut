@@ -1,5 +1,5 @@
 fn main():
-  values: list(int) = @(10, 20, 30)
+  values: list[int] = @[10, 20, 30]
   out("list length: $(values.len())")
   out("list empty: $(values.is_empty())")
 

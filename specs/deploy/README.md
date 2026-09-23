@@ -11,9 +11,19 @@ behavior.
 | --- | --- | --- |
 | [native-linking.md](native-linking.md) | Standalone native linking model, per-OS linkers and system libraries | M-LINK.0–6 complete; release links with the platform toolchain (no rustc/cargo) |
 | [versioning.md](versioning.md) | Distribution/vpm/runtime-ABI version domains, tags | M2 complete |
-| [distribution.md](distribution.md) | Artifact layout, manifest, naming, checksums, `vut-dist` | M4/M5/M15 complete |
-| [installer.md](installer.md) | `install.sh` / `install.ps1`, atomic update, PATH | M16–M19 complete |
-| [release.md](release.md) | GitHub Actions release pipeline, matrix, cross-repo publishing | M13/M14/M20 complete |
+| [distribution.md](distribution.md) | Artifact layout, `manifest.json`, `releases.json`, naming, checksums, provenance, `vut-dist` | Complete; release-manifest + provenance added |
+| [installer.md](installer.md) | `install.sh` / `install.ps1`, manifest resolution, mandatory integrity, atomic update, PATH, opt-in SDK provisioning | Complete |
+| [release.md](release.md) | GitHub Actions release pipeline, 8-target matrix, cross-repo publish + public sync, clean-install verification | Complete |
+
+## Two-repository model
+
+```text
+duongonix/vut_repo   source of truth (all source, specs, Actions); builds everything
+duongonix/vut        public distribution (README, LICENSE, installers, releases.json,
+                     docs/, benchmarks/, examples/, GitHub Releases)
+```
+
+The public repository never receives compiler/runtime source or internal specs.
 
 ## Convention
 

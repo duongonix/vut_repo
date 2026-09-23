@@ -62,12 +62,12 @@ fn diagnostic_codes(source: &str) -> Vec<String> {
     codes
 }
 
-const DECODER_PRELUDE: &str = "import json\nimport json at Value, Error, Decodable\n\ndata User:\n  name: str\n  age: int\n\nfn read_str(value: Value, key: str) -> result(str, Error):\n  match value.get(key):\n    ok(field): field.as_str()\n    err(error): err(error)\n\nfn read_int(value: Value, key: str) -> result(int, Error):\n  match value.get(key):\n    ok(field): field.as_int()\n    err(error): err(error)\n\nfn build_user(name: str, value: Value) -> result(User, Error):\n  age_result = read_int(value, \"age\")\n  match age_result:\n    ok(age): ok(User(name = name, age = age))\n    err(error): err(error)\n\nstatic fn User.from_json(value: Value) -> result(User, Error):\n  name_result = read_str(value, \"name\")\n  match name_result:\n    ok(name): build_user(name, value)\n    err(error): err(error)\n\n";
+const DECODER_PRELUDE: &str = "import json\nimport json at Value, Error, Decodable\n\ndata User:\n  name: str\n  age: int\n\nfn read_str(value: Value, key: str) -> result[str, Error]:\n  match value.get(key):\n    ok(field): field.as_str()\n    err(error): err(error)\n\nfn read_int(value: Value, key: str) -> result[int, Error]:\n  match value.get(key):\n    ok(field): field.as_int()\n    err(error): err(error)\n\nfn build_user(name: str, value: Value) -> result[User, Error]:\n  age_result = read_int(value, \"age\")\n  match age_result:\n    ok(age): ok(User(name: name, age: age))\n    err(error): err(error)\n\nstatic fn User.from_json(value: Value) -> result[User, Error]:\n  name_result = read_str(value, \"name\")\n  match name_result:\n    ok(name): build_user(name, value)\n    err(error): err(error)\n\n";
 
 #[test]
 fn typed_decode_uses_static_bound_call() {
     let source = format!(
-        "{DECODER_PRELUDE}fn main():\n  parsed: result(User, Error) = json.decode(\"{{\\\"name\\\":\\\"Nam\\\",\\\"age\\\":20}}\")\n  match parsed:\n    ok(user): out(\"$(user.name) $(user.age)\")\n    err(error): out(\"bad\")\n"
+        "{DECODER_PRELUDE}fn main():\n  parsed: result[User, Error] = json.decode(\"{{\\\"name\\\":\\\"Nam\\\",\\\"age\\\":20}}\")\n  match parsed:\n    ok(user): out(\"$(user.name) $(user.age)\")\n    err(error): out(\"bad\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -77,7 +77,7 @@ fn typed_decode_uses_static_bound_call() {
 #[test]
 fn typed_decode_reports_missing_field() {
     let source = format!(
-        "{DECODER_PRELUDE}fn main():\n  parsed: result(User, Error) = json.decode(\"{{\\\"name\\\":\\\"Nam\\\"}}\")\n  match parsed:\n    ok(user): out(\"unexpected\")\n    err(error): out(\"missing age\")\n"
+        "{DECODER_PRELUDE}fn main():\n  parsed: result[User, Error] = json.decode(\"{{\\\"name\\\":\\\"Nam\\\"}}\")\n  match parsed:\n    ok(user): out(\"unexpected\")\n    err(error): out(\"missing age\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -86,7 +86,7 @@ fn typed_decode_reports_missing_field() {
 
 #[test]
 fn concrete_static_call_constructs_a_value() {
-    let source = "data User:\n  name: str\n\nstatic fn User.make(text: str) -> User:\n  User(name = text)\n\nfn main():\n  user = User.make(\"x\")\n  out(\"name=$(user.name)\")\n";
+    let source = "data User:\n  name: str\n\nstatic fn User.make(text: str) -> User:\n  User(name: text)\n\nfn main():\n  user = User.make(\"x\")\n  out(\"name=$(user.name)\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "name=x\n");
@@ -95,7 +95,7 @@ fn concrete_static_call_constructs_a_value() {
 #[test]
 fn static_method_cannot_be_called_as_instance_method() {
     let codes = diagnostic_codes(
-        "data User:\n  name: str\nstatic fn User.make(text: str) -> User:\n  User(name = text)\nfn bad(value: User) -> User:\n  value.make(\"x\")\nfn main():\n  out(\"x\")\n",
+        "data User:\n  name: str\nstatic fn User.make(text: str) -> User:\n  User(name: text)\nfn bad(value: User) -> User:\n  value.make(\"x\")\nfn main():\n  out(\"x\")\n",
     );
     assert!(codes.iter().any(|code| code == "E2005"), "{codes:?}");
 }
@@ -103,7 +103,7 @@ fn static_method_cannot_be_called_as_instance_method() {
 #[test]
 fn unsatisfied_static_bound_reports_e1017() {
     let codes = diagnostic_codes(
-        "interface Decodable:\n  static from_text(text: str) -> result(Self, int)\ndata Plain:\n  n: int\nfn decode(T: Decodable)(text: str) -> result(T, int):\n  T.from_text(text)\nfn main():\n  value: result(Plain, int) = decode(\"hi\")\n  match value:\n    ok(item): out(\"ok\")\n    err(code): out(\"err\")\n",
+        "interface Decodable:\n  static from_text(text: str) -> result[Self, int]\ndata Plain:\n  n: int\nfn decode[T: Decodable](text: str) -> result[T, int]:\n  T.from_text(text)\nfn main():\n  value: result[Plain, int] = decode(\"hi\")\n  match value:\n    ok(item): out(\"ok\")\n    err(code): out(\"err\")\n",
     );
     assert!(codes.iter().any(|code| code == "E1017"), "{codes:?}");
 }

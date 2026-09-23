@@ -210,7 +210,7 @@ fn vutcon_result_and_drop_are_exactly_once() {
 
 #[test]
 fn async_vutcon_error_path_propagates_result() {
-    let source = "async fn fail() -> result(int, int):\n  err(5)\n\nasync fn main():\n  job = vut(async fn():\n    return await fail()\n  )\n  match await job:\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
+    let source = "async fn fail() -> result[int, int]:\n  err(5)\n\nasync fn main():\n  job = vut(async fn():\n    return await fail()\n  )\n  match await job:\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "err=5\n");

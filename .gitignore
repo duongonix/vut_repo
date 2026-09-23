@@ -4,3 +4,9 @@
 /.vscode
 /vut-ext
 /hello
+/vut-web
+
+# Local scratch / secrets (never commit).
+/key.txt
+/a.txt
+/.env

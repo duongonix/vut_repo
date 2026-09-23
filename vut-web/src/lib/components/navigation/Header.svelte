@@ -12,8 +12,14 @@
   function activeLink(label: string, href: string) {
     const path = page.url.pathname;
     if (label === 'Reference') return path.startsWith('/docs/reference/');
-    if (label === 'Guide') return path.startsWith('/docs/getting-started/') && !path.endsWith('/introduction/');
-    if (label === 'Docs') return path.startsWith('/docs/') && !path.startsWith('/docs/reference/') && (!path.startsWith('/docs/getting-started/') || path.endsWith('/introduction/'));
+    if (label === 'Guide')
+      return path.startsWith('/docs/getting-started/') && !path.endsWith('/introduction/');
+    if (label === 'Docs')
+      return (
+        path.startsWith('/docs/') &&
+        !path.startsWith('/docs/reference/') &&
+        (!path.startsWith('/docs/getting-started/') || path.endsWith('/introduction/'))
+      );
     return path === href;
   }
 </script>
@@ -28,7 +34,10 @@
     <Brand />
     <nav class="desktop-nav" aria-label="Main navigation">
       {#each navigation as link}
-        <a href={link.href} class:active={activeLink(link.label, link.href)} aria-current={activeLink(link.label, link.href) ? 'location' : undefined}
+        <a
+          href={link.href}
+          class:active={activeLink(link.label, link.href)}
+          aria-current={activeLink(link.label, link.href) ? 'location' : undefined}
           >{link.label}{#if link.label === 'Community'}<ArrowUpRight size={12} />{/if}</a
         >
       {/each}

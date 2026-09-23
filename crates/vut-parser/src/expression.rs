@@ -1,7 +1,7 @@
 use crate::Parser;
 use vut_ast::{
     Argument, BinaryOp, Expr, FieldPattern, LambdaBody, LambdaParameter, LambdaReceiver,
-    LiteralPattern, MapEntry, MatchArm, MatchPattern, TemplateSegment, UnaryOp,
+    LiteralPattern, MapEntry, MatchArm, MatchPattern, TemplateSegment, TypeExpr, UnaryOp,
 };
 use vut_diagnostics::codes;
 use vut_lexer::TokenKind;
@@ -53,7 +53,9 @@ impl Parser<'_> {
     fn postfix_with_question(&mut self, allow_question: bool) -> Expr {
         let mut expression = self.prefix();
         loop {
-            if self.take(TokenKind::Dot).is_some() {
+            if self.at(TokenKind::LBracket) {
+                expression = self.subscript(expression);
+            } else if self.take(TokenKind::Dot).is_some() {
                 let member = self.member_name("expected member name after `.`");
                 let span = self.span_from(expression.span().start(), member.span.end());
                 expression = Expr::Member {
@@ -72,13 +74,15 @@ impl Parser<'_> {
                 break;
             } else if self.take(TokenKind::LParen).is_some() {
                 let callee_start = expression.span().start();
+                let data_construction = Self::is_data_constructor(&expression);
                 let mut arguments = Vec::new();
                 while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
                     let start = self.current().span.start();
                     let spread = self.take(TokenKind::Ellipsis).is_some();
                     let name = if !spread
                         && self.at(TokenKind::Identifier)
-                        && self.nth(1).kind == TokenKind::Equal
+                        && ((data_construction && self.nth(1).kind == TokenKind::Colon)
+                            || (!data_construction && self.nth(1).kind == TokenKind::Equal))
                     {
                         let name = self.name("expected argument name");
                         self.advance();
@@ -147,6 +151,95 @@ impl Parser<'_> {
             }
         }
         expression
+    }
+
+    fn is_data_constructor(expression: &Expr) -> bool {
+        match expression {
+            // `channel[T](capacity: n)` is a builtin constructor that takes a
+            // named `capacity`, like a generic data constructor.
+            Expr::Name(name) => {
+                name.text.chars().next().is_some_and(char::is_uppercase) || name.text == "channel"
+            }
+            Expr::Subscript { object, .. } => Self::is_data_constructor(object),
+            Expr::Member { object, member, .. } => {
+                member.text.chars().next().is_some_and(char::is_uppercase)
+                    || Self::is_data_constructor(object)
+            }
+            _ => false,
+        }
+    }
+
+    /// Parses `object[...]` into an [`Expr::Subscript`] that carries both the
+    /// type-argument and value readings when the bracket content admits each.
+    /// The resolver and checker choose between them from symbol/type
+    /// information, so no capitalization or token-lookahead rule decides here.
+    fn subscript(&mut self, object: Expr) -> Expr {
+        let start = object.span().start();
+        let checkpoint = self.checkpoint();
+        // Speculative generic application: `object[T, U]`.
+        let type_reading = {
+            self.advance();
+            let reading = self.try_type_arguments();
+            self.restore(checkpoint);
+            reading
+        };
+        // Speculative collection access: `object[expression]`.
+        let value_reading = {
+            self.advance();
+            let index = self.expression(0);
+            let end = self
+                .take(TokenKind::RBracket)
+                .map(|token| (self.position, token.span.end()));
+            self.restore(checkpoint);
+            end.map(|(position, end)| (index, position, end))
+        };
+        let (types, index, position, end) = match (type_reading, value_reading) {
+            (Some((types, position, end)), value) => (
+                Some(types),
+                value.map(|(index, _, _)| Box::new(index)),
+                position,
+                end,
+            ),
+            (None, Some((index, position, end))) => (None, Some(Box::new(index)), position, end),
+            (None, None) => {
+                let span = self.current().span;
+                self.error(codes::E0101, span, "expected `]` after index expression");
+                return Expr::Error(self.span_from(start, span.end()));
+            }
+        };
+        self.position = position;
+        Expr::Subscript {
+            object: Box::new(object),
+            types,
+            index,
+            span: self.span_from(start, end),
+        }
+    }
+
+    /// Consumes `[ T, U ]` when the bracketed content is a type-argument list,
+    /// assuming the opening `[` was consumed. Returns the types, the cursor
+    /// after the closing `]`, and the bracket's end offset.
+    fn try_type_arguments(&mut self) -> Option<(Vec<TypeExpr>, usize, usize)> {
+        let mut types = Vec::new();
+        loop {
+            if self.at(TokenKind::RBracket) {
+                break;
+            }
+            if self.at(TokenKind::Eof) {
+                return None;
+            }
+            let before = self.position;
+            let ty = self.type_expression();
+            if self.position == before {
+                return None;
+            }
+            types.push(ty);
+            if self.take(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        let close = self.take(TokenKind::RBracket)?;
+        Some((types, self.position, close.span.end()))
     }
 
     /// Parses the parenthesized parameter list of a trailing receiver function:
@@ -290,16 +383,10 @@ impl Parser<'_> {
         match token.kind {
             TokenKind::Identifier => {
                 let text = self.slice(token.span).to_owned();
-                if text == "array" && self.take(TokenKind::LParen).is_some() {
-                    self.array(token.span.start())
-                } else if text == "map" && self.take(TokenKind::LParen).is_some() {
-                    self.map(token.span.start())
-                } else {
-                    Expr::Name(vut_ast::Name {
-                        text,
-                        span: token.span,
-                    })
-                }
+                Expr::Name(vut_ast::Name {
+                    text,
+                    span: token.span,
+                })
             }
             TokenKind::Integer => Expr::Integer {
                 text: self.slice(token.span).to_owned(),
@@ -316,6 +403,7 @@ impl Parser<'_> {
             },
             TokenKind::Null => Expr::Null(token.span),
             TokenKind::AtSign => self.list(token.span.start()),
+            TokenKind::LBracket => self.array(token.span.start()),
             TokenKind::If => {
                 let value = Expr::If(Box::new(self.if_after_keyword(token.span.start())));
                 self.block_line_finished = true;
@@ -348,7 +436,16 @@ impl Parser<'_> {
                 if self.looks_like_arrow_lambda() {
                     return self.arrow_lambda(token.span.start());
                 }
+                if let Some(close) = self.take(TokenKind::RParen) {
+                    return Expr::Map {
+                        entries: Vec::new(),
+                        span: self.span_from(token.span.start(), close.span.end()),
+                    };
+                }
                 let value = self.expression(0);
+                if self.take(TokenKind::Colon).is_some() {
+                    return self.map_after_first(token.span.start(), value);
+                }
                 if self.at(TokenKind::Comma) {
                     self.error(
                         codes::E0109,
@@ -491,16 +588,16 @@ impl Parser<'_> {
     }
 
     fn list(&mut self, start: usize) -> Expr {
-        self.expect(TokenKind::LParen, codes::E0101, "expected `(` after `@`");
+        self.expect(TokenKind::LBracket, codes::E0101, "expected `[` after `@`");
         let mut values = Vec::new();
-        while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
+        while !self.at_any(&[TokenKind::RBracket, TokenKind::Eof]) {
             values.push(self.expression(0));
             if self.take(TokenKind::Comma).is_none() {
                 break;
             }
         }
         let end = self
-            .expect(TokenKind::RParen, codes::E0101, "expected `)` after list")
+            .expect(TokenKind::RBracket, codes::E0101, "expected `]` after list")
             .span
             .end();
         Expr::List {
@@ -511,14 +608,18 @@ impl Parser<'_> {
 
     fn array(&mut self, start: usize) -> Expr {
         let mut values = Vec::new();
-        while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
+        while !self.at_any(&[TokenKind::RBracket, TokenKind::Eof]) {
             values.push(self.expression(0));
             if self.take(TokenKind::Comma).is_none() {
                 break;
             }
         }
         let end = self
-            .expect(TokenKind::RParen, codes::E0101, "expected `)` after array")
+            .expect(
+                TokenKind::RBracket,
+                codes::E0101,
+                "expected `]` after array",
+            )
             .span
             .end();
         Expr::Array {
@@ -527,40 +628,25 @@ impl Parser<'_> {
         }
     }
 
-    fn map(&mut self, start: usize) -> Expr {
+    fn map_after_first(&mut self, start: usize, key: Expr) -> Expr {
         let mut entries = Vec::new();
-        while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
-            let entry_start = self
-                .expect(
-                    TokenKind::LParen,
-                    codes::E0101,
-                    "expected `(key, value)` map entry",
-                )
-                .span
-                .start();
+        let first_start = key.span().start();
+        let value = self.expression(0);
+        entries.push(MapEntry {
+            span: self.span_from(first_start, value.span().end()),
+            key,
+            value,
+        });
+        while self.take(TokenKind::Comma).is_some() && !self.at(TokenKind::RParen) {
+            let entry_start = self.current().span.start();
             let key = self.expression(0);
-            self.expect(
-                TokenKind::Comma,
-                codes::E0101,
-                "expected `,` between map key and value",
-            );
+            self.expect(TokenKind::Colon, codes::E0101, "expected `:` after map key");
             let value = self.expression(0);
-            let entry_end = self
-                .expect(
-                    TokenKind::RParen,
-                    codes::E0101,
-                    "expected `)` after map entry",
-                )
-                .span
-                .end();
             entries.push(MapEntry {
+                span: self.span_from(entry_start, value.span().end()),
                 key,
                 value,
-                span: self.span_from(entry_start, entry_end),
             });
-            if self.take(TokenKind::Comma).is_none() {
-                break;
-            }
         }
         let end = self
             .expect(TokenKind::RParen, codes::E0101, "expected `)` after map")
@@ -823,13 +909,13 @@ impl Parser<'_> {
             TokenKind::AtSign => {
                 self.advance();
                 self.expect(
-                    TokenKind::LParen,
+                    TokenKind::LBracket,
                     codes::E7112,
-                    "expected `(` after `@` in a list pattern",
+                    "expected `[` after `@` in a list pattern",
                 );
                 let mut items = Vec::new();
                 let mut rest = None;
-                while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
+                while !self.at_any(&[TokenKind::RBracket, TokenKind::Eof]) {
                     if self.at(TokenKind::Range) {
                         let dots = self.advance();
                         rest = Some(vut_ast::Name {
@@ -850,9 +936,9 @@ impl Parser<'_> {
                 }
                 let close = self
                     .expect(
-                        TokenKind::RParen,
+                        TokenKind::RBracket,
                         codes::E7112,
-                        "expected `)` after list pattern",
+                        "expected `]` after list pattern",
                     )
                     .span
                     .end();

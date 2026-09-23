@@ -159,7 +159,7 @@ fn native_result_match_executes_end_to_end() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn main() -> int:\n  value: result(int, int) = ok(42)\n  match value:\n    ok(number): number\n    err(code): code\n",
+            "fn main() -> int:\n  value: result[int, int] = ok(42)\n  match value:\n    ok(number): number\n    err(code): code\n",
         )
         .unwrap();
     let executable = root.join("program.exe");
@@ -247,7 +247,7 @@ fn builtin_list_string_and_numeric_methods_execute_natively() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn main():\n  values: list(int) = @(10, 20, 30)\n  text = \"  Vut  \"\n  out(\"$(values.len())\")\n  out(text.trim().to_upper())\n  number = 42\n  out(number.to_str())\n",
+            "fn main():\n  values: list[int] = @[10, 20, 30]\n  text = \"  Vut  \"\n  out(\"$(values.len())\")\n  out(text.trim().to_upper())\n  number = 42\n  out(number.to_str())\n",
         )
         .unwrap();
     let executable = root.join("program.exe");
@@ -303,7 +303,7 @@ fn builtin_list_mutation_methods_execute_natively() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn main():\n  items = @(1, 2, 3)\n  items.reserve(8)\n  items.push(4)\n  items.set(1, 20)\n  items.insert(2, 30)\n  removed = items.remove(0)\n  sliced = items.slice(1, 3)\n  out(\"$(items.len()) $(items.capacity()) $(items.at(0)) $removed $(sliced.len()) $(items.contains(20))\")\n  items.clear()\n  out(\"$(items.is_empty())\")\n",
+            "fn main():\n  items = @[1, 2, 3]\n  items.reserve(8)\n  items.push(4)\n  items.set(1, 20)\n  items.insert(2, 30)\n  removed = items.remove(0)\n  sliced = items.slice(1, 3)\n  out(\"$(items.len()) $(items.capacity()) $(items.at(0)) $removed $(sliced.len()) $(items.contains(20))\")\n  items.clear()\n  out(\"$(items.is_empty())\")\n",
         )
         .unwrap();
     let executable = root.join("program.exe");
@@ -331,7 +331,7 @@ fn builtin_map_methods_execute_natively() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn main():\n  scores = map((1, 10), (2, 20))\n  scores.reserve(16)\n  scores.set(1, 30)\n  scores.set(3, 40)\n  old: int? = scores.remove(2)\n  current: int? = scores.get(1)\n  removed_text = 0\n  if old != null:\n    removed_text = old\n  current_text = 0\n  if current != null:\n    current_text = current\n  out(\"$(scores.len()) $(scores.capacity() >= 16) $current_text $removed_text $(scores.contains_key(3))\")\n  scores.clear()\n  out(\"$(scores.is_empty())\")\n",
+            "fn main():\n  scores = (1: 10, 2: 20)\n  scores.reserve(16)\n  scores.set(1, 30)\n  scores.set(3, 40)\n  old: int? = scores.remove(2)\n  current: int? = scores.get(1)\n  removed_text = 0\n  if old != null:\n    removed_text = old\n  current_text = 0\n  if current != null:\n    current_text = current\n  out(\"$(scores.len()) $(scores.capacity() >= 16) $current_text $removed_text $(scores.contains_key(3))\")\n  scores.clear()\n  out(\"$(scores.is_empty())\")\n",
         )
         .unwrap();
     let executable = root.join("program.exe");
@@ -357,7 +357,7 @@ fn native_list_iterator_executes_real_cfg() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("vut-iterator-{nonce}"));
     fs::create_dir(&root).unwrap();
-    fs::write(root.join("main.vut"), "fn main() -> int:\n  values: list(int) = @(40, 42)\n  for value, index in values:\n    if index == 1:\n      return value\n  0\n").unwrap();
+    fs::write(root.join("main.vut"), "fn main() -> int:\n  values: list[int] = @[40, 42]\n  for value, index in values:\n    if index == 1:\n      return value\n  0\n").unwrap();
     let executable = root.join("program.exe");
     let config = CompilerConfig {
         runtime_library: Some(
@@ -388,7 +388,7 @@ fn native_method_uses_receiver_first_abi() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("vut-method-{nonce}"));
     fs::create_dir(&root).unwrap();
-    fs::write(root.join("main.vut"), "data Box:\n  value: int\nfn Box.get() -> int:\n  self.value\nfn main() -> int:\n  box = Box(value = 42)\n  box.get()\n").unwrap();
+    fs::write(root.join("main.vut"), "data Box:\n  value: int\nfn Box.get() -> int:\n  self.value\nfn main() -> int:\n  box = Box(value: 42)\n  box.get()\n").unwrap();
     let executable = root.join("program.exe");
     CompilerSession::new(CompilerConfig::default())
         .emit_executable(&root, &[], &executable)
@@ -569,7 +569,7 @@ fn native_bytes_flow_executes_end_to_end() {
     fs::create_dir(&root).unwrap();
     fs::write(
             root.join("main.vut"),
-            "fn decode(blob: bytes) -> str:\n  match blob.to_str():\n    ok(value): value\n    err(error): \"invalid utf-8\"\nfn main():\n  text = \"Xin chào Vut\"\n  blob = text.to_bytes()\n  out(\"bytes: $(blob.len())\")\n  copied = blob\n  copied.set(0, 86)\n  out(decode(blob))\n  out(decode(copied))\n  values: list(u8) = copied.to_list()\n  raw_values: list(u8) = @(255)\n  raw = bytes.from_list(raw_values)\n  out(decode(raw))\n  out(\"$(values.len())\")\n",
+            "fn decode(blob: bytes) -> str:\n  match blob.to_str():\n    ok(value): value\n    err(error): \"invalid utf-8\"\nfn main():\n  text = \"Xin chào Vut\"\n  blob = text.to_bytes()\n  out(\"bytes: $(blob.len())\")\n  copied = blob\n  copied.set(0, 86)\n  out(decode(blob))\n  out(decode(copied))\n  values: list[u8] = copied.to_list()\n  raw_values: list[u8] = @[255]\n  raw = bytes.from_list(raw_values)\n  out(decode(raw))\n  out(\"$(values.len())\")\n",
         )
         .unwrap();
     let executable = root.join("program.exe");
@@ -604,8 +604,8 @@ fn async_await_program_compiles_and_executes() {
         "async fn fetch_name() -> str:\n  \"Nam\"\n\
 async fn read_age() -> int:\n  20\n\
 async fn add_twice(value: int) -> int:\n  first = await read_age()\n  second = await read_age()\n  first + second + value\n\
-async fn load_name() -> result(str, str):\n  name = await fetch_name()\n  ok(name)\n\
-async fn load_code() -> result(int, str):\n  age = await read_age()\n  code = await add_twice(age)\n  ok(code)\n\
+async fn load_name() -> result[str, str]:\n  name = await fetch_name()\n  ok(name)\n\
+async fn load_code() -> result[int, str]:\n  age = await read_age()\n  code = await add_twice(age)\n  ok(code)\n\
 async fn main():\n  greeting = await fetch_name()\n  out(\"Hello $greeting\")\n  total = await add_twice(2)\n  out(\"total: $total\")\n  named = await load_name()\n  match named:\n    ok(text): out(\"name: $text\")\n    err(message): out(\"error: $message\")\n  coded = await load_code()\n  match coded:\n    ok(value): out(\"code: $value\")\n    err(message): out(\"error: $message\")\n",
     )
     .unwrap();
@@ -645,7 +645,7 @@ fn async_method_program_compiles_and_executes() {
         "data Counter:\n  value: int\n\
 fn Counter.get() -> int:\n  self.value\n\
 async fn Counter.next() -> int:\n  base = self.get()\n  base + 1\n\
-async fn main():\n  counter = Counter(value = 41)\n  out(\"$(counter.get())\")\n  following = await counter.next()\n  out(\"$following\")\n",
+async fn main():\n  counter = Counter(value: 41)\n  out(\"$(counter.get())\")\n  following = await counter.next()\n  out(\"$following\")\n",
     )
     .unwrap();
     let executable = root.join(if cfg!(windows) {
@@ -680,7 +680,7 @@ fn native_collection_of_managed_enums_balances_ownership() {
         root.join("main.vut"),
         "data Item:\n  name: str\n  count: int\n\
 enum Shape:\n  circle(radius: float)\n  label(text: str)\n\
-fn main():\n  items: list(Item) = @(Item(name = \"a\", count = 1), Item(name = \"b\", count = 2))\n  for item in items:\n    out(\"$(item.name):$(item.count)\")\n  nested: list(list(str)) = @(@(\"x\", \"y\"), @(\"z\"))\n  for inner in nested:\n    for word in inner:\n      out(word)\n  table: map(str, Shape) = map((\"c\", Shape.circle(radius = 1.0)), (\"l\", Shape.label(text = \"hi\")))\n  out(\"map: $(table.len())\")\n  shapes: list(Shape) = @(Shape.label(text = \"one\"), Shape.circle(radius = 2.0))\n  for shape in shapes:\n    match shape:\n      circle(radius = r): out(\"circle $(r)\")\n      label(text = t): out(\"label $t\")\n",
+fn main():\n  items: list[Item] = @[Item(name: \"a\", count: 1), Item(name: \"b\", count: 2)]\n  for item in items:\n    out(\"$(item.name):$(item.count)\")\n  nested: list[list[str]] = @[@[\"x\", \"y\"], @[\"z\"]]\n  for inner in nested:\n    for word in inner:\n      out(word)\n  table: map[str, Shape] = (\"c\": Shape.circle(radius: 1.0), \"l\": Shape.label(text: \"hi\"))\n  out(\"map: $(table.len())\")\n  shapes: list[Shape] = @[Shape.label(text: \"one\"), Shape.circle(radius: 2.0)]\n  for shape in shapes:\n    match shape:\n      circle(radius = r): out(\"circle $(r)\")\n      label(text = t): out(\"label $t\")\n",
     )
     .unwrap();
     let executable = root.join(if cfg!(windows) {
@@ -721,7 +721,7 @@ enum Option:\n  none\n  some(value: str)\n\
 fn area(shape: Shape) -> float:\n  match shape:\n    point: 0.0\n    circle(radius = r): 3.0 * r * r\n    rect(width = w, height = h): w * h\n\
 fn classify(o: Option) -> str:\n  match o:\n    some(value = \"hi\"): \"exact\"\n    some(value = _): \"some\"\n    none: \"none\"\n\
 fn describe(value: int) -> str:\n  match value:\n    0: \"zero\"\n    1 or 2: \"small\"\n    3..=9: \"medium\"\n    _ if value < 0: \"negative\"\n    _: \"large\"\n\
-fn main():\n  out(\"$(area(Shape.circle(radius = 2.0)))\")\n  out(\"$(area(Shape.rect(width = 3.0, height = 4.0)))\")\n  out(\"$(area(Shape.point))\")\n  out(classify(Option.some(value = \"hi\")))\n  out(classify(Option.some(value = \"bye\")))\n  out(classify(Option.none))\n  out(describe(0))\n  out(describe(2))\n  out(describe(5))\n  out(describe(-1))\n  out(describe(100))\n",
+fn main():\n  out(\"$(area(Shape.circle(radius: 2.0)))\")\n  out(\"$(area(Shape.rect(width: 3.0, height: 4.0)))\")\n  out(\"$(area(Shape.point))\")\n  out(classify(Option.some(value: \"hi\")))\n  out(classify(Option.some(value: \"bye\")))\n  out(classify(Option.none))\n  out(describe(0))\n  out(describe(2))\n  out(describe(5))\n  out(describe(-1))\n  out(describe(100))\n",
     )
     .unwrap();
     let executable = root.join(if cfg!(windows) {

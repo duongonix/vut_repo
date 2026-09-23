@@ -3,15 +3,15 @@
 Result constructors are contextual:
 
 ```vut
-fn parse() -> result(int, str):
+fn parse() -> result[int, str]:
   ok(42)
 
-fn fail() -> result(int, str):
+fn fail() -> result[int, str]:
   err("invalid")
 ```
 
-`ok(value)` requires an expected `result(T, E)` type and checks `value` against
-`T`. `err(error)` requires an expected `result(T, E)` type and checks `error`
+`ok(value)` requires an expected `result[T, E]` type and checks `value` against
+`T`. `err(error)` requires an expected `result[T, E]` type and checks `error`
 against `E`.
 
 This is invalid because the error type cannot be inferred:

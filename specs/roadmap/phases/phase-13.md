@@ -37,8 +37,8 @@ Completed ownership hardening:
   aggregates (`data`, `enum`, `result`, `array`) are stored by pointer, and
   collection literals use the storage size for aggregate elements.
 - Iterator ownership: `for` bindings retain managed elements and release them at
-  the end of each iteration, so iterating `list(str)`, `list(data)`, and
-  `list(enum)` is memory-safe.
+  the end of each iteration, so iterating `list[str]`, `list[data]`, and
+  `list[enum]` is memory-safe.
 - Runtime ABI version 3 records the callback contract.
 
 Still required before Complete: `dyn`/interface value conversion and dynamic

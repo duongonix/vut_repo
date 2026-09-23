@@ -104,6 +104,30 @@ error[E1003]: type mismatch
 
 ## 5. Explicit Types
 
+### Checked explicit numeric conversion
+
+Numeric runtime values never implicitly convert or promote between primitive
+types. Explicit `.to_i8()`, `.to_i16()`, `.to_i32()`, `.to_i64()`, `.to_int()`,
+`.to_u8()`, `.to_u16()`, `.to_u32()`, `.to_u64()` and `.to_usize()` conversions
+must reject integer overflow and invalid signed/unsigned changes.
+
+Float-to-integer conversion follows this normative order:
+
+1. Reject non-finite source values (NaN and either infinity).
+2. Truncate toward zero.
+3. Check the truncated value against the destination integer range.
+
+Thus `1.9` converts to `1`, `-1.9` to `-1`, `(-128.5).to_i8()` to `-128`,
+`(-0.5).to_u8()` to `0`, and `255.9.to_u8()` to `255`. Conversely,
+`256.0.to_u8()`, `(-1.0).to_u8()` and `128.0.to_i8()` trap.
+Invalid conversions use the canonical numeric trap mechanism. Conversion does
+not round nearest, floor, ceil, wrap, saturate, apply modulo or silently overflow.
+Range checking uses the target pointer width for `usize` and `isize`, including
+contextual integer literals; cross compilation must not use the host width.
+`int` is signed 64-bit and `float` is IEEE 754 binary64; `f32` is binary32.
+Integer-to-float
+conversion permits IEEE precision loss; f64-to-f32 uses IEEE narrowing.
+
 A variable may declare its type explicitly.
 
 ```vut
@@ -201,15 +225,15 @@ bytes
 `bytes` is a core managed type representing a contiguous buffer of binary
 data. Its element type is `u8` with values in `0..=255`.
 
-`bytes` is distinct from both `str` and `list(u8)`:
+`bytes` is distinct from both `str` and `list[u8]`:
 
 ```text
 str       = text / Unicode string
 bytes     = raw binary buffer
-list(u8)  = generic collection of u8
+list[u8]  = generic collection of u8
 ```
 
-`bytes` is not an alias of `list(u8)`. It has its own semantic type and
+`bytes` is not an alias of `list[u8]`. It has its own semantic type and
 metadata so compiler and runtime can optimize it and integrate it with I/O
 and FFI.
 
@@ -231,15 +255,35 @@ data.set(0, "A")
 Conversions are explicit:
 
 ```vut
-values = data.to_list()          # bytes -> list(u8)
-data = bytes.from_list(values)   # list(u8) -> bytes
+values = data.to_list()          # bytes -> list[u8]
+data = bytes.from_list(values)   # list[u8] -> bytes
 blob = text.to_bytes()           # str -> bytes (UTF-8)
-text = data.to_str()             # bytes -> result(str, Utf8Error)
+text = data.to_str()             # bytes -> result[str, Utf8Error]
 ```
 
 `bytes` and `str` are never implicitly interchangeable. UTF-8 validation is
 performed by `to_str`; it never reinterprets or silently replaces invalid
 input.
+
+### Unit
+
+`unit` is a source-language type with exactly one value, also written `unit`.
+It is distinct from internal `void`: a function returning `unit` returns a value,
+whereas a `void` function has no return value.
+
+```vut
+fn completed() -> unit:
+  unit
+
+fn operation() -> result[unit, str]:
+  ok(unit)
+```
+
+Unit has semantic size zero, alignment one, is Copy, needs no drop and does not
+allocate. It may be a function argument/return and a generic or Result payload.
+Native aggregate storage must not read or write bytes for a unit payload.
+Raw C FFI signatures do not accept `unit`; use `void` for a native function with
+no return value. Internal ABI tokens do not change unit's semantic size.
 
 ### Dynamic
 
@@ -372,25 +416,25 @@ unwrap operator.
 Lists use:
 
 ```text
-list(T)
+list[T]
 ```
 
 Example:
 
 ```vut
-numbers: list(int) = @(1, 2, 3)
+numbers: list[int] = @[1, 2, 3]
 ```
 
 The compiler can infer the type:
 
 ```vut
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 as:
 
 ```text
-list(int)
+list[int]
 ```
 
 Lists are homogeneous.
@@ -398,7 +442,7 @@ Lists are homogeneous.
 Invalid:
 
 ```vut
-values = @(1, "hello", true)
+values = @[1, "hello", true]
 ```
 
 The compiler must reject heterogeneous elements unless the element type explicitly permits them.
@@ -406,7 +450,7 @@ The compiler must reject heterogeneous elements unless the element type explicit
 Dynamic list:
 
 ```vut
-values: list(dyn) = @(1, "hello", true)
+values: list[dyn] = @[1, "hello", true]
 ```
 
 ---
@@ -420,7 +464,7 @@ Therefore an explicit type may be required.
 Example:
 
 ```vut
-items: list(int) = @()
+items: list[int] = @[]
 ```
 
 The compiler must not arbitrarily guess an element type for an unconstrained empty list.
@@ -441,8 +485,8 @@ Construction:
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -652,7 +696,7 @@ Collections may use interface element types.
 Conceptually:
 
 ```vut
-animals: list(Animal)
+animals: list[Animal]
 ```
 
 may contain different concrete types provided every element satisfies `Animal`.
@@ -667,7 +711,7 @@ Vut supports type aliases.
 
 ```vut
 type UserId = u64
-type Names = list(str)
+type Names = list[str]
 ```
 
 A type alias provides another name for a type.
@@ -689,10 +733,10 @@ is an alias of `u64`, not a new incompatible numeric type.
 Parameterized type syntax uses parentheses.
 
 ```vut
-list(int)
-map(str, int)
-result(User, Error)
-ptr(int)
+list[int]
+map[str, int]
+result[User, Error]
+ptr[int]
 ```
 
 Vut does not use:
@@ -839,12 +883,12 @@ The Vut type system follows these rules:
 
 ## 31. Fixed Array Types
 
-Fixed arrays use `array(T, N)`, where `N` is a compile-time integer greater
-than zero and participates in type identity. `array(int, 4)` and
-`array(int, 8)` are therefore different types.
+Fixed arrays use `[T, N]`, where `N` is a compile-time integer greater
+than zero and participates in type identity. `array[int, 4]` and
+`array[int, 8]` are therefore different types.
 
-`array(e1, ..., eN)` always constructs `array(T, N)`, while `@(e1, ..., eN)`
-always constructs `list(T)`. Both forms are homogeneous unless their expected
+`[e1, ..., eN]` always constructs `[T, N]`, while `@[e1, ..., eN]`
+always constructs `list[T]`. Both forms are homogeneous unless their expected
 element type is explicitly `dyn`; neither form is contextually converted into
 the other.
 
@@ -862,16 +906,16 @@ The user-facing signature is `async fn() -> int`.
 Calling an async function produces a compiler-internal awaitable value:
 
 ```text
-load() : future(int)
+load() : future[int]
 ```
 
-`future(T)` is not writable in Vut source. It is not a standard-library type and
+`future[T]` is not writable in Vut source. It is not a standard-library type and
 has no public operations other than `await`.
 
 `await` requires an awaitable operand and yields the logical result:
 
 ```text
-e : future(T)
+e : future[T]
 ---------------
 await e : T
 ```
@@ -888,8 +932,8 @@ data = await read_async()?
 the typing is:
 
 ```text
-read_async()          : future(result(T, E))
-await read_async()    : result(T, E)
+read_async()          : future[result[T, E]]
+await read_async()    : result[T, E]
 await read_async()?   : T
 ```
 
@@ -912,17 +956,15 @@ The following now have dedicated finalized specifications and implementations
 - generic function declaration syntax → `specs/04`, `specs/06`
 - generic constraints → `specs/06`
 - optional narrowing and unwrapping → `specs/optional/`
-- `result(T, E)` semantics → `specs/result/`
+- `result[T, E]` semantics → `specs/result/`
 - `?` propagation → `specs/result/03-question-operator.md`
 - map typing → `specs/map/`
 - pointer types → `specs/ffi/`, `specs/19-ffi-unsafe.md`
+- capturing closure typing → `specs/04` §46a
 
 Still deferred (no finalized specification yet):
 
-- exact `int` ABI
-- exact `float` ABI
 - ownership/reference semantics beyond `specs/08` const-depth
-- capturing closure typing
 
 These details must not be guessed by the implementation.
 

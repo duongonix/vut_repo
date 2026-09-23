@@ -22,7 +22,7 @@ composition Route
 composition Workflow
 ```
 
-Each declaration creates a distinct domain type usable by `vutcom(D)`.
+Each declaration creates a distinct domain type usable by `vutcom[D]`.
 
 The compiler must treat domains nominally.
 
@@ -35,15 +35,15 @@ Two separately declared domains are not interchangeable even if their libraries 
 Canonical syntax:
 
 ```vut
-vutcom(D)
+vutcom[D]
 ```
 
 Examples:
 
 ```vut
-vutcom(UI)
-vutcom(Build)
-vutcom(Route)
+vutcom[UI]
+vutcom[Build]
+vutcom[Route]
 ```
 
 `D` must resolve to a valid composition domain.
@@ -51,9 +51,9 @@ vutcom(Route)
 Invalid:
 
 ```vut
-vutcom(int)
-vutcom(str)
-vutcom(User)
+vutcom[int]
+vutcom[str]
+vutcom[User]
 ```
 
 unless those symbols are explicitly composition domains.
@@ -67,9 +67,9 @@ Functions use normal `fn` syntax.
 Example:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
-    Text(value = "Hello")
+    Text(value: "Hello")
 ```
 
 No special component declaration syntax exists.
@@ -92,21 +92,21 @@ A call participating in composition uses ordinary call syntax.
 Example:
 
 ```vut
-Text(value = "Hello")
+Text(value: "Hello")
 ```
 
 A call with child composition uses a trailing `:` block:
 
 ```vut
 Column():
-  Text(value = "Hello")
+  Text(value: "Hello")
 ```
 
 Another example:
 
 ```vut
-Button(onclick = click):
-  Text(value = "Save")
+Button(onclick: click):
+  Text(value: "Save")
 ```
 
 The parser should not create UI-specific syntax.
@@ -120,7 +120,7 @@ It should recognize a generic call expression with an optional trailing composit
 Syntax such as:
 
 ```vut
-Hello(a = 1)
+Hello(a: 1)
 ```
 
 may syntactically represent a normal function call or data constructor.
@@ -160,10 +160,10 @@ The `:` after a compatible call introduces child composition.
 Example:
 
 ```vut
-Card(title = "Profile"):
-  Text(value = "Nam")
+Card(title: "Profile"):
+  Text(value: "Nam")
   Button():
-    Text(value = "Follow")
+    Text(value: "Follow")
 ```
 
 The block is a composition value of the same required domain.
@@ -172,8 +172,8 @@ Conceptually:
 
 ```text
 Card(
-  title = "Profile",
-  children = <composition block>
+  title: "Profile",
+  children: <composition block>
 )
 ```
 
@@ -190,18 +190,18 @@ Canonical direction:
 ```vut
 fn Card(
   title: str,
-  children: vutcom(UI)
-) -> vutcom(UI):
+  children: vutcom[UI]
+) -> vutcom[UI]:
   Panel():
-    Text(value = title)
+    Text(value: title)
     children
 ```
 
 Usage:
 
 ```vut
-Card(title = "Profile"):
-  Text(value = "Nam")
+Card(title: "Profile"):
+  Text(value: "Nam")
 ```
 
 The trailing block supplies the child composition.
@@ -216,7 +216,7 @@ VNodeChildren
 
 should be introduced for MVP.
 
-Use `vutcom(D)` itself.
+Use `vutcom[D]` itself.
 
 ---
 
@@ -227,20 +227,20 @@ A composition-producing function that does not accept children must reject a tra
 Example:
 
 ```vut
-fn Text(value: str) -> vutcom(UI):
+fn Text(value: str) -> vutcom[UI]:
   ...
 ```
 
 Valid:
 
 ```vut
-Text(value = "Hello")
+Text(value: "Hello")
 ```
 
 Invalid:
 
 ```vut
-Text(value = "Hello"):
+Text(value: "Hello"):
   Button()
 ```
 
@@ -256,10 +256,10 @@ Example:
 
 ```vut
 Column():
-  Text(value = "A")
-  Text(value = "B")
+  Text(value: "A")
+  Text(value: "B")
   Button():
-    Text(value = "C")
+    Text(value: "C")
 ```
 
 The implementation must not require the user to manually create a list.
@@ -267,7 +267,7 @@ The implementation must not require the user to manually create a list.
 Do NOT require:
 
 ```vut
-Column(children = @(Text(...), Text(...)))
+Column(children: @[Text(...), Text(...)])
 ```
 
 for normal declarative syntax.
@@ -281,17 +281,17 @@ Composition functions may call other composition functions.
 Example:
 
 ```vut
-fn Avatar(user: User) -> vutcom(UI):
-  Image(src = user.avatar)
+fn Avatar(user: User) -> vutcom[UI]:
+  Image(src: user.avatar)
 
-fn UserCard(user: User) -> vutcom(UI):
+fn UserCard(user: User) -> vutcom[UI]:
   Card():
-    Avatar(user = user)
-    Text(value = user.name)
+    Avatar(user: user)
+    Text(value: user.name)
 
-fn Home(user: User) -> vutcom(UI):
+fn Home(user: User) -> vutcom[UI]:
   Column():
-    UserCard(user = user)
+    UserCard(user: user)
 ```
 
 Nested composition must remain statically typed.
@@ -306,9 +306,9 @@ Example:
 
 ```vut
 Button(
-  text = "Save",
-  enabled = true,
-  onclick = click
+  text: "Save",
+  enabled: true,
+  onclick: click
 )
 ```
 
@@ -323,17 +323,17 @@ A composition-producing function may contain ordinary Vut code.
 Example:
 
 ```vut
-fn UserCard(user: User) -> vutcom(UI):
+fn UserCard(user: User) -> vutcom[UI]:
   title = "$(user.name) - $(user.age)"
 
   fn click():
     out(user.name)
 
   Card():
-    Text(value = title)
+    Text(value: title)
 
-    Button(onclick = click):
-      Text(value = "Open")
+    Button(onclick: click):
+      Text(value: "Open")
 ```
 
 Vutcom must not restrict functions to declarative statements only.
@@ -347,7 +347,7 @@ Normal Vut `if/else` is supported inside composition.
 Example:
 
 ```vut
-fn Home(logged_in: bool) -> vutcom(UI):
+fn Home(logged_in: bool) -> vutcom[UI]:
   Column():
     if logged_in:
       Profile()
@@ -370,10 +370,10 @@ Normal Vut `for` is supported inside composition.
 Example:
 
 ```vut
-fn UserList(users: list(User)) -> vutcom(UI):
+fn UserList(users: list[User]) -> vutcom[UI]:
   Column():
     for user in users:
-      UserCard(user = user)
+      UserCard(user: user)
 ```
 
 The compiler may lower this into an internal repeated composition region.
@@ -410,7 +410,7 @@ One-line callback:
 
 ```vut
 Button(
-  onclick = () => save()
+  onclick: () => save()
 )
 ```
 
@@ -418,7 +418,7 @@ Multiline callback:
 
 ```vut
 Button(
-  onclick = fn():
+  onclick: fn():
     save()
     out("saved")
 )
@@ -432,14 +432,14 @@ Do NOT introduce a Vutcom-specific event language.
 
 ## 17. Composition Value Expression
 
-A `vutcom(D)` value may itself appear inside a compatible composition block.
+A `vutcom[D]` value may itself appear inside a compatible composition block.
 
 Example:
 
 ```vut
 fn Card(
-  children: vutcom(UI)
-) -> vutcom(UI):
+  children: vutcom[UI]
+) -> vutcom[UI]:
   Panel():
     children
 ```
@@ -450,15 +450,15 @@ The inserted value must belong to the expected domain.
 
 ## 18. Domain Boundary
 
-Inside a composition expecting `vutcom(UI)`, inserting `vutcom(Build)` directly is invalid.
+Inside a composition expecting `vutcom[UI]`, inserting `vutcom[Build]` directly is invalid.
 
 Example:
 
 ```vut
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   ...
 
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
     Release()
 ```
@@ -518,11 +518,11 @@ If a new declaration mechanism is necessary, design it generically and document 
 The following must never happen automatically:
 
 ```text
-vutcom(UI)
-→ vutcom(Build)
+vutcom[UI]
+→ vutcom[Build]
 
-vutcom(Build)
-→ vutcom(Route)
+vutcom[Build]
+→ vutcom[Route]
 ```
 
 Cross-domain usage requires an explicitly typed API boundary.
@@ -576,19 +576,19 @@ Do not introduce UI-specific `key` semantics into the core.
 ```vut
 composition UI
 
-fn UserCard(user: User) -> vutcom(UI):
+fn UserCard(user: User) -> vutcom[UI]:
   Card():
-    Text(value = user.name)
+    Text(value: user.name)
 
-    Button(onclick = () => follow(user)):
-      Text(value = "Follow")
+    Button(onclick: () => follow(user)):
+      Text(value: "Follow")
 
-fn Home(users: list(User)) -> vutcom(UI):
+fn Home(users: list[User]) -> vutcom[UI]:
   Column():
-    Text(value = "Users")
+    Text(value: "Users")
 
     for user in users:
-      UserCard(user = user)
+      UserCard(user: user)
 
 fn main():
   ui.run(Home(load_users()))
@@ -599,11 +599,11 @@ fn main():
 ```vut
 composition Build
 
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   Pipeline():
-    Compile(mode = "release")
+    Compile(mode: "release")
     Test()
-    Package(output = "dist")
+    Package(output: "dist")
 
 fn main():
   build.execute(Release())

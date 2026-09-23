@@ -4,10 +4,11 @@
 
 This document defines how VPM selects package versions.
 
-Remote versions are represented as package subdirectories:
+Remote versions are represented as package subdirectories named with the bare
+semantic version and no `v` prefix:
 
 ```text
-v<semver>
+<semver>
 ```
 
 ---
@@ -23,7 +24,7 @@ vpm add math@1.2.0
 must resolve exactly:
 
 ```text
-math/v1.2.0
+math/1.2.0
 ```
 
 If it does not exist:
@@ -55,9 +56,9 @@ Given:
 
 ```text
 math/
-├── v0.9.0/
-├── v0.10.0/
-├── v1.0.0/
+├── 0.9.0/
+├── 0.10.0/
+├── 1.0.0/
 ├── README.md
 ├── development/
 └── test/
@@ -66,9 +67,9 @@ math/
 only:
 
 ```text
-v0.9.0
-v0.10.0
-v1.0.0
+0.9.0
+0.10.0
+1.0.0
 ```
 
 are version candidates.
@@ -84,8 +85,8 @@ Do not compare version names lexicographically.
 Example:
 
 ```text
-v0.9.0
-v0.10.0
+0.9.0
+0.10.0
 ```
 
 Semantically:
@@ -109,15 +110,15 @@ crate.
 Given:
 
 ```text
-v1.2.0
-v1.3.0
-v2.0.0-alpha.1
+1.2.0
+1.3.0
+2.0.0-alpha.1
 ```
 
 stable latest is:
 
 ```text
-v1.3.0
+1.3.0
 ```
 
 Prerelease versions are excluded from normal `latest`.
@@ -137,7 +138,7 @@ vpm add math@2.0.0-alpha.1
 If:
 
 ```text
-v2.0.0-alpha.1/
+2.0.0-alpha.1/
 ```
 
 exists and is valid, it may be installed.
@@ -151,12 +152,12 @@ Ignore malformed version directories during version discovery.
 Examples:
 
 ```text
-v1
-v1.2
+1
+1.2
+v1.2.0
 version1.2.0
 latest
 foo
-vabc
 ```
 
 These do not participate in SemVer selection.
@@ -182,7 +183,7 @@ The error should identify the package/source.
 Selecting:
 
 ```text
-v1.2.0
+1.2.0
 ```
 
 does not finish validation.

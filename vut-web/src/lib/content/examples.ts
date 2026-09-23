@@ -12,7 +12,7 @@ export const examples = [
   },
   {
     label: 'Flexible',
-    code: '# Structured data, naturally.\n\ndata Point:\n  x: int\n  y: int\n\norigin = Point(x = 0, y = 0)\n\n# Names make your intent clear.'
+    code: '# Structured data, naturally.\n\ndata Point:\n  x: int\n  y: int\n\norigin = Point(x: 0, y: 0)\n\n# Names make your intent clear.'
   },
   {
     label: 'Powerful',

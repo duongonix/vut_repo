@@ -7,12 +7,30 @@ pub const RUNTIME_ABI_VERSION: u32 = 13;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Target {
     pub triple: String,
+    /// Target CPU: `None` is the portable baseline; `Some("native")` or a
+    /// preset name enables that CPU's features. Independent of optimization
+    /// level.
+    pub cpu: Option<String>,
+    /// Explicit Cranelift feature overrides (`avx2`, `+avx2`, `-avx2`).
+    pub features: Vec<String>,
 }
 impl Target {
     #[must_use]
     pub fn host() -> Self {
         Self {
             triple: target_lexicon::HOST.to_string(),
+            cpu: None,
+            features: Vec::new(),
+        }
+    }
+
+    /// A portable target for `triple` (no CPU features).
+    #[must_use]
+    pub fn portable(triple: impl Into<String>) -> Self {
+        Self {
+            triple: triple.into(),
+            cpu: None,
+            features: Vec::new(),
         }
     }
 }
@@ -59,19 +77,22 @@ pub trait CodegenBackend {
 }
 pub struct CraneliftBackend {
     target: Target,
-    optimize: bool,
+    level: vut_mir::OptimizationLevel,
 }
 impl CraneliftBackend {
     #[must_use]
     pub fn new(target: Target) -> Self {
         Self {
             target,
-            optimize: false,
+            level: vut_mir::OptimizationLevel::O0,
         }
     }
+    /// Creates a backend that lowers with the given optimization level. The
+    /// level selects the Cranelift `opt_level`; `O0` disables backend
+    /// optimization for fast debug builds.
     #[must_use]
-    pub fn with_optimization(target: Target, optimize: bool) -> Self {
-        Self { target, optimize }
+    pub fn with_level(target: Target, level: vut_mir::OptimizationLevel) -> Self {
+        Self { target, level }
     }
 
     /// Emits an object with a platform entry shim. A `void` Vut entry returns
@@ -121,9 +142,11 @@ impl CodegenBackend for CraneliftBackend {
 }
 
 mod compile;
+mod features;
 mod futures;
 mod instruction;
 mod managed;
+mod numeric;
 mod signatures;
 #[cfg(test)]
 mod tests;

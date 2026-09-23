@@ -44,15 +44,15 @@ Do not implement package-manager logic directly inside `main.rs`.
 
 # 3. Command Set
 
-Current command direction:
-
 ```text
 vpm new
 vpm init
 
-vpm add
-vpm remove
-vpm install
+vpm add <package>[@version]
+vpm remove <package>
+vpm install [<package>[@version]]
+vpm uninstall <package>
+vpm exec <package> [--bin <name>] [-- <args>]
 vpm update
 
 vpm tree
@@ -71,12 +71,17 @@ vpm clean
 vpm search
 vpm info
 
-vpm login
-vpm publish
-vpm yank
+vpm publish [<registry>] [--dry-run]
 ```
 
-Publishing-related commands remain dependent on finalized publishing semantics.
+`vpm login` and `vpm yank` remain reserved until their semantics are finalized.
+
+`vpm install` is context-sensitive:
+
+```text
+vpm install            install the current project's dependencies
+vpm install <package>  install a published CLI package globally
+```
 
 Do not fake unsupported behavior.
 
@@ -97,10 +102,25 @@ Recommended initial structure:
 ```text
 hello/
 ├── src/
-│   └── main.vut
+│   └── bin/
+│       └── hello.vut
 ├── tests/
 ├── vpm.toml
 └── .gitignore
+```
+
+`vpm.toml` declares the entry point:
+
+```toml
+[package]
+name = "hello"
+version = "0.1.0"
+
+[dependencies]
+
+[[bin]]
+name = "hello"
+path = "src/bin/hello.vut"
 ```
 
 The command should fail safely if the destination already contains conflicting data.
@@ -182,13 +202,13 @@ remove obsolete lock entries
 preserve unrelated dependencies
 ```
 
-Do not necessarily delete the package from global `~/.vpm/packages`.
+Do not necessarily delete the package from global `~/.vut/packages`.
 
 ---
 
 # 8. `vpm install`
 
-Installs dependencies described by project state.
+Without a package argument, installs dependencies described by project state.
 
 With a valid lockfile:
 
@@ -198,7 +218,53 @@ use locked exact versions
 
 Do not upgrade dependencies unexpectedly.
 
-If packages already exist locally and validate correctly, reuse them.
+Use pinned lockfile data (source, version, revision, checksums, native
+artifacts); do not re-resolve. If packages already exist locally and validate
+correctly, reuse them.
+
+With a package argument, installs a published CLI package globally:
+
+```text
+vpm install math
+vpm install math@1.0.0
+```
+
+The package's `[[bin]]` entries are built for the host target and installed into
+`~/.vut/bin`. Global binary-name collisions are detected and reported.
+
+---
+
+# 8a. `vpm uninstall`
+
+Removes a globally installed CLI package:
+
+```text
+vpm uninstall math
+```
+
+It removes the installed binary/binaries and their install metadata. It does not
+remove the project manifest entry for the same name.
+
+---
+
+# 8b. `vpm exec`
+
+Runs a published CLI package without pre-installing it:
+
+```text
+vpm exec math
+vpm exec math --bin math-tool -- arg1 arg2
+```
+
+Bin selection:
+
+```text
+1. [[bin]] whose name equals the package name
+2. otherwise, if the package declares exactly one [[bin]], run it
+3. otherwise, error and list available bin names
+```
+
+Never silently run the first bin. `--bin <name>` overrides the selection.
 
 ---
 
@@ -435,11 +501,28 @@ Secrets must not be written to project manifests or lockfiles.
 
 # 23. `vpm publish`
 
-Publishing is unusual under VPM's Git repository/folder model because packages are represented directly in repository directories.
+```text
+vpm publish                          publish to the default registry (duongonix/vpm)
+vpm publish alice/vut-packages       publish to a self-hosted registry
+vpm publish --dry-run                validate + report without submitting
+```
 
-Exact publishing automation must be specified before implementation.
+The package name is taken from `[package].name`; it is never supplied again on
+the command line.
 
-Do not assume a central package-upload server exists.
+Publication is a review-gated, source-only flow:
+
+```text
+validate manifest + layout + version + native build source
+→ submit a change/PR to the target registry for review
+→ trusted CI builds native artifacts per target
+→ trusted CI uploads artifacts and generates native-artifacts.toml
+```
+
+Publishers must not submit arbitrary prebuilt binaries as official artifacts.
+
+Provider and authentication must be abstracted (GitHub is not privileged), and
+credentials must never be written to the manifest, lockfile, or package source.
 
 ---
 
@@ -594,6 +677,9 @@ commands/
 ├── add.rs
 ├── remove.rs
 ├── install.rs
+├── uninstall.rs
+├── exec.rs
+├── publish.rs
 ├── update.rs
 ├── tree.rs
 ├── outdated.rs
@@ -609,7 +695,9 @@ commands/
 └── info.rs
 ```
 
-Publishing commands may be added only when implemented.
+Handlers may be grouped by responsibility (for example one module for global
+package install/uninstall/exec and one for publishing) rather than one file per
+command.
 
 ---
 
@@ -658,10 +746,13 @@ Load once and pass structured state.
 5. Each command has a focused handler.
 6. Project discovery is shared.
 7. `add` supports registry/GitHub/GitLab package syntax.
-8. `install` respects lockfile resolution.
-9. `outdated` does not modify project state.
-10. `build/run/check` orchestrate compiler APIs rather than duplicate compiler logic.
-11. Project file modifications should be atomic.
-12. Commands avoid unnecessary network access.
-13. Publishing/yanking semantics must not be invented.
-14. Errors are structured and actionable.
+8. `install` without an argument respects pinned lockfile data.
+9. `install <package>` installs published CLI packages into `~/.vut/bin`.
+10. `exec` never silently selects a bin; ambiguous selection is an error.
+11. `outdated` does not modify project state.
+12. `build/run/check` orchestrate compiler APIs rather than duplicate compiler logic.
+13. Project file modifications should be atomic.
+14. Commands avoid unnecessary network access.
+15. `publish` is source-only, review-gated, `--dry-run`-capable, and provider-abstract.
+16. `login`/`yank` semantics must not be invented.
+17. Errors are structured and actionable.

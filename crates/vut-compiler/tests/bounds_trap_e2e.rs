@@ -62,19 +62,19 @@ fn assert_bounds_trap(source: &str, op: &str) {
 #[test]
 fn list_at_out_of_range_traps() {
     assert_bounds_trap(
-        "fn main():\n  items = @(10, 20, 30)\n  out(items.at(1))\n  out(items.at(3))\n",
+        "fn main():\n  items = @[10, 20, 30]\n  out(items.at(1))\n  out(items.at(3))\n",
         "list.at",
     );
     assert_bounds_trap(
-        "fn main():\n  items = @(10, 20, 30)\n  out(items.at(99))\n",
+        "fn main():\n  items = @[10, 20, 30]\n  out(items.at(99))\n",
         "list.at",
     );
     assert_bounds_trap(
-        "fn main():\n  empty: list(int) = @()\n  out(empty.at(0))\n",
+        "fn main():\n  empty: list[int] = @[]\n  out(empty.at(0))\n",
         "list.at",
     );
     assert_bounds_trap(
-        "fn main():\n  items = @(10, 20, 30)\n  i = 0 - 1\n  out(items.at(i))\n",
+        "fn main():\n  items = @[10, 20, 30]\n  i = 0 - 1\n  out(items.at(i))\n",
         "list.at",
     );
 }
@@ -82,15 +82,15 @@ fn list_at_out_of_range_traps() {
 #[test]
 fn list_set_insert_remove_out_of_range_trap() {
     assert_bounds_trap(
-        "fn main():\n  items = @(1, 2, 3)\n  i = 5\n  items.set(i, 9)\n",
+        "fn main():\n  items = @[1, 2, 3]\n  i = 5\n  items.set(i, 9)\n",
         "list.set",
     );
     assert_bounds_trap(
-        "fn main():\n  items = @(1, 2, 3)\n  i = 9\n  items.insert(i, 9)\n",
+        "fn main():\n  items = @[1, 2, 3]\n  i = 9\n  items.insert(i, 9)\n",
         "list.insert",
     );
     assert_bounds_trap(
-        "fn main():\n  items = @(1, 2, 3)\n  i = 9\n  out(items.remove(i))\n",
+        "fn main():\n  items = @[1, 2, 3]\n  i = 9\n  out(items.remove(i))\n",
         "list.remove",
     );
 }
@@ -98,7 +98,7 @@ fn list_set_insert_remove_out_of_range_trap() {
 #[test]
 fn managed_element_out_of_range_traps() {
     assert_bounds_trap(
-        "fn main():\n  names = @(\"a\", \"b\")\n  i = 4\n  out(names.at(i))\n",
+        "fn main():\n  names = @[\"a\", \"b\"]\n  i = 4\n  out(names.at(i))\n",
         "list.at",
     );
 }
@@ -118,7 +118,7 @@ fn bytes_at_and_set_out_of_range_trap() {
 #[test]
 fn array_at_runtime_index_traps() {
     assert_bounds_trap(
-        "fn main():\n  nums = array(1, 2, 3)\n  i = 7\n  out(nums.at(i))\n",
+        "fn main():\n  nums = [1, 2, 3]\n  i = 7\n  out(nums.at(i))\n",
         "array.at",
     );
 }
@@ -126,7 +126,7 @@ fn array_at_runtime_index_traps() {
 #[test]
 fn documented_fallbacks_are_preserved() {
     let (success, stdout, stderr) = run(
-        "fn main():\n  empty: list(int) = @()\n  out(empty.first())\n  out(empty.last())\n  out(empty.pop())\n  out(empty.len())\n  buf = bytes()\n  out(buf.first())\n  out(buf.last())\n  out(\"ok\")\n",
+        "fn main():\n  empty: list[int] = @[]\n  out(empty.first())\n  out(empty.last())\n  out(empty.pop())\n  out(empty.len())\n  buf = bytes()\n  out(buf.first())\n  out(buf.last())\n  out(\"ok\")\n",
     );
     assert!(success, "fallback accessors must not trap: {stderr:?}");
     assert_eq!(stdout, "0\n0\n0\n0\n0\n0\nok\n");
@@ -143,7 +143,7 @@ fn documented_fallbacks_are_preserved() {
 #[test]
 fn valid_indexes_still_work() {
     let (success, stdout, stderr) = run(
-        "fn main():\n  items = @(1, 2, 3)\n  items.set(1, 9)\n  items.insert(3, 4)\n  out(items)\n  out(items.at(0))\n  out(items.remove(0))\n  out(items)\n  buf = \"hi\".to_bytes()\n  out(buf.at(1))\n  nums = array(1, 2, 3)\n  out(nums.at(2))\n  out(nums.first())\n  out(nums.last())\n",
+        "fn main():\n  items = @[1, 2, 3]\n  items.set(1, 9)\n  items.insert(3, 4)\n  out(items)\n  out(items.at(0))\n  out(items.remove(0))\n  out(items)\n  buf = \"hi\".to_bytes()\n  out(buf.at(1))\n  nums = [1, 2, 3]\n  out(nums.at(2))\n  out(nums.first())\n  out(nums.last())\n",
     );
     assert!(success, "{stderr:?}");
     assert_eq!(stdout, "[1, 9, 3, 4]\n1\n1\n[9, 3, 4]\n105\n3\n1\n3\n");

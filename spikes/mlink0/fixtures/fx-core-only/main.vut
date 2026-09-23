@@ -14,7 +14,7 @@ data Point:
   y: int
 
 fn checksum() -> int:
-  points = @(Point(x = 1, y = 2), Point(x = 3, y = 4))
+  points = @[Point(x: 1, y: 2), Point(x: 3, y: 4)]
   total = 0
   for p in points:
     total = total + p.x * 10 + p.y

@@ -1,7 +1,7 @@
 //! Machine-readable VPM format compatibility policy.
 use std::fmt;
 
-pub const CURRENT_LOCKFILE_VERSION: u32 = 1;
+pub const CURRENT_LOCKFILE_VERSION: u32 = 2;
 pub const MINIMUM_LOCKFILE_VERSION: u32 = 1;
 pub const PACKAGE_LAYOUT_VERSION: u32 = 1;
 
@@ -43,7 +43,8 @@ mod tests {
     #[test]
     fn compatibility_range_is_explicit_and_forward_safe() {
         assert!(require_lockfile(1).is_ok());
+        assert!(require_lockfile(2).is_ok());
         assert!(require_lockfile(0).is_err());
-        assert!(require_lockfile(2).is_err());
+        assert!(require_lockfile(3).is_err());
     }
 }

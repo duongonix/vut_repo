@@ -60,7 +60,7 @@ async fn fetch() -> Data:
 The user is not required to write:
 
 ```vut
-fn fetch() -> future(Data):
+fn fetch() -> future[Data]:
 ```
 
 Internally the compiler may lower the declaration to a future/state-machine

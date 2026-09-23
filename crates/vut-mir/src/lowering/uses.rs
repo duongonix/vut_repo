@@ -25,6 +25,12 @@ pub(super) fn count_uses(block: &vut_ast::Block) -> HashMap<String, usize> {
                 expression(right, uses);
             }
             Expr::Member { object, .. } => expression(object, uses),
+            Expr::Subscript { object, index, .. } => {
+                expression(object, uses);
+                if let Some(index) = index {
+                    expression(index, uses);
+                }
+            }
             Expr::Call {
                 callee, arguments, ..
             } => {

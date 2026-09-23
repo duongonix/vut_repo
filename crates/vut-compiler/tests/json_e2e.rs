@@ -89,7 +89,7 @@ fn pretty_printing_uses_two_space_indentation() {
 
 #[test]
 fn typed_encode_via_encodable_interface() {
-    let source = "import json\nimport json at Value, Encodable\n\ndata User:\n  name: str\n\nfn User.to_json() -> Value:\n  entries: map(str, Value) = map()\n  entries.set(\"name\", json.value_str(value = self.name))\n  json.value_object(value = entries)\n\nfn main():\n  user = User(name = \"Nam\")\n  out(json.encode(user))\n";
+    let source = "import json\nimport json at Value, Encodable\n\ndata User:\n  name: str\n\nfn User.to_json() -> Value:\n  entries: map[str, Value] = ()\n  entries.set(\"name\", json.value_str(value = self.name))\n  json.value_object(value = entries)\n\nfn main():\n  user = User(name: \"Nam\")\n  out(json.encode(user))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "{\"name\":\"Nam\"}\n");

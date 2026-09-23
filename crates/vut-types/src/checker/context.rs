@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 
 use vut_hir::TypeId;
+use vut_resolver::SymbolId;
 use vut_source::Span;
 
 pub(super) struct Context {
@@ -18,6 +19,9 @@ pub(super) struct Context {
     pub(super) await_span: Option<Span>,
     /// Depth of `return` value checking, used to choose async-return diagnostics.
     pub(super) return_depth: usize,
+    /// The function/lambda currently being checked, so a channel operation can
+    /// mark it as implicitly suspendable.
+    pub(super) current_function: Option<SymbolId>,
 }
 impl Context {
     pub(super) fn new(root: HashMap<String, TypeId>) -> Self {
@@ -31,6 +35,7 @@ impl Context {
             in_spawn_callable: false,
             await_span: None,
             return_depth: 0,
+            current_function: None,
         }
     }
     pub(super) fn lookup(&self, name: &str) -> Option<TypeId> {

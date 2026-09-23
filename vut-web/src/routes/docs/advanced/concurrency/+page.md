@@ -24,7 +24,7 @@ async fn main():
 
 ## Spawned work
 
-[Vutcon](/docs/advanced/vutcon/) supplies scheduled lightweight execution units with typed handles. Current scheduling is cooperative on one OS thread. Async support does not imply parallel execution or an available multithreading API.
+[Vutcon](/docs/advanced/vutcon/) supplies scheduled lightweight execution units with typed handles. The current runtime schedules cooperatively across multiple worker threads. Calling an async function and spawning a task are different operations: use `vut` when work should be independently scheduled. [Channels](/docs/advanced/channels/) transfer values between tasks.
 
 ## Error handling
 

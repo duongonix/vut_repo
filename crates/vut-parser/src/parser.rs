@@ -4,6 +4,15 @@ use vut_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSink, codes};
 use vut_lexer::{Token, TokenKind};
 use vut_source::{SourceId, Span};
 
+/// Cursor and diagnostic state captured for speculative parsing.
+#[derive(Clone, Copy)]
+pub(crate) struct Checkpoint {
+    position: usize,
+    diagnostics: usize,
+    block_line_finished: bool,
+    receiver_trailing_allowed: bool,
+}
+
 pub struct Parser<'a> {
     pub(crate) source: SourceId,
     pub(crate) text: &'a str,
@@ -241,6 +250,22 @@ impl<'a> Parser<'a> {
     pub(crate) fn span_from(&self, start: usize, end: usize) -> Span {
         Span::new(self.source, start, end)
     }
+    /// Captures the cursor, diagnostics, and block flags so a speculative parse
+    /// can be rolled back without leaving errors behind.
+    pub(crate) fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            position: self.position,
+            diagnostics: self.diagnostics.as_slice().len(),
+            block_line_finished: self.block_line_finished,
+            receiver_trailing_allowed: self.receiver_trailing_allowed,
+        }
+    }
+    pub(crate) fn restore(&mut self, checkpoint: Checkpoint) {
+        self.position = checkpoint.position;
+        self.diagnostics.truncate(checkpoint.diagnostics);
+        self.block_line_finished = checkpoint.block_line_finished;
+        self.receiver_trailing_allowed = checkpoint.receiver_trailing_allowed;
+    }
     pub(crate) fn finish_line(&mut self) {
         if std::mem::take(&mut self.block_line_finished) {
             return;
@@ -451,7 +476,7 @@ mod tests {
     fn rejects_extern_function_body_and_accepts_named_callback_parameters() {
         let source_id = SourceId::from_index(0);
         let source =
-            "extern \"C\" fn bad():\n  1\ntype Callback = extern \"C\" fn(a: i32, b: ptr(void))\n";
+            "extern \"C\" fn bad():\n  1\ntype Callback = extern \"C\" fn(a: i32, b: ptr[void])\n";
         let (tokens, lexical) = Lexer::new(source_id, source).lex();
         assert!(!lexical.has_errors(), "{:?}", lexical.as_slice());
         let (file, diagnostics) = Parser::new(source_id, source, tokens).parse();
@@ -504,7 +529,7 @@ type UserId = u64\n\
 data User:\n  name: str\n  age: int = 20\n\
 interface Named: Printable:\n  name() -> str\n\
 enum Status:\n  ready\n  done\n\
-fn make(name: str) -> User:\n  User(name = name, age = 20)\n\
+fn make(name: str) -> User:\n  User(name: name, age: 20)\n\
 fn User.greet(prefix: str):\n  out(\"$prefix $self\")\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
@@ -533,7 +558,7 @@ fn User.greet(prefix: str):\n  out(\"$prefix $self\")\n";
 
     #[test]
     fn parses_precedence_postfix_lists_and_ranges() {
-        let (file, diagnostics) = parse("value: list(int) = @(user.score + 2 * 3, 0..=10)\n");
+        let (file, diagnostics) = parse("value: list[int] = @[user.score + 2 * 3, 0..=10]\n");
         assert!(!diagnostics.has_errors());
         let Item::Statement(Stmt::Binding {
             annotation: Some(TypeExpr::Applied { .. }),
@@ -560,8 +585,46 @@ fn User.greet(prefix: str):\n  out(\"$prefix $self\")\n";
     }
 
     #[test]
+    fn parses_canonical_collections_data_and_postfix_indexing() {
+        let source = "data Box[T]:\n  value: T\nfn main():\n  values: array[int, 2] = [1, 2]\n  items: list[int] = @[1, 2]\n  scores: map[str, int] = (\"a\": 1)\n  box = Box[int](value: values[0])\n  scores[\"a\"]\n";
+        let (file, diagnostics) = parse(source);
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
+        let Item::Function(main) = &file.items[1] else {
+            panic!("expected main function")
+        };
+        assert!(matches!(
+            main.body.statements[3],
+            Stmt::Binding {
+                value: Expr::Call { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body.statements[4],
+            Stmt::Expression(Expr::Subscript { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_removed_parenthesized_type_and_list_syntax() {
+        for source in [
+            "fn main():\n  value: list(int) = @[]\n",
+            "fn main():\n  value: map(str, int) = ()\n",
+            "fn main():\n  value: array(int, 3) = [1, 2, 3]\n",
+            "fn main():\n  value: result(int, str) = ok(1)\n",
+            "fn main():\n  value = @(1, 2, 3)\n",
+        ] {
+            let (_, diagnostics) = parse(source);
+            assert!(
+                diagnostics.has_errors(),
+                "legacy syntax was accepted: {source}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_attributes_on_declarations_without_list_literal_regression() {
-        let source = "@repr(C)\ndata Point:\n  x: f32\n  y: f32\nitems = @(1, 2, 3)\n";
+        let source = "@repr(C)\ndata Point:\n  x: f32\n  y: f32\nitems = @[1, 2, 3]\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
         let Item::Data(data) = &file.items[0] else {
@@ -667,7 +730,7 @@ text = match status:\n  ready: \"Ready\"\n  done: \"Done\"\n";
 
     #[test]
     fn parses_result_constructors_patterns_and_question_operator() {
-        let source = "fn load() -> result(int, str):\n  ok(1)\nfn main() -> result(int, str):\n  value = load()?\n  match ok(value):\n    ok(number): ok(number)\n    err(message): err(message)\n";
+        let source = "fn load() -> result[int, str]:\n  ok(1)\nfn main() -> result[int, str]:\n  value = load()?\n  match ok(value):\n    ok(number): ok(number)\n    err(message): err(message)\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
         let Item::Function(function) = &file.items[1] else {
@@ -691,6 +754,22 @@ text = match status:\n  ready: \"Ready\"\n  done: \"Done\"\n";
             arms[1].pattern,
             vut_ast::MatchPattern::ResultErr { .. }
         ));
+    }
+
+    #[test]
+    fn parses_default_parameters() {
+        let source = "fn connect(host: str, timeout: int = 10) -> int:\n  timeout\n";
+        let (file, diagnostics) = parse(source);
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
+        let Item::Function(function) = &file.items[0] else {
+            panic!("expected function")
+        };
+        assert_eq!(function.parameters.len(), 2);
+        assert!(function.parameters[0].default.is_none());
+        let Some(default) = &function.parameters[1].default else {
+            panic!("expected a default value")
+        };
+        assert!(matches!(default, Expr::Integer { .. }));
     }
 
     #[test]
@@ -885,14 +964,14 @@ fn classify(shape: Shape) -> str:\n  match shape:\n    point: \"p\"\n    circle(
 
     #[test]
     fn parses_or_range_string_and_list_patterns() {
-        let source = "fn f(v: int) -> int:\n  match v:\n    1 or 2: 1\n    3..=9: 2\n    _: 3\nfn g(s: str) -> int:\n  match s:\n    \"hi\": 1\n    _: 2\nfn h(xs: list(int)) -> int:\n  match xs:\n    @(a, b): a\n    @(rest..): 1\n    @(): 0\nfn i(b: bool) -> int:\n  match b:\n    true: 1\n    false: 0\n";
+        let source = "fn f(v: int) -> int:\n  match v:\n    1 or 2: 1\n    3..=9: 2\n    _: 3\nfn g(s: str) -> int:\n  match s:\n    \"hi\": 1\n    _: 2\nfn h(xs: list[int]) -> int:\n  match xs:\n    @[a, b]: a\n    @[rest..]: 1\n    @[]: 0\nfn i(b: bool) -> int:\n  match b:\n    true: 1\n    false: 0\n";
         let (_, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
     }
 
     #[test]
     fn parses_vutcon_spawn_expressions() {
-        let source = "fn calc() -> int:\n  1\n\nasync fn main():\n  a = vut(() => calc())\n  b = vut(fn():\n    value = calc()\n    value * 2\n  )\n  x = await a\n  y = await b\n  job: vutcon(int) = a\n  out(\"$(x + y)\")\n";
+        let source = "fn calc() -> int:\n  1\n\nasync fn main():\n  a = vut(() => calc())\n  b = vut(fn():\n    value = calc()\n    value * 2\n  )\n  x = await a\n  y = await b\n  job: vutcon[int] = a\n  out(\"$(x + y)\")\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
         let spawns = file
@@ -918,7 +997,7 @@ fn classify(shape: Shape) -> str:\n  match shape:\n    point: \"p\"\n    circle(
 
     #[test]
     fn parses_multiple_generic_bounds() {
-        let source = "interface A:\n  a() -> int\ninterface B:\n  b() -> int\nfn use(T: A + B)(value: T) -> int:\n  value.a()\n";
+        let source = "interface A:\n  a() -> int\ninterface B:\n  b() -> int\nfn use[T: A + B](value: T) -> int:\n  value.a()\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
         let function = file
@@ -935,7 +1014,7 @@ fn classify(shape: Shape) -> str:\n  match shape:\n    point: \"p\"\n    circle(
 
     #[test]
     fn parses_generic_declarations_and_bounds() {
-        let source = "interface Comparable:\n  compare(other: int) -> int\n\ndata Box(T):\n  value: T\n\ndata Pair(A, B):\n  first: A\n  second: B\n\ninterface Container(T):\n  get() -> T\n\nfn identity(T)(value: T) -> T:\n  value\n\nfn max(T: Comparable)(a: T, b: T) -> T:\n  a\n\nfn plain(value: int) -> int:\n  value\n";
+        let source = "interface Comparable:\n  compare(other: int) -> int\n\ndata Box[T]:\n  value: T\n\ndata Pair[A, B]:\n  first: A\n  second: B\n\ninterface Container[T]:\n  get() -> T\n\nfn identity[T](value: T) -> T:\n  value\n\nfn max[T: Comparable](a: T, b: T) -> T:\n  a\n\nfn plain(value: int) -> int:\n  value\n";
         let (file, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
         let functions: Vec<_> = file
@@ -964,7 +1043,7 @@ fn classify(shape: Shape) -> str:\n  match shape:\n    point: \"p\"\n    circle(
 
     #[test]
     fn parses_variadic_parameters_and_spread_arguments() {
-        let source = "fn sum(...values: int) -> int:\n  values.len()\nfn label(prefix: str, ...rest: str) -> str:\n  prefix\nfn main():\n  xs = @(1, 2)\n  out(\"x\")\n  s = sum(...xs)\n  out(\"$(s)\")\n";
+        let source = "fn sum(...values: int) -> int:\n  values.len()\nfn label(prefix: str, ...rest: str) -> str:\n  prefix\nfn main():\n  xs = @[1, 2]\n  out(\"x\")\n  s = sum(...xs)\n  out(\"$(s)\")\n";
         let (_, diagnostics) = parse(source);
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.as_slice());
     }

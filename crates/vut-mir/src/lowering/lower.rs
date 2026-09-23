@@ -8,6 +8,7 @@ use vut_source::Span;
 use vut_types::{SemanticResult, Type};
 
 use super::builder::Builder;
+use super::ir::{ClosureCapture, ClosureLayout};
 use super::monomorph::lower_instances;
 use super::uses::count_uses;
 use super::{
@@ -19,7 +20,13 @@ pub fn lower(hir: &HirProgram, semantics: &SemanticResult, pointer_size: usize) 
     let base_layouts = LayoutTable::from_semantics(semantics, pointer_size);
     let instances = lower_instances(hir, semantics, pointer_size, &base_layouts);
     let call_sites = instances.call_sites.clone();
-    let mut program = lower_program(hir, semantics, pointer_size, &call_sites);
+    let mut program = lower_program(
+        hir,
+        semantics,
+        pointer_size,
+        &call_sites,
+        &instances.templates,
+    );
     program.merge_instances(instances);
     program.interface_vtables = super::interface::build_vtables(&program.functions, semantics);
     super::future::lower(&mut program);
@@ -35,12 +42,47 @@ pub(crate) fn lower_program(
     semantics: &SemanticResult,
     pointer_size: usize,
     call_instances: &HashMap<Span, SymbolId>,
+    instance_templates: &HashMap<SymbolId, SymbolId>,
 ) -> Program {
     let layouts = LayoutTable::from_semantics(semantics, pointer_size);
+    // Precompute heap environment layouts for every capturing closure body so
+    // both the body lowering and the creation site share one layout.
+    let mut closure_layouts: HashMap<SymbolId, ClosureLayout> = HashMap::new();
+    for module in &hir.modules {
+        for declaration in &module.declarations {
+            let HirDeclaration::Function(function) = declaration else {
+                continue;
+            };
+            if !function.is_closure || !function.type_parameters.is_empty() {
+                continue;
+            }
+            if let Some(captures) = semantics.closure_captures.get(&function.span)
+                && !captures.is_empty()
+            {
+                closure_layouts.insert(function.symbol, closure_layout(captures, &layouts));
+            }
+        }
+    }
     let references: HashMap<_, _> = hir
         .resolved_references
         .iter()
         .map(|item| (item.span, item.symbol))
+        .collect();
+    let parameter_names: HashMap<SymbolId, Vec<String>> = hir
+        .modules
+        .iter()
+        .flat_map(|module| &module.declarations)
+        .filter_map(|declaration| match declaration {
+            HirDeclaration::Function(function) => Some((
+                function.symbol,
+                function
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.name.clone())
+                    .collect(),
+            )),
+            _ => None,
+        })
         .collect();
     let mut functions = Vec::new();
     let mut external_functions = Vec::new();
@@ -84,6 +126,7 @@ pub(crate) fn lower_program(
                     });
                     continue;
                 };
+                let closure_layout = closure_layouts.get(&function.symbol).cloned();
                 let mut builder = Builder {
                     semantics,
                     layouts: &layouts,
@@ -101,6 +144,9 @@ pub(crate) fn lower_program(
                     references: &references,
                     lambda_symbols: &hir.lambda_symbols,
                     field_defaults: &semantics.data_field_defaults,
+                    parameter_defaults: &semantics.parameter_defaults,
+                    parameter_names: &parameter_names,
+                    instance_templates,
                     call_instances,
                     loop_targets: Vec::new(),
                     terminated: HashSet::new(),
@@ -108,16 +154,32 @@ pub(crate) fn lower_program(
                     tail_type: None,
                     narrowed: Vec::new(),
                     conditional_depth: 0,
-                    receiver_local: function.receiver.map(|_| LocalId(0)),
+                    receiver_local: function
+                        .receiver
+                        .map(|_| LocalId(usize::from(closure_layout.is_some()))),
                     pattern_borrowed: false,
+                    borrowed_locals: HashSet::new(),
                     variadic_param: None,
+                    pending_writeback: Vec::new(),
                     diagnostics: vut_diagnostics::DiagnosticSink::new(),
+                    constant_depth: 0,
                 };
-                let parameter_offset = usize::from(function.receiver.is_some());
+                let env_offset = usize::from(closure_layout.is_some());
+                if closure_layout.is_some() {
+                    let int_type = semantics
+                        .types
+                        .iter()
+                        .position(|ty| matches!(ty, Type::Int))
+                        .map(TypeId);
+                    let env_local = builder.add_local("$env".into(), None, function.span);
+                    builder.initialized.insert(env_local);
+                    builder.local_data[env_local.0].ty = int_type;
+                }
+                let parameter_offset = env_offset + usize::from(function.receiver.is_some());
                 if let Some(receiver) = function.receiver {
-                    builder.add_local("self".into(), None, function.span);
-                    builder.initialized.insert(LocalId(0));
-                    builder.local_data[0].ty = semantics.types.iter().position(|ty| matches!(ty, Type::Data(symbol) | Type::Enum(symbol) if *symbol == receiver)).map(TypeId);
+                    let receiver_local = builder.add_local("self".into(), None, function.span);
+                    builder.initialized.insert(receiver_local);
+                    builder.local_data[receiver_local.0].ty = semantics.types.iter().position(|ty| matches!(ty, Type::Data(symbol) | Type::Enum(symbol) if *symbol == receiver)).map(TypeId);
                 }
                 let mut variadic_param = None;
                 let variadic = signature.and_then(|signature| signature.variadic);
@@ -155,6 +217,14 @@ pub(crate) fn lower_program(
                     }
                 }
                 builder.variadic_param = variadic_param;
+                if let Some(layout) = &closure_layout {
+                    let names = semantics
+                        .closure_captures
+                        .get(&function.span)
+                        .cloned()
+                        .unwrap_or_default();
+                    builder.setup_closure_captures(layout, &names, function.span);
+                }
                 let returned = builder.lower_statements(&body.statements);
                 if !builder.is_terminated() {
                     let returned = return_type
@@ -171,13 +241,15 @@ pub(crate) fn lower_program(
                     symbol: function.symbol,
                     receiver: function.receiver,
                     parameter_count: function.parameters.len()
+                        + env_offset
                         + usize::from(function.receiver.is_some())
                         + usize::from(variadic.is_some()),
                     locals: builder.local_data,
                     blocks: builder.blocks,
                     entry: BlockId(0),
                     return_type,
-                    is_async: function.is_async,
+                    is_async: function.is_async
+                        || semantics.async_symbols.contains(&function.symbol),
                     frame_param: None,
                     is_poll: false,
                     out_param: None,
@@ -194,7 +266,29 @@ pub(crate) fn lower_program(
         diagnostics,
         frames: std::collections::HashMap::new(),
         awaits: std::collections::HashMap::new(),
+        closure_layouts,
     };
     program.interface_vtables = super::interface::build_vtables(&program.functions, semantics);
     program
+}
+
+/// Computes aligned byte offsets for a closure environment from its capture
+/// types.
+fn closure_layout(captures: &[(String, TypeId)], layouts: &LayoutTable) -> ClosureLayout {
+    let mut offset = 0_usize;
+    let mut alignment = 1_usize;
+    let mut fields = Vec::with_capacity(captures.len());
+    for (_, ty) in captures {
+        let info = &layouts.types[ty.0];
+        let align = info.alignment.max(1);
+        alignment = alignment.max(align);
+        offset = offset.div_ceil(align) * align;
+        fields.push(ClosureCapture { ty: *ty, offset });
+        offset += info.size.max(1);
+    }
+    ClosureLayout {
+        size: offset,
+        alignment,
+        captures: fields,
+    }
 }

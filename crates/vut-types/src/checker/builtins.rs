@@ -1,5 +1,6 @@
 //! Builtin method resolution and construction helpers.
 use super::context::Context;
+use super::numeric::{numeric_cast_target, numeric_kind};
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
@@ -20,7 +21,7 @@ impl Analyzer<'_> {
                         codes::E1003,
                         "invalid bytes constructor",
                         span,
-                        "`bytes()` takes no arguments; use `list(u8).to_bytes()` for conversion",
+                        "`bytes()` takes no arguments; use `list[u8].to_bytes()` for conversion",
                     );
                     return Some(self.intern(Type::Error));
                 }
@@ -36,7 +37,7 @@ impl Analyzer<'_> {
                         codes::E1003,
                         "invalid bytes conversion",
                         span,
-                        "`bytes.from_list` takes one positional `list(u8)` argument",
+                        "`bytes.from_list` takes one positional `list[u8]` argument",
                     );
                     return Some(self.intern(Type::Error));
                 }
@@ -48,7 +49,7 @@ impl Analyzer<'_> {
                     expected,
                     arguments[0].value.span(),
                     codes::E1003,
-                    "bytes conversion requires list(u8)",
+                    "bytes conversion requires list[u8]",
                 );
                 self.builtin_calls
                     .insert(span, BuiltinFunction::BytesFromList);
@@ -85,6 +86,74 @@ impl Analyzer<'_> {
         }
     }
 
+    /// `channel[T](capacity: n)`: creates a typed channel. `capacity` defaults to
+    /// zero (unbuffered rendezvous) and must be a non-negative `int`.
+    pub(super) fn try_channel_constructor(
+        &mut self,
+        module: &Module,
+        callee: &Expr,
+        arguments: &[vut_ast::Argument],
+        span: Span,
+        context: &mut Context,
+    ) -> Option<TypeId> {
+        let Expr::Subscript {
+            object,
+            types: Some(types),
+            span: subscript_span,
+            ..
+        } = callee
+        else {
+            return None;
+        };
+        let Expr::Name(name) = object.as_ref() else {
+            return None;
+        };
+        if name.text != "channel" {
+            return None;
+        }
+        if types.len() != 1 {
+            self.error(
+                codes::E1003,
+                "invalid channel type",
+                *subscript_span,
+                "`channel[T]` takes exactly one element type",
+            );
+            return Some(self.intern(Type::Error));
+        }
+        let element = self.resolve_type(module, &types[0]);
+        let int = self.intern(Type::Int);
+        for argument in arguments {
+            if argument.name.as_ref().map(|name| name.text.as_str()) != Some("capacity") {
+                self.error(
+                    codes::E1003,
+                    "invalid channel constructor",
+                    argument.span,
+                    "`channel[T]` takes only the optional named `capacity:` argument",
+                );
+            }
+            let actual = self.expr(module, &argument.value, context, Some(int));
+            self.compatible(
+                actual,
+                int,
+                argument.value.span(),
+                codes::E1003,
+                "channel capacity must be an `int`",
+            );
+            if let Expr::Integer { text, span } = &argument.value
+                && text.trim_start().starts_with('-')
+            {
+                self.error(
+                    codes::E1003,
+                    "invalid channel capacity",
+                    *span,
+                    "channel capacity must be non-negative",
+                );
+            }
+        }
+        self.builtin_calls.insert(span, BuiltinFunction::ChannelNew);
+        Some(self.intern(Type::Channel(element)))
+    }
+
     pub(super) fn try_builtin_call(
         &mut self,
         module: &Module,
@@ -110,7 +179,7 @@ impl Analyzer<'_> {
             {
                 self.error(
                     codes::E1028,
-                    "join is only available for list(str)",
+                    "join is only available for list[str]",
                     member.span,
                     "convert elements to strings first, for example with `map`",
                 );
@@ -126,7 +195,7 @@ impl Analyzer<'_> {
                     codes::E2005,
                     "method is not available for arrays",
                     member.span,
-                    "use `list(T)` / `@(...)` when a growable collection is required",
+                    "use `list[T]` / `@[...]` when a growable collection is required",
                 );
                 return Some(self.intern(Type::Error));
             }
@@ -153,8 +222,27 @@ impl Analyzer<'_> {
                 &format!("index must be less than array length {length}"),
             );
         }
-        self.arguments(module, &signature, arguments, span, context, false);
+        let required = signature.parameters.len();
+        self.arguments(
+            module, &signature, arguments, required, span, context, false,
+        );
         self.builtin_calls.insert(span, builtin);
+        if matches!(
+            builtin,
+            BuiltinFunction::ChannelSend | BuiltinFunction::ChannelRecv
+        ) {
+            if !context.in_async && !context.in_spawn_callable {
+                self.error(
+                    codes::E6011,
+                    "channel operation outside async context",
+                    span,
+                    "`send` and `recv` suspend the enclosing task; use them inside an `async fn` or a `vut(...)` callable",
+                );
+            }
+            if let Some(symbol) = context.current_function {
+                self.async_symbols.insert(symbol);
+            }
+        }
         Some(signature.result)
     }
 
@@ -309,6 +397,18 @@ impl Analyzer<'_> {
                 },
             )),
             (Type::Bytes, _) => self.builtin_bytes_method(name),
+            (Type::Channel(element), "send") => Some((
+                BuiltinFunction::ChannelSend,
+                Signature {
+                    parameters: vec![("value".into(), *element)],
+                    result: void,
+                },
+            )),
+            (Type::Channel(element), "recv") => Some((
+                BuiltinFunction::ChannelRecv,
+                no_args(self.intern(Type::Optional(*element))),
+            )),
+            (Type::Channel(_), "close") => Some((BuiltinFunction::ChannelClose, no_args(void))),
             (Type::Variadic(_), "len") => Some((BuiltinFunction::VariadicLen, no_args(int))),
             (Type::Variadic(element), "at") => Some((
                 BuiltinFunction::VariadicAt,
@@ -398,6 +498,24 @@ impl Analyzer<'_> {
         owner: TypeId,
         name: &str,
     ) -> Option<(BuiltinFunction, Signature)> {
+        if !self.is_numeric(owner) {
+            return None;
+        }
+        // Explicit numeric conversions (`to_i8`, `to_u64`, `to_usize`, ...) are
+        // available on every numeric type and produce the destination type.
+        if let Some(from) = numeric_kind(&self.types[owner.0])
+            && let Some((to, target)) = numeric_cast_target(name)
+        {
+            let no_args = |result| Signature {
+                parameters: Vec::new(),
+                result,
+            };
+            let destination = self.intern(target);
+            return Some((
+                BuiltinFunction::NumericCast { from, to },
+                no_args(destination),
+            ));
+        }
         let is_float = match &self.types[owner.0] {
             Type::Float => true,
             Type::Int => false,
@@ -467,7 +585,14 @@ impl Analyzer<'_> {
             (true, "round") => Some((BuiltinFunction::FloatRound, no_args(float))),
             (true, "trunc") => Some((BuiltinFunction::FloatTrunc, no_args(float))),
             (true, "sqrt") => Some((BuiltinFunction::FloatSqrt, no_args(float))),
-            (true, "to_int") => Some((BuiltinFunction::FloatToInt, no_args(int))),
+            (true, "fma") => Some((
+                BuiltinFunction::FloatFma,
+                Signature {
+                    parameters: vec![("multiplier".into(), float), ("addend".into(), float)],
+                    result: float,
+                },
+            )),
+            (true, "copysign") => Some((BuiltinFunction::FloatCopysign, one(float, float))),
             (true, "is_nan") => Some((BuiltinFunction::FloatIsNan, no_args(bool_ty))),
             (true, "is_finite") => Some((BuiltinFunction::FloatIsFinite, no_args(bool_ty))),
             _ => None,

@@ -7,8 +7,8 @@ reflection, runtime type metadata, or runtime name lookup. A value is turned
 into text by a **compile-time display conversion** driven by its static type.
 
 ```vut
-out(User(a = 1))     # User(a = 1)
-out(@(1, 2, 3))      # [1, 2, 3]
+out(User(a: 1))     # User(a: 1)
+out(@[1, 2, 3])      # [1, 2, 3]
 out("user=$user")    # interpolation uses the same conversion
 ```
 
@@ -19,9 +19,9 @@ scalars     int, float, and sized numerics
 str         bare at the top level, quoted when nested
 bool        true / false
 bytes       [104, 105]
-list(T)     [element, element, ...]
-array(T,N)  [element, element, ...]
-data        Name(field = value, ...)
+list[T]     [element, element, ...]
+[T,N]  [element, element, ...]
+data        Name(field: value, ...)
 enum        variant / variant(payload, ...)
 result      ok(value) / err(error)
 opaque      <function>, <vutcon>, <resource>, <future>, <dyn>, <ptr>
@@ -37,7 +37,7 @@ opaque      <function>, <vutcon>, <resource>, <future>, <dyn>, <ptr>
 | `str` (nested) | `"quoted"` |
 | `bytes` | `[b0, b1, ...]` |
 | `list` / `array` | `[a, b, c]`, empty `[]` |
-| `data` | `Name(field = value, ...)`, unit `Name()` |
+| `data` | `Name(field: value, ...)`, unit `Name()` |
 | `enum` | unit `variant`; payload `variant(a, b)` |
 | `result` | `ok(value)` / `err(error)` |
 
@@ -67,7 +67,7 @@ non-`str` operands.
 
 ## 6. Deferred
 
-- `map(K, V)` is displayed as `<map>` (map value access is `optional`).
+- `map[K, V]` is displayed as `<map>` (map value access is `optional`).
 - A user-defined `to_str`/display override is not supported yet.
 
 ## 7. Non-displayable values

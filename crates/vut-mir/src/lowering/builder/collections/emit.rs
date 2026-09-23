@@ -27,7 +27,7 @@ impl Builder<'_> {
             .map(TypeId)
     }
 
-    /// The interned `list(element)` type, if any.
+    /// The interned `list[element]` type, if any.
     pub(super) fn list_type(&self, element: TypeId) -> Option<TypeId> {
         self.semantics
             .types
@@ -63,6 +63,7 @@ impl Builder<'_> {
     pub(super) fn int_binary(&mut self, op: BinaryOp, left: ValueId, right: ValueId) -> ValueId {
         let value = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value,
             op,
             left,
@@ -96,7 +97,7 @@ impl Builder<'_> {
         Some(length)
     }
 
-    /// Emits a `list(T)` allocation with the element layout and ownership
+    /// Emits a `list[T]` allocation with the element layout and ownership
     /// callbacks plus an optional preallocated capacity.
     pub(super) fn emit_list_new(
         &mut self,

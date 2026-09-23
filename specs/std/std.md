@@ -66,7 +66,7 @@ All modules must follow Vut conventions.
 Expected failures use:
 
 ```vut
-result(T, E)
+result[T, E]
 ```
 
 Normal absence uses optional values where appropriate:
@@ -129,7 +129,7 @@ Conceptually:
 
 ```vut
 interface Reader:
-  read(buffer: bytes) -> result(usize, IoError)
+  read(buffer: bytes) -> result[usize, IoError]
 ```
 
 However, if mutable caller-provided `bytes` is incompatible with the final Vut bytes API, design an equivalent API consistent with the actual ownership model.
@@ -147,9 +147,9 @@ Provide a writer interface:
 
 ```vut
 interface Writer:
-  write(data: bytes) -> result(usize, IoError)
+  write(data: bytes) -> result[usize, IoError]
 
-  flush() -> result(null, IoError)
+  flush() -> result[unit, IoError]
 ```
 
 `write()` may write fewer bytes than requested.
@@ -159,11 +159,11 @@ Provide helpers for completing operations.
 Conceptually:
 
 ```vut
-reader.read_all() -> result(bytes, IoError)
+reader.read_all() -> result[bytes, IoError]
 
-reader.read_exact(size: usize) -> result(bytes, IoError)
+reader.read_exact(size: usize) -> result[bytes, IoError]
 
-writer.write_all(data: bytes) -> result(null, IoError)
+writer.write_all(data: bytes) -> result[unit, IoError]
 ```
 
 Exact method signatures may adapt to the actual Vut ownership model, but semantics must remain clear.
@@ -185,9 +185,9 @@ lines
 Conceptually:
 
 ```vut
-reader.read_to_str() -> result(str, IoError)
+reader.read_to_str() -> result[str, IoError]
 
-reader.read_line() -> result(str?, IoError)
+reader.read_line() -> result[str?, IoError]
 ```
 
 For `read_line()`:
@@ -215,7 +215,7 @@ Provide a generic stream copy helper.
 Conceptually:
 
 ```vut
-io.copy(reader, writer) -> result(u64, IoError)
+io.copy(reader, writer) -> result[u64, IoError]
 ```
 
 Return the number of bytes copied.
@@ -414,7 +414,7 @@ path.is_relative(value: str) -> bool
 
 path.normalize(value: str) -> str
 
-path.components(value: str) -> list(str)
+path.components(value: str) -> list[str]
 
 path.separator() -> str
 ```
@@ -475,7 +475,7 @@ If an API is provided to convert a relative path to absolute form, distinguish i
 Possible API:
 
 ```vut
-path.absolute(value: str) -> result(str, PathError)
+path.absolute(value: str) -> result[str, PathError]
 ```
 
 This may require current working directory information.
@@ -584,13 +584,13 @@ Do not allow permission errors to masquerade as nonexistent paths in APIs where 
 Provide binary reading:
 
 ```vut
-fs.read(path: str) -> result(bytes, FsError)
+fs.read(path: str) -> result[bytes, FsError]
 ```
 
 Provide text reading:
 
 ```vut
-fs.read_str(path: str) -> result(str, FsError)
+fs.read_str(path: str) -> result[str, FsError]
 ```
 
 `read_str` must validate UTF-8.
@@ -606,9 +606,9 @@ Do not silently replace invalid bytes.
 Provide:
 
 ```vut
-fs.write(path: str, data: bytes) -> result(null, FsError)
+fs.write(path: str, data: bytes) -> result[unit, FsError]
 
-fs.write_str(path: str, data: str) -> result(null, FsError)
+fs.write_str(path: str, data: str) -> result[unit, FsError]
 ```
 
 Define whether `write`:
@@ -634,9 +634,9 @@ Document this explicitly.
 Provide:
 
 ```vut
-fs.append(path: str, data: bytes) -> result(null, FsError)
+fs.append(path: str, data: bytes) -> result[unit, FsError]
 
-fs.append_str(path: str, data: str) -> result(null, FsError)
+fs.append_str(path: str, data: str) -> result[unit, FsError]
 ```
 
 Append must create or fail according to a clearly documented policy.
@@ -650,15 +650,15 @@ Prefer predictable cross-platform behavior.
 Provide:
 
 ```vut
-fs.create_dir(path: str) -> result(null, FsError)
+fs.create_dir(path: str) -> result[unit, FsError]
 
-fs.create_dir_all(path: str) -> result(null, FsError)
+fs.create_dir_all(path: str) -> result[unit, FsError]
 
-fs.remove_dir(path: str) -> result(null, FsError)
+fs.remove_dir(path: str) -> result[unit, FsError]
 
-fs.remove_dir_all(path: str) -> result(null, FsError)
+fs.remove_dir_all(path: str) -> result[unit, FsError]
 
-fs.read_dir(path: str) -> result(list(DirectoryEntry), FsError)
+fs.read_dir(path: str) -> result[list[DirectoryEntry], FsError]
 ```
 
 `create_dir`:
@@ -694,11 +694,11 @@ must be implemented carefully
 Provide:
 
 ```vut
-fs.remove_file(path: str) -> result(null, FsError)
+fs.remove_file(path: str) -> result[unit, FsError]
 
-fs.copy(from: str, to: str) -> result(u64, FsError)
+fs.copy(from: str, to: str) -> result[u64, FsError]
 
-fs.rename(from: str, to: str) -> result(null, FsError)
+fs.rename(from: str, to: str) -> result[unit, FsError]
 ```
 
 `copy` should return bytes copied when meaningful.
@@ -738,7 +738,7 @@ Lazy metadata retrieval is acceptable.
 Provide:
 
 ```vut
-fs.metadata(path: str) -> result(Metadata, FsError)
+fs.metadata(path: str) -> result[Metadata, FsError]
 ```
 
 `Metadata` should expose useful portable information:
@@ -763,11 +763,11 @@ metadata.is_dir() -> bool
 
 metadata.readonly() -> bool
 
-metadata.created() -> result(Timestamp, FsError)
+metadata.created() -> result[Timestamp, FsError]
 
-metadata.modified() -> result(Timestamp, FsError)
+metadata.modified() -> result[Timestamp, FsError]
 
-metadata.accessed() -> result(Timestamp, FsError)
+metadata.accessed() -> result[Timestamp, FsError]
 ```
 
 Platform limitations must produce an error or optional result rather than fabricated values.
@@ -797,7 +797,7 @@ permissions.set_readonly(value: bool)
 And:
 
 ```vut
-fs.set_permissions(path, permissions) -> result(null, FsError)
+fs.set_permissions(path, permissions) -> result[unit, FsError]
 ```
 
 Do not attempt to force Unix permission bits into Windows as if they have identical semantics.
@@ -859,9 +859,9 @@ Conceptually:
 
 ```vut
 options = OpenOptions(
-  read = true,
-  write = true,
-  create = true
+  read: true,
+  write: true,
+  create: true
 )
 
 file = options.open(path)?
@@ -1017,7 +1017,7 @@ This should be used only when useful for broad platform behavior.
 Provide:
 
 ```vut
-os.home_dir() -> result(str, OsError)
+os.home_dir() -> result[str, OsError]
 ```
 
 Do not assume a home directory always exists.
@@ -1031,7 +1031,7 @@ Do not silently return an empty string.
 Provide:
 
 ```vut
-os.temp_dir() -> result(str, OsError)
+os.temp_dir() -> result[str, OsError]
 ```
 
 Return the platform's appropriate temporary directory.
@@ -1047,9 +1047,9 @@ For consistency, choose one canonical location and document it.
 Recommended:
 
 ```vut
-os.current_dir() -> result(str, OsError)
+os.current_dir() -> result[str, OsError]
 
-os.set_current_dir(path: str) -> result(null, OsError)
+os.set_current_dir(path: str) -> result[unit, OsError]
 ```
 
 Do not expose duplicate canonical APIs in both `fs` and `os`.
@@ -1061,7 +1061,7 @@ Do not expose duplicate canonical APIs in both `fs` and `os`.
 Provide:
 
 ```vut
-os.current_exe() -> result(str, OsError)
+os.current_exe() -> result[str, OsError]
 ```
 
 Return the current executable path when supported.
@@ -1134,7 +1134,7 @@ Environment APIs should be separate from generic OS information.
 Provide:
 
 ```vut
-env.get(name: str) -> result(str?, EnvError)
+env.get(name: str) -> result[str?, EnvError]
 ```
 
 Distinguish:
@@ -1172,7 +1172,7 @@ If this cannot reliably distinguish malformed platform values, document the beha
 Provide:
 
 ```vut
-env.set(name: str, value: str) -> result(null, EnvError)
+env.set(name: str, value: str) -> result[unit, EnvError]
 ```
 
 ---
@@ -1182,7 +1182,7 @@ env.set(name: str, value: str) -> result(null, EnvError)
 Provide:
 
 ```vut
-env.remove(name: str) -> result(null, EnvError)
+env.remove(name: str) -> result[unit, EnvError]
 ```
 
 ---
@@ -1192,10 +1192,10 @@ env.remove(name: str) -> result(null, EnvError)
 Provide:
 
 ```vut
-env.all() -> result(map(str, str), EnvError)
+env.all() -> result[map[str, str], EnvError]
 ```
 
-If `map(str, str)` API is not yet mature enough, use the nearest stable collection representation rather than inventing a new collection.
+If `map[str, str]` API is not yet mature enough, use the nearest stable collection representation rather than inventing a new collection.
 
 ---
 
@@ -1204,7 +1204,7 @@ If `map(str, str)` API is not yet mature enough, use the nearest stable collecti
 Provide:
 
 ```vut
-env.args() -> list(str)
+env.args() -> list[str]
 ```
 
 This contains program arguments in a documented form.
@@ -1554,13 +1554,13 @@ Conceptually:
 ```vut
 command.arg("--version")
 
-command.args(@("status", "--short"))
+command.args(@["status", "--short"])
 ```
 
 Use Vut's canonical list syntax:
 
 ```vut
-@(...)
+@[...]
 ```
 
 Do not use `[]`.
@@ -1607,7 +1607,7 @@ or equivalent.
 Provide:
 
 ```vut
-command.spawn() -> result(Child, ProcessError)
+command.spawn() -> result[Child, ProcessError]
 ```
 
 `spawn()` starts the process and returns a child handle.
@@ -1623,7 +1623,7 @@ Provide simple run-and-wait behavior.
 Conceptually:
 
 ```vut
-command.status() -> result(ExitStatus, ProcessError)
+command.status() -> result[ExitStatus, ProcessError]
 ```
 
 This:
@@ -1641,7 +1641,7 @@ returns exit status
 Provide:
 
 ```vut
-command.output() -> result(Output, ProcessError)
+command.output() -> result[Output, ProcessError]
 ```
 
 `Output` contains:
@@ -1709,16 +1709,31 @@ Conceptually:
 ```vut
 child.id() -> u32
 
-child.wait() -> result(ExitStatus, ProcessError)
+child.wait() -> result[ExitStatus, ProcessError]
 
-child.try_wait() -> result(ExitStatus?, ProcessError)
+child.try_wait() -> result[ExitStatus?, ProcessError]
 
-child.kill() -> result(null, ProcessError)
+child.kill() -> result[unit, ProcessError]
 ```
 
 ---
 
 # 9.10 Child Standard Streams
+
+### Child and pipe lifetime (normative)
+
+Dropping `Child` closes/releases only the native handles and pipe endpoints it
+still owns. It never terminates the process, implicitly kills it, or implicitly
+waits/reaps it. Process lifetime is independent of the Vut Child handle.
+Termination requires explicit `child.kill()`; waiting/reaping requires explicit
+`child.wait()`. Closing a process handle is not process termination.
+
+After explicit wait/reap, resource drop only cleans remaining handles; it does
+not wait or kill again. Explicit kill does not remove the requirement for
+exactly-once handle cleanup. Pipe extraction transfers ownership out of Child:
+Child no longer closes that endpoint, and dropping the extracted pipe closes
+only that endpoint, never the Child process. Early return and failed spawn must
+have deterministic, exactly-once resource cleanup, without double-close/UAF.
 
 Support configurable:
 
@@ -1751,6 +1766,13 @@ piped
 ```
 
 Do not expose raw native handles as the primary safe API.
+
+The public enum variants are `Stdio.inherit`, `Stdio.null_device` and
+`Stdio.piped`. `null_device` names the null mode because `null` is reserved.
+Unconfigured spawn/status streams inherit; unconfigured output captures stdout
+and stderr. `child.stdin()`, `child.stdout()` and `child.stderr()` transfer their
+configured pipe endpoints once; absent or already-extracted endpoints return an
+I/O error rather than duplicating ownership.
 
 When piped:
 

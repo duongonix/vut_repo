@@ -73,7 +73,7 @@ fn variadic_int_accepts_zero_or_more_arguments() {
 
 #[test]
 fn variadic_supports_len_at_iteration_and_spread() {
-    let source = "fn sum(...values: int) -> int:\n  total = 0\n  for value in values:\n    total = total + value\n  total\n\nfn first(...values: int) -> int:\n  if values.len() == 0:\n    return 0\n  values.at(0)\n\nfn main():\n  items = @(10, 20, 30)\n  spread = sum(...items)\n  out(\"spread=$spread\")\n  head = first(7, 8)\n  out(\"head=$head\")\n  empty = first()\n  out(\"empty=$empty\")\n";
+    let source = "fn sum(...values: int) -> int:\n  total = 0\n  for value in values:\n    total = total + value\n  total\n\nfn first(...values: int) -> int:\n  if values.len() == 0:\n    return 0\n  values.at(0)\n\nfn main():\n  items = @[10, 20, 30]\n  spread = sum(...items)\n  out(\"spread=$spread\")\n  head = first(7, 8)\n  out(\"head=$head\")\n  empty = first()\n  out(\"empty=$empty\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "spread=60\nhead=7\nempty=0\n");
@@ -81,7 +81,7 @@ fn variadic_supports_len_at_iteration_and_spread() {
 
 #[test]
 fn variadic_str_elements_and_forwarding_do_not_leak() {
-    let source = "fn join(...parts: str) -> str:\n  out = \"\"\n  for part in parts:\n    out = out + part\n  out\n\nfn count(...parts: str) -> int:\n  total = 0\n  for part in parts:\n    total = total + part.byte_len()\n  total\n\nfn forward(...parts: str) -> int:\n  count(...parts)\n\nfn main():\n  joined = join(\"a\", \"b\", \"c\")\n  out(\"join=$joined\")\n  items = @(\"x\", \"yy\", \"zzz\")\n  total = count(...items)\n  out(\"count=$total\")\n  forwarded = forward(\"aa\", \"bb\")\n  out(\"forward=$forwarded\")\n  empty = join()\n  out(\"empty=$empty\")\n";
+    let source = "fn join(...parts: str) -> str:\n  out = \"\"\n  for part in parts:\n    out = out + part\n  out\n\nfn count(...parts: str) -> int:\n  total = 0\n  for part in parts:\n    total = total + part.byte_len()\n  total\n\nfn forward(...parts: str) -> int:\n  count(...parts)\n\nfn main():\n  joined = join(\"a\", \"b\", \"c\")\n  out(\"join=$joined\")\n  items = @[\"x\", \"yy\", \"zzz\"]\n  total = count(...items)\n  out(\"count=$total\")\n  forwarded = forward(\"aa\", \"bb\")\n  out(\"forward=$forwarded\")\n  empty = join()\n  out(\"empty=$empty\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "join=abc\ncount=6\nforward=4\nempty=\n");
@@ -89,7 +89,7 @@ fn variadic_str_elements_and_forwarding_do_not_leak() {
 
 #[test]
 fn variadic_of_arrays_and_data_aggregates() {
-    let source = "data Point:\n  x: int\n  y: int\n\nfn sum_x(...points: Point) -> int:\n  total = 0\n  for point in points:\n    total = total + point.x\n  total\n\nfn rows_sum(...rows: array(int, 2)) -> int:\n  total = 0\n  for row in rows:\n    total = total + row.at(0) + row.at(1)\n  total\n\nfn main():\n  points = sum_x(Point(x = 1, y = 2), Point(x = 3, y = 4))\n  out(\"points=$points\")\n  rows = rows_sum(array(1, 2), array(3, 4))\n  out(\"rows=$rows\")\n";
+    let source = "data Point:\n  x: int\n  y: int\n\nfn sum_x(...points: Point) -> int:\n  total = 0\n  for point in points:\n    total = total + point.x\n  total\n\nfn rows_sum(...rows: array[int, 2]) -> int:\n  total = 0\n  for row in rows:\n    total = total + row.at(0) + row.at(1)\n  total\n\nfn main():\n  points = sum_x(Point(x: 1, y: 2), Point(x: 3, y: 4))\n  out(\"points=$points\")\n  rows = rows_sum([1, 2], [3, 4])\n  out(\"rows=$rows\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "points=4\nrows=10\n");
@@ -97,7 +97,7 @@ fn variadic_of_arrays_and_data_aggregates() {
 
 #[test]
 fn variadic_spread_of_array() {
-    let source = "fn sum(...values: int) -> int:\n  total = 0\n  for value in values:\n    total = total + value\n  total\n\nfn main():\n  items: array(int, 3) = array(1, 2, 3)\n  result = sum(...items)\n  out(\"arr=$result\")\n";
+    let source = "fn sum(...values: int) -> int:\n  total = 0\n  for value in values:\n    total = total + value\n  total\n\nfn main():\n  items: array[int, 3] = [1, 2, 3]\n  result = sum(...items)\n  out(\"arr=$result\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "arr=6\n");
@@ -122,7 +122,7 @@ fn variadic_parameter_must_be_last() {
 #[test]
 fn spread_requires_a_variadic_parameter() {
     let codes = diagnostic_codes(
-        "fn plain(a: int) -> int:\n  a\nfn main():\n  xs = @(1, 2)\n  result = plain(...xs)\n  out(\"$result\")\n",
+        "fn plain(a: int) -> int:\n  a\nfn main():\n  xs = @[1, 2]\n  result = plain(...xs)\n  out(\"$result\")\n",
     );
     assert!(codes.iter().any(|code| code == "E7013"), "{codes:?}");
 }

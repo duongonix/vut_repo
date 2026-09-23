@@ -12,3 +12,13 @@ Semantic tokens refine identifiers whose roles are known to the resolver. They
 must not blanket-classify unresolved identifiers as properties, or cover lexical
 escapes/interpolation with a single string token. Token ranges are non-overlapping,
 single-line UTF-16 ranges; synthetic declarations must not color unrelated source.
+
+Safe rename is resolver-backed and operates on one symbol identity, never on text
+matching. `textDocument/prepareRename` must reject unresolved, synthetic, builtin,
+dependency and standard-library declarations. The replacement must lex as exactly
+one non-keyword Vut identifier and must not collide with another symbol in the
+relevant module, lexical namespace, or receiver method namespace. A successful
+rename edits the declaration and every resolved project reference across files,
+using each file's own UTF-16 coordinate mapping. If any affected source is not an
+editable project file, the entire rename is rejected instead of returning a
+partial edit.

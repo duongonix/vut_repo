@@ -79,6 +79,16 @@ pub extern "C" fn vut_rt_bounds_panic_v1(op: i64, index: i64, length: i64) -> ! 
     unsafe { vut_rt_panic_v1(message.as_ptr(), message.len()) }
 }
 
+/// Traps with a formatted numeric-conversion message. Used by checked
+/// integer/float conversions that would otherwise silently wrap or truncate.
+#[unsafe(no_mangle)]
+pub extern "C" fn vut_rt_numeric_panic_v1(value: i64) -> ! {
+    let message = format!("numeric conversion: value {value} is out of range");
+    // SAFETY: `message` is a live `String`; the pointer and length are valid for
+    // the duration of the call, which never returns.
+    unsafe { vut_rt_panic_v1(message.as_ptr(), message.len()) }
+}
+
 /// Returns `index` when it is a valid index for `length`, otherwise traps.
 /// Generated code uses this for inline (array) accesses.
 #[unsafe(no_mangle)]

@@ -22,16 +22,22 @@ pub extern "C" fn vut_rt_os_family_v1() -> *mut ManagedString {
 }
 
 fn home_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(std::path::PathBuf::from)
+}
+
+fn path_reply(path: &Path) -> *mut ManagedBytes {
+    path.to_str().map_or_else(
+        || abi::err(abi::INVALID_DATA, "path is not valid UTF-8"),
+        abi::ok_text,
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_os_home_dir_v1() -> *mut ManagedBytes {
     home_dir().map_or_else(
         || abi::err(abi::NOT_FOUND, "home directory is not available"),
-        |path| abi::ok_text(&path.to_string_lossy()),
+        |path| path_reply(&path),
     )
 }
 
@@ -46,7 +52,7 @@ pub extern "C" fn vut_rt_os_temp_dir_v1() -> *mut ManagedBytes {
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_os_current_dir_v1() -> *mut ManagedBytes {
     match std::env::current_dir() {
-        Ok(path) => abi::ok_text(&path.to_string_lossy()),
+        Ok(path) => path_reply(&path),
         Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
     }
 }
@@ -69,7 +75,7 @@ pub unsafe extern "C" fn vut_rt_os_set_current_dir_v1(
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_os_current_exe_v1() -> *mut ManagedBytes {
     match std::env::current_exe() {
-        Ok(path) => abi::ok_text(&path.to_string_lossy()),
+        Ok(path) => path_reply(&path),
         Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
     }
 }

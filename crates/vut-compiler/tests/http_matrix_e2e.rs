@@ -222,7 +222,7 @@ fn multi_value_response_headers_are_preserved() {
 fn multi_value_request_headers_reach_the_server() {
     let (base, _connections) = start_server();
     let source = format!(
-        "import http\n\nfn show_headers(response: http.Response):\n  body = text_or(response)\n  a = body.contains(\"x-multi: a\")\n  b = body.contains(\"x-multi: b\")\n  out(\"a=$a b=$b\")\n\n{TEXT_OR}\nasync fn main():\n  request = http.Request(method = http.Method.get, url = \"{base}/headers\")\n  request.header(\"X-Multi\", \"a\")\n  request.header(\"X-Multi\", \"b\")\n  match await request.send():\n    ok(response): show_headers(response)\n    err(error): out(\"error\")\n"
+        "import http\n\nfn show_headers(response: http.Response):\n  body = text_or(response)\n  a = body.contains(\"x-multi: a\")\n  b = body.contains(\"x-multi: b\")\n  out(\"a=$a b=$b\")\n\n{TEXT_OR}\nasync fn main():\n  request = http.Request(method: http.Method.get, url: \"{base}/headers\")\n  request.header(\"X-Multi\", \"a\")\n  request.header(\"X-Multi\", \"b\")\n  match await request.send():\n    ok(response): show_headers(response)\n    err(error): out(\"error\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -233,7 +233,7 @@ fn multi_value_request_headers_reach_the_server() {
 fn query_parameters_are_percent_encoded() {
     let (base, _connections) = start_server();
     let source = format!(
-        "import http\n\n{TEXT_OR}\nfn show_query(response: http.Response):\n  body = text_or(response)\n  out(\"query=$body\")\n\nasync fn main():\n  request = http.Request(method = http.Method.get, url = \"{base}/query\")\n  request.query(\"q\", \"a b&c\")\n  match await request.send():\n    ok(response): show_query(response)\n    err(error): out(\"error\")\n"
+        "import http\n\n{TEXT_OR}\nfn show_query(response: http.Response):\n  body = text_or(response)\n  out(\"query=$body\")\n\nasync fn main():\n  request = http.Request(method: http.Method.get, url: \"{base}/query\")\n  request.query(\"q\", \"a b&c\")\n  match await request.send():\n    ok(response): show_query(response)\n    err(error): out(\"error\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -299,7 +299,7 @@ fn a_client_with_only_a_timeout_still_follows_redirects() {
 fn response_stream_reads_a_buffered_body() {
     let (base, _connections) = start_server();
     let source = format!(
-        "import http\n\nfn chunk_len(outcome: result(bytes, http.Error)) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream) -> int:\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n  total\n\nasync fn main():\n  match await http.get(\"{base}/\"):\n    ok(response): out(\"total=$(await drain(response.stream()))\")\n    err(error): out(\"error\")\n"
+        "import http\n\nfn chunk_len(outcome: result[bytes, http.Error]) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream) -> int:\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n  total\n\nasync fn main():\n  match await http.get(\"{base}/\"):\n    ok(response): out(\"total=$(await drain(response.stream()))\")\n    err(error): out(\"error\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -310,7 +310,7 @@ fn response_stream_reads_a_buffered_body() {
 fn request_send_stream_streams_any_method() {
     let (base, _connections) = start_server();
     let source = format!(
-        "import http\n\nfn chunk_len(outcome: result(bytes, http.Error)) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn main():\n  request = http.Request(method = http.Method.post, url = \"{base}/echo\")\n  request.body_text(\"streamed\")\n  stream = request.send_stream()\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n  out(\"total=$total\")\n"
+        "import http\n\nfn chunk_len(outcome: result[bytes, http.Error]) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn main():\n  request = http.Request(method: http.Method.post, url: \"{base}/echo\")\n  request.body_text(\"streamed\")\n  stream = request.send_stream()\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n  out(\"total=$total\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");

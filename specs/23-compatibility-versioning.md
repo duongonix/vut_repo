@@ -244,7 +244,7 @@ A published package version is immutable.
 If:
 
 ```text
-math/v1.2.0
+math/1.2.0
 ```
 
 has been published, its contents must not be changed.
@@ -252,7 +252,7 @@ has been published, its contents must not be changed.
 A fix becomes:
 
 ```text
-math/v1.2.1
+math/1.2.1
 ```
 
 ---
@@ -697,7 +697,7 @@ The fundamental currently locked rule remains:
 ```text
 repository is not a package
 package is a subdirectory
-version is a v<semver> subdirectory
+version is a <semver> subdirectory (no `v` prefix)
 ```
 
 Changing this would be a major VPM/package-format compatibility decision.

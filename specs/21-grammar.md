@@ -291,32 +291,32 @@ Exponent forms and special numeric syntax require explicit specification before 
 
 ```text
 list_literal :=
-    "@(" [ expression { "," expression } [ "," ] ] ")"
+    "@[" [ expression { "," expression } [ "," ] ] "]"
 
 array_literal :=
-    "array(" expression { "," expression } [ "," ] ")"
+    "[" expression { "," expression } [ "," ] "]"
 
 array_type :=
-    "array(" type_expression "," integer_literal ")"
+    "[" type_expression "," integer_literal "]"
 ```
 
 Examples:
 
 ```vut
-@()
-@(1, 2, 3)
-@(
+@[]
+@[1, 2, 3]
+@[
   1,
   2,
   3
-)
+]
 ```
 
 The parser accepts layout/newlines according to delimiter rules.
 
 Type homogeneity is a semantic rule, not a parser rule.
-An array literal must contain at least one element. `@(...)` always denotes a
-list literal and `array(...)` always denotes an array literal; contextual
+An array literal must contain at least one element. `@[...]` always denotes a
+list literal and `[...]` always denotes an array literal; contextual
 reinterpretation is forbidden.
 
 ---
@@ -387,22 +387,22 @@ math at Vector`) are equivalent ways to refer to the same type.
 
 ```text
 parameterized_type :=
-    identifier "(" type_expression { "," type_expression } ")"
+    identifier "[" type_expression { "," type_expression } "]"
 ```
 
 Examples:
 
 ```text
-list(int)
-map(str, int)
-result(User, Error)
-ptr(u8)
+list[int]
+map[str, int]
+result[User, Error]
+ptr[u8]
 ```
 
 Vut does not use angle-bracket generic application.
 
 A parameterized type name is unqualified; qualified generic application such as
-`math.Page(int)` is not part of the grammar.
+`math.Page[int]` is not part of the grammar.
 
 ---
 
@@ -528,17 +528,21 @@ parameter_list :=
     parameter { "," parameter }
 
 parameter :=
-    identifier ":" type_expression
+    identifier ":" type_expression [ "=" expression ]
   | "..." identifier ":" type_expression
 ```
 
 A `...name: T` parameter is the trailing variadic parameter: it accepts zero or
 more arguments of type `T` and must be last.
 
+A `name: T = expression` parameter declares a default value. A parameter with a
+default may be omitted by the caller, and required parameters must precede
+parameters with defaults.
+
 Example:
 
 ```vut
-fn add(a: int, b: int):
+fn add(a: int, b: int = 1):
   ...
 ```
 
@@ -629,8 +633,8 @@ Example:
 
 ```vut
 User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -1281,7 +1285,7 @@ parses as:
 ```
 
 `await` and `?` are independent mechanisms. `await` is only valid inside an
-`async fn`; `?` requires a `result(T, E)` operand.
+`async fn`; `?` requires a `result[T, E]` operand.
 
 The base of an `await` operand is not itself an `await`; nested awaits use
 parentheses or ordinary call arguments, for example:
@@ -1299,10 +1303,27 @@ await combine(await first())
 ```text
 postfix_expression :=
     primary_expression
-    { member_access | call_suffix | result_propagation }
+    { member_access | subscript | call_suffix | result_propagation }
+
+subscript := "[" type_expression { "," type_expression } "]"
+           | "[" expression "]"
 
 result_propagation := "?"
 ```
+
+A `[...]` suffix is either a generic application or a collection access. The
+reading is decided from symbol/type information, never from capitalization or a
+token-lookahead rule:
+
+* when the target is a generic function, method, data, enum, or interface
+  declaration and the bracketed content is a valid type-argument list, it is a
+  generic application: `parse[int](x)`, `convert[str, int](x)`, `foo[T](x)`,
+  `Box[int](value: 100)`;
+* otherwise it is a collection access on an array, list, or map: `values[0]`,
+  `parsers[i](x)`, `matrix[0][1]`.
+
+An explicit generic call records the same specialization as an inferred call, so
+`first[int](xs)` and `first(xs)` lower identically.
 
 This supports:
 
@@ -1369,10 +1390,14 @@ argument :=
   | "..." expression
 ```
 
-A `...expr` spread argument supplies a `list(T)`, `array(T, N)`, or another
+A `...expr` spread argument supplies a `list[T]`, `[T, N]`, or another
 variadic view to a trailing variadic parameter and must be the last argument.
 
 The semantic checker determines whether named arguments are accepted by the target callable.
+
+Named arguments may appear in any order and are matched to parameters by name.
+A call may omit trailing parameters that declare a default; the compiler
+supplies the declared default value.
 
 ---
 
@@ -1624,7 +1649,7 @@ Rules:
 arrow lambda parameters have no type annotations
 fn lambda parameters may be annotated
 parameter and return types may be inferred from an expected function type
-lambdas are non-capturing; they cannot reference enclosing locals
+lambdas may capture enclosing locals and parameters by value
 a named function may be used where a function type is expected
 ```
 
@@ -1661,7 +1686,7 @@ narrowing (`specs/optional/`), and result construction (`specs/result/`).
 2. Newlines terminate statements.
 3. Blocks use `:`.
 4. Semicolons are not required.
-5. Lists use `@()`.
+5. Lists use `@[]`.
 6. Parentheses group expressions but do not create tuples.
 8. Generic type application uses parentheses.
 9. `for` is the only loop keyword.

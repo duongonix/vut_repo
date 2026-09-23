@@ -1,4 +1,4 @@
-use crate::{PackageId, ResolvedGraph};
+use crate::{PackageId, PackageSnapshot, ResolvedGraph};
 use fs2::FileExt as _;
 use std::{
     fs::File,
@@ -47,6 +47,16 @@ impl Store {
         let marker = std::fs::read_to_string(path.join(".vpm-checksum"))?;
         Ok(marker.trim() == checksum && hash_directory(&path)? == checksum)
     }
+    /// `~/.vut/bin`: globally installed package commands.
+    #[must_use]
+    pub fn bin_dir(&self) -> PathBuf {
+        self.root.join("bin")
+    }
+    /// `~/.vut/cache`: VPM-managed caches (including ad-hoc exec builds).
+    #[must_use]
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join("cache")
+    }
     #[must_use]
     pub fn build_cache(&self, target: &str, release: bool) -> PathBuf {
         let target = target
@@ -64,41 +74,69 @@ impl Store {
             .join(target)
             .join(if release { "release" } else { "debug" })
     }
+    /// Installs one already-resolved package snapshot, verifying `checksum`.
+    ///
+    /// Returns `true` when the package was newly written to the store.
+    pub fn install_snapshot(
+        &self,
+        id: &PackageId,
+        snapshot: &PackageSnapshot,
+        checksum: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(self.root.join("packages"))?;
+        let lock_path = self.root.join("install.lock");
+        let lock = File::create(lock_path)?;
+        lock.lock_exclusive()?;
+        let result = self.place(id, snapshot, checksum);
+        lock.unlock()?;
+        result
+    }
+
     fn install_locked(&self, graph: &ResolvedGraph) -> Result<usize, Box<dyn std::error::Error>> {
         let mut installed = 0;
         for package in graph.packages.values() {
-            crate::package_validation::validate(&package.snapshot, &package.id, &package.checksum)?;
-            let destination = self.path(&package.id);
-            if destination.is_dir() {
-                if !self.has(&package.id, &package.checksum)? {
-                    return Err(format!(
-                        "installed package `{}` failed immutability check",
-                        package.id.name
-                    )
-                    .into());
-                }
-                continue;
-            }
-            let parent = destination.parent().ok_or("invalid store destination")?;
-            std::fs::create_dir_all(parent)?;
-            let staging = parent.join(format!(".{}.{}.tmp", package.id.name, std::process::id()));
-            if staging.exists() {
-                std::fs::remove_dir_all(&staging)?;
-            }
-            std::fs::create_dir(&staging)?;
-            for (relative, data) in &package.snapshot.files {
-                safe_write(&staging, relative, data)?;
-            }
-            std::fs::write(staging.join(".vpm-checksum"), &package.checksum)?;
-            match std::fs::rename(&staging, &destination) {
-                Ok(()) => installed += 1,
-                Err(_error) if destination.exists() => {
-                    std::fs::remove_dir_all(staging)?;
-                }
-                Err(error) => return Err(error.into()),
+            if self.place(&package.id, &package.snapshot, &package.checksum)? {
+                installed += 1;
             }
         }
         Ok(installed)
+    }
+
+    fn place(
+        &self,
+        id: &PackageId,
+        snapshot: &PackageSnapshot,
+        checksum: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        crate::package_validation::validate(snapshot, id, checksum)?;
+        let destination = self.path(id);
+        if destination.is_dir() {
+            if !self.has(id, checksum)? {
+                return Err(
+                    format!("installed package `{}` failed immutability check", id.name).into(),
+                );
+            }
+            return Ok(false);
+        }
+        let parent = destination.parent().ok_or("invalid store destination")?;
+        std::fs::create_dir_all(parent)?;
+        let staging = parent.join(format!(".{}.{}.tmp", id.name, std::process::id()));
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging)?;
+        }
+        std::fs::create_dir(&staging)?;
+        for (relative, data) in &snapshot.files {
+            safe_write(&staging, relative, data)?;
+        }
+        std::fs::write(staging.join(".vpm-checksum"), checksum)?;
+        match std::fs::rename(&staging, &destination) {
+            Ok(()) => Ok(true),
+            Err(_error) if destination.exists() => {
+                std::fs::remove_dir_all(staging)?;
+                Ok(false)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
     #[must_use]
     pub fn path(&self, id: &PackageId) -> PathBuf {
@@ -129,6 +167,17 @@ impl Store {
         path
     }
 }
+/// Files that participate in the package content checksum.
+fn is_hashed(path: &Path, root: &Path) -> bool {
+    if path.file_name().is_some_and(|name| name == ".vpm-checksum") {
+        return false;
+    }
+    path.strip_prefix(root).map_or(true, |relative| {
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        !crate::resolver::is_checksum_excluded(&relative)
+    })
+}
+
 fn hash_directory(root: &Path) -> io::Result<String> {
     fn visit(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
         let mut entries = std::fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
@@ -137,7 +186,7 @@ fn hash_directory(root: &Path) -> io::Result<String> {
             let path = entry.path();
             if path.is_dir() {
                 visit(root, &path, files)?;
-            } else if path.file_name().is_none_or(|name| name != ".vpm-checksum") {
+            } else if is_hashed(&path, root) {
                 files.push(
                     path.strip_prefix(root)
                         .map_err(io::Error::other)?
@@ -196,7 +245,7 @@ mod tests {
                     b"[package]\nname='math'\nversion='1.0.0'\n".to_vec(),
                 ),
                 (
-                    "src/lib.vut".into(),
+                    "src/mod.vut".into(),
                     b"fn answer() -> int:\n  42\n".to_vec(),
                 ),
             ]),
@@ -220,7 +269,7 @@ mod tests {
         };
         store.install(&graph).unwrap();
         assert!(store.has(&id, &checksum).unwrap());
-        std::fs::write(store.path(&id).join("src/lib.vut"), "mutated").unwrap();
+        std::fs::write(store.path(&id).join("src/mod.vut"), "mutated").unwrap();
         assert!(!store.has(&id, &checksum).unwrap());
         assert!(store.install(&graph).is_err());
         std::fs::remove_dir_all(root).unwrap();

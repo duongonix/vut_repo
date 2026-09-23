@@ -39,7 +39,7 @@ interface Encodable:
 # Types opt into typed decoding by providing a static `from_json`. The
 # compiler will eventually derive this for `data`/`enum` types.
 interface Decodable:
-  static from_json(value: Value) -> result(Self, Error)
+  static from_json(value: Value) -> result[Self, Error]
 
 enum Number:
   integer(value: int)
@@ -50,8 +50,8 @@ enum Value:
   boolean(value: bool)
   number(value: Number)
   string(value: str)
-  array(value: list(Value))
-  object(value: map(str, Value))
+  array(value: list[Value])
+  object(value: map[str, Value])
 
 data Parsed:
   value: Value
@@ -66,7 +66,7 @@ data KeyResult:
 # ---------------------------------------------------------------------------
 
 fn _error(kind: ErrorKind, message: str, line: int, column: int) -> Error:
-  Error(kind = kind, message = message, line = line, column = column)
+  Error(kind: kind, message: message, line: line, column: column)
 
 fn _type_error() -> Error:
   _error(ErrorKind.type_mismatch, "JSON value has an unexpected type", 0, 0)
@@ -104,16 +104,16 @@ fn _syntax(input: bytes, position: int, message: str) -> Error:
     _column_at(input, position)
   )
 
-fn _ok(value: Value, next: int) -> result(Parsed, Error):
-  ok(Parsed(value = value, next = next))
+fn _ok(value: Value, next: int) -> result[Parsed, Error]:
+  ok(Parsed(value: value, next: next))
 
-fn _fail(error: Error) -> result(Parsed, Error):
+fn _fail(error: Error) -> result[Parsed, Error]:
   err(error)
 
-fn _ok_value(value: Value) -> result(Value, Error):
+fn _ok_value(value: Value) -> result[Value, Error]:
   ok(value)
 
-fn _err_value(error: Error) -> result(Value, Error):
+fn _err_value(error: Error) -> result[Value, Error]:
   err(error)
 
 # ---------------------------------------------------------------------------
@@ -193,18 +193,18 @@ fn _utf8_len(lead: int) -> int:
     4
   result
 
-fn _parse_literal(input: bytes, position: int, expected: str, value: Value) -> result(Parsed, Error):
+fn _parse_literal(input: bytes, position: int, expected: str, value: Value) -> result[Parsed, Error]:
   end = position + expected.byte_len()
   if end > input.len():
     return _fail(_syntax(input, position, "unexpected end of input"))
   found = _slice_text(input, position, end)
-  result: result(Parsed, Error) = if found == expected:
+  result: result[Parsed, Error] = if found == expected:
     _ok(value, end)
   else:
     _fail(_syntax(input, position, "invalid literal"))
   result
 
-fn _parse_string(input: bytes, position: int) -> result(Parsed, Error):
+fn _parse_string(input: bytes, position: int) -> result[Parsed, Error]:
   text = ""
   pos = position + 1
   closed = false
@@ -250,12 +250,12 @@ fn _parse_string(input: bytes, position: int) -> result(Parsed, Error):
       else:
         text = text + _escape_byte(escape)
         pos = pos + 2
-  result: result(Parsed, Error) = if failed != "":
+  result: result[Parsed, Error] = if failed != "":
     _fail(_syntax(input, position, failed))
   elif not closed:
     _fail(_syntax(input, position, "unterminated string"))
   else:
-    _ok(Value.string(value = text), pos)
+    _ok(Value.string(value: text), pos)
   result
 
 fn _escape_byte(byte: int) -> str:
@@ -287,13 +287,13 @@ fn _scan_digits(input: bytes, position: int) -> int:
     result = result + 1
   result
 
-fn _ok_int(value: int) -> result(int, Error):
+fn _ok_int(value: int) -> result[int, Error]:
   ok(value)
 
-fn _err_int(error: Error) -> result(int, Error):
+fn _err_int(error: Error) -> result[int, Error]:
   err(error)
 
-fn _parse_int(input: bytes, start: int, end: int) -> result(int, Error):
+fn _parse_int(input: bytes, start: int, end: int) -> result[int, Error]:
   negative = _byte(input, start) == 45
   pos = if negative:
     start + 1
@@ -324,7 +324,7 @@ fn _parse_int(input: bytes, start: int, end: int) -> result(int, Error):
     return _ok_int(0 - accumulator)
   _ok_int(accumulator)
 
-fn _parse_number(input: bytes, position: int) -> result(Parsed, Error):
+fn _parse_number(input: bytes, position: int) -> result[Parsed, Error]:
   pos = position
   if _byte(input, pos) == 45:
     pos = pos + 1
@@ -351,33 +351,33 @@ fn _parse_number(input: bytes, position: int) -> result(Parsed, Error):
     if not _is_digit(_byte(input, pos)):
       return _fail(_syntax(input, position, "invalid exponent"))
     pos = _scan_digits(input, pos)
-  result: result(Parsed, Error) = if decimal:
+  result: result[Parsed, Error] = if decimal:
     text = _slice_text(input, position, pos)
-    _ok(Value.number(value = Number.decimal(value = text.to_f64())), pos)
+    _ok(Value.number(value: Number.decimal(value: text.to_f64())), pos)
   else:
     _integer_result(input, position, integer_end, pos)
   result
 
-fn _integer_result(input: bytes, start: int, end: int, pos: int) -> result(Parsed, Error):
+fn _integer_result(input: bytes, start: int, end: int, pos: int) -> result[Parsed, Error]:
   parsed = _parse_int(input, start, end)
-  result: result(Parsed, Error) = match parsed:
-    ok(value): _ok(Value.number(value = Number.integer(value = value)), pos)
+  result: result[Parsed, Error] = match parsed:
+    ok(value): _ok(Value.number(value: Number.integer(value: value)), pos)
     err(error): err(error)
   result
 
-fn _parse_value(input: bytes, position: int, depth: int) -> result(Parsed, Error):
+fn _parse_value(input: bytes, position: int, depth: int) -> result[Parsed, Error]:
   if depth > 128:
     return _fail(_syntax(input, position, "maximum nesting depth exceeded"))
   pos = _skip(input, position)
   if pos >= input.len():
     return _fail(_syntax(input, pos, "unexpected end of input"))
   byte = _byte(input, pos)
-  result: result(Parsed, Error) = if byte == 110:
+  result: result[Parsed, Error] = if byte == 110:
     _parse_literal(input, pos, "null", Value.null_value)
   elif byte == 116:
-    _parse_literal(input, pos, "true", Value.boolean(value = true))
+    _parse_literal(input, pos, "true", Value.boolean(value: true))
   elif byte == 102:
-    _parse_literal(input, pos, "false", Value.boolean(value = false))
+    _parse_literal(input, pos, "false", Value.boolean(value: false))
   elif byte == 34:
     _parse_string(input, pos)
   elif byte == 91:
@@ -390,100 +390,100 @@ fn _parse_value(input: bytes, position: int, depth: int) -> result(Parsed, Error
     _fail(_syntax(input, pos, "expected a JSON value"))
   result
 
-fn _array_begin(input: bytes, position: int, depth: int) -> result(Parsed, Error):
+fn _array_begin(input: bytes, position: int, depth: int) -> result[Parsed, Error]:
   pos = _skip(input, position + 1)
   if _byte(input, pos) == 93:
-    return _ok(Value.array(value = @()), pos + 1)
-  _array_from(input, pos, depth, @())
+    return _ok(Value.array(value: @[]), pos + 1)
+  _array_from(input, pos, depth, @[])
 
-fn _array_from(input: bytes, position: int, depth: int, items: list(Value)) -> result(Parsed, Error):
+fn _array_from(input: bytes, position: int, depth: int, items: list[Value]) -> result[Parsed, Error]:
   parsed = _parse_value(input, position, depth + 1)
-  result: result(Parsed, Error) = match parsed:
+  result: result[Parsed, Error] = match parsed:
     ok(entry): _array_sep(input, entry.next, depth, _push(items, entry.value))
     err(error): err(error)
   result
 
-fn _push(items: list(Value), value: Value) -> list(Value):
+fn _push(items: list[Value], value: Value) -> list[Value]:
   items.push(value)
   items
 
-fn _array_sep(input: bytes, position: int, depth: int, items: list(Value)) -> result(Parsed, Error):
+fn _array_sep(input: bytes, position: int, depth: int, items: list[Value]) -> result[Parsed, Error]:
   pos = _skip(input, position)
-  result: result(Parsed, Error) = if _byte(input, pos) == 44:
+  result: result[Parsed, Error] = if _byte(input, pos) == 44:
     _array_from(input, _skip(input, pos + 1), depth, items)
   elif _byte(input, pos) == 93:
-    _ok(Value.array(value = items), pos + 1)
+    _ok(Value.array(value: items), pos + 1)
   else:
     _fail(_syntax(input, pos, "expected `,` or `]`"))
   result
 
-fn _read_key(input: bytes, position: int) -> result(KeyResult, Error):
+fn _read_key(input: bytes, position: int) -> result[KeyResult, Error]:
   parsed = _parse_string(input, position)
-  result: result(KeyResult, Error) = match parsed:
+  result: result[KeyResult, Error] = match parsed:
     ok(entry): _key_result(entry.value, entry.next, input, position)
     err(error): err(error)
   result
 
-fn _key_result(value: Value, next: int, input: bytes, position: int) -> result(KeyResult, Error):
-  result: result(KeyResult, Error) = match value:
-    string(text): ok(KeyResult(key = text, next = next))
+fn _key_result(value: Value, next: int, input: bytes, position: int) -> result[KeyResult, Error]:
+  result: result[KeyResult, Error] = match value:
+    string(text): ok(KeyResult(key: text, next: next))
     _: err(_syntax(input, position, "expected object key"))
   result
 
-fn _object_begin(input: bytes, position: int, depth: int) -> result(Parsed, Error):
+fn _object_begin(input: bytes, position: int, depth: int) -> result[Parsed, Error]:
   pos = _skip(input, position + 1)
   if _byte(input, pos) == 125:
-    return _ok(Value.object(value = map()), pos + 1)
-  _object_from(input, pos, depth, map())
+    return _ok(Value.object(value: ()), pos + 1)
+  _object_from(input, pos, depth, ())
 
-fn _object_from(input: bytes, position: int, depth: int, entries: map(str, Value)) -> result(Parsed, Error):
+fn _object_from(input: bytes, position: int, depth: int, entries: map[str, Value]) -> result[Parsed, Error]:
   key = _read_key(input, _skip(input, position))
-  result: result(Parsed, Error) = match key:
+  result: result[Parsed, Error] = match key:
     ok(entry): _object_value(input, _skip(input, entry.next), depth, entries, entry.key)
     err(error): err(error)
   result
 
-fn _put(entries: map(str, Value), key: str, value: Value) -> map(str, Value):
+fn _put(entries: map[str, Value], key: str, value: Value) -> map[str, Value]:
   entries.set(key, value)
   entries
 
-fn _object_value(input: bytes, position: int, depth: int, entries: map(str, Value), key: str) -> result(Parsed, Error):
+fn _object_value(input: bytes, position: int, depth: int, entries: map[str, Value], key: str) -> result[Parsed, Error]:
   if _byte(input, position) != 58:
     return _fail(_syntax(input, position, "expected `:`"))
   value = _parse_value(input, _skip(input, position + 1), depth + 1)
-  result: result(Parsed, Error) = match value:
+  result: result[Parsed, Error] = match value:
     ok(entry): _object_sep(input, entry.next, depth, _put(entries, key, entry.value))
     err(error): err(error)
   result
 
-fn _object_sep(input: bytes, position: int, depth: int, entries: map(str, Value)) -> result(Parsed, Error):
+fn _object_sep(input: bytes, position: int, depth: int, entries: map[str, Value]) -> result[Parsed, Error]:
   pos = _skip(input, position)
-  result: result(Parsed, Error) = if _byte(input, pos) == 44:
+  result: result[Parsed, Error] = if _byte(input, pos) == 44:
     _object_from(input, pos + 1, depth, entries)
   elif _byte(input, pos) == 125:
-    _ok(Value.object(value = entries), pos + 1)
+    _ok(Value.object(value: entries), pos + 1)
   else:
     _fail(_syntax(input, pos, "expected `,` or `}`"))
   result
 
-fn parse(input: str) -> result(Value, Error):
+fn parse(input: str) -> result[Value, Error]:
   parse_bytes(input.to_bytes())
 
-fn parse_bytes(input: bytes) -> result(Value, Error):
+fn parse_bytes(input: bytes) -> result[Value, Error]:
   utf8 = input.to_str()
-  result: result(Value, Error) = match utf8:
+  result: result[Value, Error] = match utf8:
     ok(text): _parse_document(input)
     err(detail): err(_error(ErrorKind.invalid_utf8, "input is not valid UTF-8", 1, 1))
   result
 
-fn _parse_document(input: bytes) -> result(Value, Error):
+fn _parse_document(input: bytes) -> result[Value, Error]:
   parsed = _parse_value(input, 0, 0)
-  result: result(Value, Error) = match parsed:
+  result: result[Value, Error] = match parsed:
     ok(entry): _trailing(input, entry)
     err(error): err(error)
   result
 
-fn _trailing(input: bytes, entry: Parsed) -> result(Value, Error):
+fn _trailing(input: bytes, entry: Parsed) -> result[Value, Error]:
   trailing = _skip(input, entry.next)
   if trailing == input.len():
     return _ok_value(entry.value)
@@ -523,50 +523,50 @@ fn Value.is_object() -> bool:
     object(inner): true
     _: false
 
-fn Value.as_bool() -> result(bool, Error):
-  result: result(bool, Error) = match self:
+fn Value.as_bool() -> result[bool, Error]:
+  result: result[bool, Error] = match self:
     boolean(inner): ok(inner)
     _: err(_type_error())
   result
 
-fn Value.as_int() -> result(int, Error):
-  result: result(int, Error) = match self:
+fn Value.as_int() -> result[int, Error]:
+  result: result[int, Error] = match self:
     number(inner): inner.as_int()
     _: err(_type_error())
   result
 
-fn Value.as_float() -> result(float, Error):
-  result: result(float, Error) = match self:
+fn Value.as_float() -> result[float, Error]:
+  result: result[float, Error] = match self:
     number(inner): inner.as_float()
     _: err(_type_error())
   result
 
-fn Value.as_str() -> result(str, Error):
-  result: result(str, Error) = match self:
+fn Value.as_str() -> result[str, Error]:
+  result: result[str, Error] = match self:
     string(inner): ok(inner)
     _: err(_type_error())
   result
 
-fn Value.as_array() -> result(list(Value), Error):
-  result: result(list(Value), Error) = match self:
+fn Value.as_array() -> result[list[Value], Error]:
+  result: result[list[Value], Error] = match self:
     array(inner): ok(inner)
     _: err(_type_error())
   result
 
-fn Value.as_object() -> result(map(str, Value), Error):
-  result: result(map(str, Value), Error) = match self:
+fn Value.as_object() -> result[map[str, Value], Error]:
+  result: result[map[str, Value], Error] = match self:
     object(inner): ok(inner)
     _: err(_type_error())
   result
 
-fn Number.as_int() -> result(int, Error):
-  result: result(int, Error) = match self:
+fn Number.as_int() -> result[int, Error]:
+  result: result[int, Error] = match self:
     integer(inner): ok(inner)
     decimal(inner): err(_error(ErrorKind.type_mismatch, "number is not an integer", 0, 0))
   result
 
-fn Number.as_float() -> result(float, Error):
-  result: result(float, Error) = match self:
+fn Number.as_float() -> result[float, Error]:
+  result: result[float, Error] = match self:
     integer(inner): ok(inner.to_float())
     decimal(inner): ok(inner)
   result
@@ -588,32 +588,32 @@ fn Value.contains(key: str) -> bool:
     _: false
   result
 
-fn Value.get(key: str) -> result(Value, Error):
-  result: result(Value, Error) = match self:
+fn Value.get(key: str) -> result[Value, Error]:
+  result: result[Value, Error] = match self:
     object(entries): _object_lookup(entries, key)
     _: err(_type_error())
   result
 
-fn _object_lookup(entries: map(str, Value), key: str) -> result(Value, Error):
+fn _object_lookup(entries: map[str, Value], key: str) -> result[Value, Error]:
   if entries.contains_key(key):
     found: Value? = entries.get(key)
     if found != null:
       return _ok_value(found)
   _err_value(_missing_field(key))
 
-fn Value.keys() -> result(list(str), Error):
-  result: result(list(str), Error) = match self:
+fn Value.keys() -> result[list[str], Error]:
+  result: result[list[str], Error] = match self:
     object(entries): ok(entries.keys())
     _: err(_type_error())
   result
 
-fn Value.at(index: int) -> result(Value, Error):
-  result: result(Value, Error) = match self:
+fn Value.at(index: int) -> result[Value, Error]:
+  result: result[Value, Error] = match self:
     array(items): _array_lookup(items, index)
     _: err(_type_error())
   result
 
-fn _array_lookup(items: list(Value), index: int) -> result(Value, Error):
+fn _array_lookup(items: list[Value], index: int) -> result[Value, Error]:
   if index >= 0 and index < items.len():
     return _ok_value(items.at(index))
   _err_value(_error(ErrorKind.invalid_length, "array index is out of range", 0, 0))
@@ -636,22 +636,22 @@ fn value_null() -> Value:
   Value.null_value
 
 fn value_bool(value: bool) -> Value:
-  Value.boolean(value = value)
+  Value.boolean(value: value)
 
 fn value_int(value: int) -> Value:
-  Value.number(value = Number.integer(value = value))
+  Value.number(value: Number.integer(value: value))
 
 fn value_float(value: float) -> Value:
-  Value.number(value = Number.decimal(value = value))
+  Value.number(value: Number.decimal(value: value))
 
 fn value_str(value: str) -> Value:
-  Value.string(value = value)
+  Value.string(value: value)
 
-fn value_array(value: list(Value)) -> Value:
-  Value.array(value = value)
+fn value_array(value: list[Value]) -> Value:
+  Value.array(value: value)
 
-fn value_object(value: map(str, Value)) -> Value:
-  Value.object(value = value)
+fn value_object(value: map[str, Value]) -> Value:
+  Value.object(value: value)
 
 # ---------------------------------------------------------------------------
 # Typed encoding
@@ -667,12 +667,12 @@ fn encode_pretty(value: Encodable) -> str:
 # Typed decoding
 # ---------------------------------------------------------------------------
 
-fn decode(T: Decodable)(source: str) -> result(T, Error):
+fn decode[T: Decodable](source: str) -> result[T, Error]:
   match parse(source):
     ok(value): T.from_json(value)
     err(error): err(error)
 
-fn decode_bytes(T: Decodable)(input: bytes) -> result(T, Error):
+fn decode_bytes[T: Decodable](input: bytes) -> result[T, Error]:
   match parse_bytes(input):
     ok(value): T.from_json(value)
     err(error): err(error)
@@ -710,7 +710,7 @@ fn _write_number(value: Number) -> str:
 fn _newline_indent(indent: int, depth: int) -> str:
   10.to_char() + _spaces(indent * depth)
 
-fn _write_array(items: list(Value), pretty: bool, indent: int, depth: int) -> str:
+fn _write_array(items: list[Value], pretty: bool, indent: int, depth: int) -> str:
   out = "["
   index = 0
   for item in items:
@@ -724,7 +724,7 @@ fn _write_array(items: list(Value), pretty: bool, indent: int, depth: int) -> st
     out = out + _newline_indent(indent, depth)
   out + "]"
 
-fn _write_object(entries: map(str, Value), pretty: bool, indent: int, depth: int) -> str:
+fn _write_object(entries: map[str, Value], pretty: bool, indent: int, depth: int) -> str:
   keys = entries.keys()
   out = "{"
   index = 0

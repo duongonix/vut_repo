@@ -126,7 +126,7 @@ fn early_return_inserts_cleanup_before_its_exit_edge() {
 #[test]
 fn lowers_iterators_and_match_decisions_explicitly() {
     let p = program(
-        "enum Status:\n  pending\n  done\nfn main() -> str:\n  values: list(int) = @(1, 2)\n  for value, index in values:\n    value + index\n  status = Status.pending\n  match status:\n    pending: \"wait\"\n    done: \"done\"\n",
+        "enum Status:\n  pending\n  done\nfn main() -> str:\n  values: list[int] = @[1, 2]\n  for value, index in values:\n    value + index\n  status = Status.pending\n  match status:\n    pending: \"wait\"\n    done: \"done\"\n",
     );
     let instructions = p.functions[0]
         .blocks
@@ -216,7 +216,7 @@ fn lays_out_nested_repr_types_in_dependency_order() {
 #[test]
 fn lowers_result_construction_match_and_question_operator() {
     let p = program(
-        "fn load() -> result(int, str):\n  ok(1)\nfn main() -> result(int, str):\n  value = load()?\n  checked: result(int, str) = ok(value)\n  match checked:\n    ok(number): ok(number)\n    err(message): err(message)\n",
+        "fn load() -> result[int, str]:\n  ok(1)\nfn main() -> result[int, str]:\n  value = load()?\n  checked: result[int, str] = ok(value)\n  match checked:\n    ok(number): ok(number)\n    err(message): err(message)\n",
     );
     let instructions = p
         .functions
@@ -271,7 +271,7 @@ fn lowers_async_await_to_a_start_future_marker() {
 #[test]
 fn lowers_payload_enum_construction_and_matching() {
     let p = program(
-        "enum Shape:\n  point\n  circle(radius: float)\nfn area(s: Shape) -> float:\n  match s:\n    point: 0.0\n    circle(radius = r): r\nfn main() -> float:\n  area(Shape.circle(radius = 1.0))\n",
+        "enum Shape:\n  point\n  circle(radius: float)\nfn area(s: Shape) -> float:\n  match s:\n    point: 0.0\n    circle(radius = r): r\nfn main() -> float:\n  area(Shape.circle(radius: 1.0))\n",
     );
     let instructions = p
         .functions
@@ -362,7 +362,7 @@ fn tracks_multiple_sequential_awaits() {
 #[test]
 fn tracks_awaits_inside_conditionals_and_loops() {
     let p = program(
-        "async fn one() -> int:\n  1\nasync fn conditional(flag: bool) -> int:\n  if flag:\n    return await one()\n  0\nasync fn looping() -> int:\n  total = 0\n  for index in @(0, 1):\n    total = total + await one()\n  total\nasync fn main():\n  out(\"$(await conditional(true))\")\n",
+        "async fn one() -> int:\n  1\nasync fn conditional(flag: bool) -> int:\n  if flag:\n    return await one()\n  0\nasync fn looping() -> int:\n  total = 0\n  for index in @[0, 1]:\n    total = total + await one()\n  total\nasync fn main():\n  out(\"$(await conditional(true))\")\n",
     );
     assert!(
         p.awaits.values().flatten().count() >= 2,
@@ -562,7 +562,7 @@ fn converts_loop_async_body_into_a_poll_state_machine() {
 fn converts_iterable_loop_over_a_local_into_a_poll_state_machine() {
     // The iterator state is frame-resident so an iterable loop can suspend.
     let p = program(
-        "async fn one() -> int:\n  1\nasync fn looping() -> int:\n  total = 0\n  values: list(int) = @(0, 1, 2)\n  for value in values:\n    await one()\n    total = total + 1\n  total\nasync fn main():\n  out(\"$(await looping())\")\n",
+        "async fn one() -> int:\n  1\nasync fn looping() -> int:\n  total = 0\n  values: list[int] = @[0, 1, 2]\n  for value in values:\n    await one()\n    total = total + 1\n  total\nasync fn main():\n  out(\"$(await looping())\")\n",
     );
     let looping = p
         .functions
@@ -584,7 +584,7 @@ fn converts_iterable_loop_over_a_local_into_a_poll_state_machine() {
 #[test]
 fn higher_order_builtins_lower_inline_without_a_runtime_callback() {
     let p = program(
-        "fn double(x: int) -> int:\n  x * 2\nfn keep(x: int) -> bool:\n  x > 0\nfn combine(acc: int, x: int) -> int:\n  acc + x\nfn compare(a: int, b: int) -> int:\n  a - b\nfn main():\n  items = @(1, 2, 3)\n  items.map(double)\n  items.filter(keep)\n  items.fold(0, combine)\n  items.any(keep)\n  items.all(keep)\n  items.find_index(keep)\n  items.sort_by(compare)\n",
+        "fn double(x: int) -> int:\n  x * 2\nfn keep(x: int) -> bool:\n  x > 0\nfn combine(acc: int, x: int) -> int:\n  acc + x\nfn compare(a: int, b: int) -> int:\n  a - b\nfn main():\n  items = @[1, 2, 3]\n  items.map(double)\n  items.filter(keep)\n  items.fold(0, combine)\n  items.any(keep)\n  items.all(keep)\n  items.find_index(keep)\n  items.sort_by(compare)\n",
     );
     let instructions: Vec<_> = p
         .functions
@@ -624,7 +624,7 @@ fn higher_order_builtins_lower_inline_without_a_runtime_callback() {
 #[test]
 fn short_circuit_builtins_jump_directly_to_the_loop_exit() {
     let p = program(
-        "fn main():\n  items = @(1, 2, 3)\n  items.any(keep)\n\nfn keep(x: int) -> bool:\n  x > 2\n",
+        "fn main():\n  items = @[1, 2, 3]\n  items.any(keep)\n\nfn keep(x: int) -> bool:\n  x > 2\n",
     );
     let function = p
         .functions

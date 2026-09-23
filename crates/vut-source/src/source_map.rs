@@ -1,6 +1,7 @@
 //! Source storage and byte-accurate location mapping for the Vut compiler.
 
 use std::{
+    collections::HashMap,
     fmt, fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -114,6 +115,16 @@ impl SourceFile {
             line_starts: line_starts.into_boxed_slice(),
         }
     }
+    fn replace_text(&mut self, text: String) {
+        let mut line_starts = vec![0];
+        line_starts.extend(
+            text.bytes()
+                .enumerate()
+                .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+        );
+        self.text = Arc::from(text);
+        self.line_starts = line_starts.into_boxed_slice();
+    }
     #[must_use]
     pub const fn id(&self) -> SourceId {
         self.id
@@ -193,11 +204,15 @@ impl SourceFile {
 #[derive(Debug, Default)]
 pub struct SourceManager {
     files: Vec<SourceFile>,
+    paths: HashMap<PathBuf, SourceId>,
 }
 impl SourceManager {
     #[must_use]
-    pub const fn new() -> Self {
-        Self { files: Vec::new() }
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            paths: HashMap::new(),
+        }
     }
     pub fn add_text(&mut self, name: impl Into<String>, text: String) -> SourceId {
         let id = SourceId::from_index(self.files.len());
@@ -220,14 +235,28 @@ impl SourceManager {
         let text = String::from_utf8(bytes).map_err(|_| SourceError::InvalidUtf8 {
             name: path.display().to_string(),
         })?;
+        Ok(self.set_path_text(path, text))
+    }
+    /// Inserts or replaces a path-backed source while preserving its source ID.
+    pub fn set_path_text(&mut self, path: impl AsRef<Path>, text: String) -> SourceId {
+        let path = normalized_path(path.as_ref());
+        if let Some(id) = self.paths.get(&path).copied() {
+            self.files[id.index()].replace_text(text);
+            return id;
+        }
         let id = SourceId::from_index(self.files.len());
         self.files.push(SourceFile::new(
             id,
             path.display().to_string(),
-            Some(path.to_owned()),
+            Some(path.clone()),
             text,
         ));
-        Ok(id)
+        self.paths.insert(path, id);
+        id
+    }
+    #[must_use]
+    pub fn id_for_path(&self, path: impl AsRef<Path>) -> Option<SourceId> {
+        self.paths.get(&normalized_path(path.as_ref())).copied()
     }
     /// Returns a source file by ID.
     ///
@@ -248,6 +277,10 @@ impl SourceManager {
         self.files.is_empty()
     }
 }
+
+fn normalized_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_owned())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +290,16 @@ mod tests {
         let mut sources = SourceManager::new();
         assert_eq!(sources.add_text("a", String::new()).index(), 0);
         assert_eq!(sources.add_text("b", String::new()).index(), 1);
+    }
+    #[test]
+    fn path_overlay_reuses_source_id_and_rebuilds_line_index() {
+        let path = std::env::temp_dir().join("vut-source-overlay-stable.vut");
+        let mut sources = SourceManager::new();
+        let first = sources.set_path_text(&path, "one\n".into());
+        let second = sources.set_path_text(&path, "one\ntwo\n".into());
+        assert_eq!(first, second);
+        assert_eq!(sources.id_for_path(&path), Some(first));
+        assert_eq!(sources.get(first).unwrap().line_starts(), &[0, 4, 8]);
     }
     #[test]
     fn maps_utf8_offsets() {

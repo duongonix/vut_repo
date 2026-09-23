@@ -1,11 +1,11 @@
-# `map(K,V)` — every built-in method.
+# `map[K,V]` — every built-in method.
 #
 # Key iteration order is unspecified, so examples that print keys/values sort
 # them first. `get`/`remove` report a missing key through the optional model
 # (`V?`); `get_or` is the non-failing fallback.
 
 fn main():
-  scores: map(str, int) = map(("ann", 10), ("bob", 20))
+  scores: map[str, int] = ("ann": 10, "bob": 20)
   out("len:", scores.len(), "is_empty:", scores.is_empty())
 
   scores.reserve(16)
@@ -37,7 +37,7 @@ fn main():
   out("cleared_len:", scores.len())
 
   # Integer keys are supported too.
-  counts: map(int, str) = map((2, "two"), (1, "one"))
+  counts: map[int, str] = (2: "two", 1: "one")
   int_keys = counts.keys()
   int_keys.sort()
   out("int_keys:", int_keys)

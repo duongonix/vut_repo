@@ -512,7 +512,7 @@ Examples:
 ```vut
 age = 20
 name = "Ha"
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 The type checker should establish stable internal types.

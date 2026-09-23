@@ -271,7 +271,7 @@ Receiver Functions phải được thiết kế tương thích với generics.
 Conceptually:
 
 ```vut
-fn(Scope(T))(T) -> void
+fn(Scope[T])(T) -> void
 ```
 
 Không tạo generic subsystem riêng cho receiver.

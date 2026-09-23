@@ -1,10 +1,10 @@
-# `array(T,N)` — every built-in method.
+# `array[T,N]` — every built-in method.
 #
-# `array(T,N)` is fixed-size and stored inline; it never grows. `@(...)` builds
-# a `list(T)` instead. Out-of-range indexing traps at runtime.
+# `array[T,N]` is fixed-size and stored inline; it never grows. `@[...]` builds
+# a `list[T]` instead. Out-of-range indexing traps at runtime.
 
 fn main():
-  fixed = array(3, 1, 2)
+  fixed = [3, 1, 2]
   out("len:", fixed.len())
   out("at(0):", fixed.at(0))
 
@@ -26,7 +26,7 @@ fn main():
   out("list:", items)
   out("array_unchanged:", fixed)
 
-  zeros = array(0, 0, 0)
+  zeros = [0, 0, 0]
   zeros.fill(7)
   out("filled:", zeros)
 

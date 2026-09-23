@@ -68,7 +68,7 @@ fn functions_methods_parameters_and_types_keep_their_semantic_kinds() {
 
 #[test]
 fn lexical_scopes_are_not_overwritten_by_semantic_fallbacks() {
-    let text = "### documentation\n##\nmultiline comment 😀\n##\nMAX_SIZE = 10\nvalue = \"hello\\n\"\nitems = @(1, 2)\nitems.at(0)\nif true:\n  value\n";
+    let text = "### documentation\n##\nmultiline comment 😀\n##\nMAX_SIZE = 10\nvalue = \"hello\\n\"\nitems = @[1, 2]\nitems.at(0)\nif true:\n  value\n";
     assert!(decoded(text).is_empty());
 }
 

@@ -68,6 +68,8 @@ pub enum TokenKind {
     Comma,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     AtSign,
     Newline,
     Indent,

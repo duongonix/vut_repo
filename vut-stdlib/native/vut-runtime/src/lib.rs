@@ -17,10 +17,15 @@
 )]
 
 pub mod abi;
+mod count;
 mod env;
 mod fs;
+mod guard;
 pub mod http;
 mod io;
+mod math;
 mod os;
 mod process;
+mod random;
+mod resource;
 mod time;

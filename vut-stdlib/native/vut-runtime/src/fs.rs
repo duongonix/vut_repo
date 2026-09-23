@@ -2,19 +2,12 @@
 use std::ffi::c_void;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+mod metadata;
 
 use vut_runtime::abi::ManagedString;
 use vut_runtime::bytes::ManagedBytes;
 
 use crate::abi;
-
-unsafe extern "C" {
-    fn vut_rt_resource_new_v1(
-        ptr: *mut c_void,
-        drop_fn: Option<unsafe extern "C" fn(*mut c_void)>,
-    ) -> *mut c_void;
-}
 
 fn reply(result: std::io::Result<()>) -> *mut ManagedBytes {
     match result {
@@ -23,37 +16,14 @@ fn reply(result: std::io::Result<()>) -> *mut ManagedBytes {
     }
 }
 
-/// Nanoseconds since the Unix epoch, or `0` when the timestamp is unavailable
-/// or precedes the epoch. `0` is the "unavailable" sentinel for file times.
-fn system_time_nanos(value: &std::io::Result<SystemTime>) -> usize {
-    match value {
-        Ok(time) => match time.duration_since(UNIX_EPOCH) {
-            Ok(duration) => usize::try_from(duration.as_nanos()).unwrap_or(usize::MAX),
-            Err(_) => 0,
-        },
-        Err(_) => 0,
-    }
-}
-
 /// An owned open-file handle, or a deferred open error.
 ///
-/// The FFI cannot return `result(resource(T), E)`, so `open` always returns a
+/// The FFI cannot return `result[resource[T], E]`, so `open` always returns a
 /// resource; the caller checks [`vut_rt_fs_file_ok_v1`] and reads the error with
 /// [`vut_rt_fs_file_error_v1`]. The resource owns the file exactly once.
 struct FileHandle {
     file: Option<std::fs::File>,
     error: Option<(i32, String)>,
-}
-
-/// Closes and frees an owned file handle resource.
-///
-/// # Safety
-/// `ptr` must be null or a pointer produced by [`vut_rt_fs_open_v1`].
-unsafe extern "C" fn drop_file_handle(ptr: *mut c_void) {
-    if !ptr.is_null() {
-        // SAFETY: the pointer was produced by `Box::into_raw` in `vut_rt_fs_open_v1`.
-        drop(unsafe { Box::from_raw(ptr.cast::<FileHandle>()) });
-    }
 }
 
 #[unsafe(no_mangle)]
@@ -82,7 +52,8 @@ pub unsafe extern "C" fn vut_rt_fs_open_v1(
                 .truncate(truncate != 0)
                 .create(create != 0)
                 .create_new(create_new != 0);
-            match options.open(path) {
+            let owned = path.to_owned();
+            match vut_runtime::blocking::run(move || options.open(&owned)) {
                 Ok(file) => FileHandle {
                     file: Some(file),
                     error: None,
@@ -94,8 +65,7 @@ pub unsafe extern "C" fn vut_rt_fs_open_v1(
             }
         }
     };
-    let raw = Box::into_raw(Box::new(handle)).cast::<c_void>();
-    unsafe { vut_rt_resource_new_v1(raw, Some(drop_file_handle)) }
+    crate::resource::owned(handle)
 }
 
 /// Returns `1` when the handle wraps an open file, `0` when it carries an error.
@@ -161,21 +131,17 @@ pub unsafe extern "C" fn vut_rt_fs_file_read_v1(file: *mut c_void) -> *mut Manag
 /// # Safety
 /// `file` must be null or a raw `FileHandle`; `data` must be null or a live
 /// managed bytes handle.
-pub unsafe extern "C" fn vut_rt_fs_file_write_v1(
+pub unsafe extern "C" fn vut_rt_fs_file_write_v2(
     file: *mut c_void,
     data: *const ManagedBytes,
-) -> *mut ManagedBytes {
-    use std::io::Write as _;
+) -> *mut c_void {
     let Some(file) = (unsafe { open_file(file) }) else {
-        return abi::err(abi::INVALID_INPUT, "invalid file handle");
+        return crate::count::invalid("invalid file handle");
     };
     let Some(data) = (unsafe { abi::bytes(data) }) else {
-        return abi::err(abi::INVALID_INPUT, "invalid bytes");
+        return crate::count::invalid("invalid bytes");
     };
-    match file.write_all(data) {
-        Ok(()) => abi::ok(&(data.len() as i64).to_le_bytes()),
-        Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
-    }
+    crate::io::write_bytes(file, data)
 }
 
 #[unsafe(no_mangle)]
@@ -236,7 +202,8 @@ pub unsafe extern "C" fn vut_rt_fs_read_v1(path: *const ManagedString) -> *mut M
     let Some(path) = (unsafe { abi::text(path) }) else {
         return abi::err(abi::INVALID_INPUT, "invalid path");
     };
-    match fs::read(path) {
+    let owned = path.to_owned();
+    match vut_runtime::blocking::run(move || fs::read(&owned)) {
         Ok(data) => abi::ok(&data),
         Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
     }
@@ -249,7 +216,8 @@ pub unsafe extern "C" fn vut_rt_fs_read_str_v1(path: *const ManagedString) -> *m
     let Some(path) = (unsafe { abi::text(path) }) else {
         return abi::err(abi::INVALID_INPUT, "invalid path");
     };
-    match fs::read(path) {
+    let owned = path.to_owned();
+    match vut_runtime::blocking::run(move || fs::read(&owned)) {
         Ok(data) => match String::from_utf8(data) {
             Ok(value) => abi::ok_text(&value),
             Err(_) => abi::err(abi::INVALID_DATA, "file contents are not valid UTF-8"),
@@ -268,7 +236,11 @@ pub unsafe extern "C" fn vut_rt_fs_write_v1(
     let (Some(path), Some(data)) = (unsafe { abi::text(path) }, unsafe { abi::bytes(data) }) else {
         return abi::err(abi::INVALID_INPUT, "invalid path or data");
     };
-    reply(fs::write(path, data))
+    let owned_path = path.to_owned();
+    let owned_data = data.to_vec();
+    reply(vut_runtime::blocking::run(move || {
+        fs::write(&owned_path, &owned_data)
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -281,7 +253,11 @@ pub unsafe extern "C" fn vut_rt_fs_write_str_v1(
     let (Some(path), Some(data)) = (unsafe { abi::text(path) }, unsafe { abi::text(data) }) else {
         return abi::err(abi::INVALID_INPUT, "invalid path or text");
     };
-    reply(fs::write(path, data.as_bytes()))
+    let owned_path = path.to_owned();
+    let owned_data = data.as_bytes().to_vec();
+    reply(vut_runtime::blocking::run(move || {
+        fs::write(&owned_path, &owned_data)
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -312,10 +288,19 @@ pub unsafe extern "C" fn vut_rt_fs_append_str_v1(
 
 fn append(path: &str, data: &[u8]) -> *mut ManagedBytes {
     use std::io::Write as _;
-    match fs::OpenOptions::new().create(true).append(true).open(path) {
-        Ok(mut file) => reply(file.write_all(data)),
-        Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
-    }
+    let owned_path = path.to_owned();
+    let owned_data = data.to_vec();
+    let result = vut_runtime::blocking::run(move || {
+        match fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&owned_path)
+        {
+            Ok(mut file) => file.write_all(&owned_data),
+            Err(error) => Err(error),
+        }
+    });
+    reply(result)
 }
 
 macro_rules! path_operation {
@@ -327,7 +312,8 @@ macro_rules! path_operation {
             let Some(path) = (unsafe { abi::text(path) }) else {
                 return abi::err(abi::INVALID_INPUT, "invalid path");
             };
-            reply($method(path))
+            let owned = path.to_owned();
+            reply(vut_runtime::blocking::run(move || $method(&owned)))
         }
     };
 }
@@ -341,17 +327,15 @@ path_operation!(vut_rt_fs_remove_file_v1, fs::remove_file);
 #[unsafe(no_mangle)]
 /// # Safety
 /// Both arguments must be null or live managed string handles.
-pub unsafe extern "C" fn vut_rt_fs_copy_v1(
+pub unsafe extern "C" fn vut_rt_fs_copy_v2(
     from: *const ManagedString,
     to: *const ManagedString,
-) -> *mut ManagedBytes {
+) -> *mut c_void {
     let (Some(from), Some(to)) = (unsafe { abi::text(from) }, unsafe { abi::text(to) }) else {
-        return abi::err(abi::INVALID_INPUT, "invalid path");
+        return crate::count::invalid("invalid path");
     };
-    match fs::copy(from, to) {
-        Ok(bytes) => abi::ok(&bytes.to_le_bytes()),
-        Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
-    }
+    let (from, to) = (from.to_owned(), to.to_owned());
+    crate::count::reply(vut_runtime::blocking::run(move || fs::copy(&from, &to)))
 }
 
 #[unsafe(no_mangle)]
@@ -364,7 +348,8 @@ pub unsafe extern "C" fn vut_rt_fs_rename_v1(
     let (Some(from), Some(to)) = (unsafe { abi::text(from) }, unsafe { abi::text(to) }) else {
         return abi::err(abi::INVALID_INPUT, "invalid path");
     };
-    reply(fs::rename(from, to))
+    let (from, to) = (from.to_owned(), to.to_owned());
+    reply(vut_runtime::blocking::run(move || fs::rename(&from, &to)))
 }
 
 #[unsafe(no_mangle)]
@@ -392,78 +377,6 @@ pub unsafe extern "C" fn vut_rt_fs_read_dir_v1(path: *const ManagedString) -> *m
 #[unsafe(no_mangle)]
 /// # Safety
 /// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_len_v1(path: *const ManagedString) -> u64 {
-    (unsafe { abi::text(path) })
-        .and_then(|path| fs::metadata(path).ok())
-        .map_or(0, |metadata| metadata.len())
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_is_file_v1(path: *const ManagedString) -> usize {
-    let Some(metadata) = (unsafe { abi::text(path) }).and_then(|path| fs::metadata(path).ok())
-    else {
-        return 0;
-    };
-    usize::from(metadata.is_file())
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_is_dir_v1(path: *const ManagedString) -> usize {
-    let Some(metadata) = (unsafe { abi::text(path) }).and_then(|path| fs::metadata(path).ok())
-    else {
-        return 0;
-    };
-    usize::from(metadata.is_dir())
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_readonly_v1(path: *const ManagedString) -> usize {
-    let Some(metadata) = (unsafe { abi::text(path) }).and_then(|path| fs::metadata(path).ok())
-    else {
-        return 0;
-    };
-    usize::from(metadata.permissions().readonly())
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_modified_v1(path: *const ManagedString) -> usize {
-    let Some(path) = (unsafe { abi::text(path) }) else {
-        return 0;
-    };
-    system_time_nanos(&fs::metadata(path).and_then(|metadata| metadata.modified()))
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_created_v1(path: *const ManagedString) -> usize {
-    let Some(path) = (unsafe { abi::text(path) }) else {
-        return 0;
-    };
-    system_time_nanos(&fs::metadata(path).and_then(|metadata| metadata.created()))
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
-pub unsafe extern "C" fn vut_rt_fs_metadata_accessed_v1(path: *const ManagedString) -> usize {
-    let Some(path) = (unsafe { abi::text(path) }) else {
-        return 0;
-    };
-    system_time_nanos(&fs::metadata(path).and_then(|metadata| metadata.accessed()))
-}
-
-#[unsafe(no_mangle)]
-/// # Safety
-/// `path` must be null or a live managed string handle.
 pub unsafe extern "C" fn vut_rt_fs_set_readonly_v1(
     path: *const ManagedString,
     readonly: usize,
@@ -479,4 +392,17 @@ pub unsafe extern "C" fn vut_rt_fs_set_readonly_v1(
         }
         Err(error) => abi::err(abi::io_status(&error), &error.to_string()),
     }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `file` must be null or a borrowed live `FileHandle` resource.
+pub unsafe extern "C" fn vut_rt_fs_file_metadata_v2(file: *mut c_void) -> *mut c_void {
+    metadata::owned(match unsafe { open_file(file) } {
+        Some(file) => file.metadata(),
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid file handle",
+        )),
+    })
 }

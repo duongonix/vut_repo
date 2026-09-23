@@ -27,7 +27,7 @@ fn main():
   total = sum(1, 2, 3, 4)
   out("sum=$total")
 
-  numbers = @(10, 20, 30)
+  numbers = @[10, 20, 30]
   spread = sum(...numbers)
   out("spread=$spread")
 

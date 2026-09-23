@@ -1,26 +1,34 @@
 # Receiver Functions: a typed, statically resolved DSL.
-#
-# A trailing `Call():` body is an anonymous receiver function. Implicit names
-# (`Column`, `Button`) resolve at compile time to the enclosing receiver's
-# method; there is no runtime receiver lookup and no heap closure.
 
 data AppScope:
   title: str
+  lists: list[str]
 
 data ColumnScope:
   label: str
+  lists: list[str]
 
 fn AppScope.Column(body: fn(ColumnScope)() -> void) -> void:
-  scope = ColumnScope(label = "column")
-  out("column: $(body)")
+  scope = ColumnScope(
+    label: "column",
+    lists: self.lists
+  )
+
+  out("column: $(scope.label)")
   body.call(scope)
 
 fn ColumnScope.Button(text: str) -> void:
+  self.lists.push("button")
   out("button=$text")
 
 fn App(body: fn(AppScope)() -> void) -> void:
-  scope = AppScope(title = "app")
+  scope = AppScope(
+    title: "app",
+    lists: @[]
+  )
+
   body.call(scope)
+  out(scope)
 
 fn main():
   App():

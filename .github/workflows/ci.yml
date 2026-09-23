@@ -37,6 +37,110 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo run -p vut-fuzz -- 10000
 
+  installer-syntax:
+    name: Installer syntax
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check install.sh
+        if: runner.os != 'Windows'
+        run: sh -n install/install.sh
+      - name: Check install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install/install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+
+  package-smoke:
+    name: Package smoke / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build toolchain
+        run: cargo build -p vut-runtime -p vut-stdlib-native -p vut-cli -p vpm -p vut-lsp -p vut-dist
+      - name: Assemble a local distribution and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            vutdist=target/debug/vut-dist.exe
+            base="$(cygpath -w "$(pwd)/dist")"
+          else
+            vutdist=target/debug/vut-dist
+            base="$(pwd)/dist"
+          fi
+          "$vutdist" assemble \
+            --target "$target" --out dist --bin-dir target/debug \
+            --vpm-version 0.1.0 --cranelift 0.0.0 --channel stable \
+            --license LICENSE --notices THIRD-PARTY-NOTICES.md --build-commit smoke
+          "$vutdist" release-manifest \
+            --dir dist --out dist/releases.json --repo duongonix/vut --url-base "$base"
+      - name: Install from the local artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VUT_RELEASE_MANIFEST="dist/releases.json"
+          export VUT_HOME="$PWD/.smoke-home"
+          sh install/install.sh --no-path
+          "$VUT_HOME/bin/vut" doctor
+          printf 'fn main():\n  out("hello")\n' > hello.vut
+          printf 'import math\n\nfn main():\n  out("sqrt=$(math.sqrt(9.0))")\n' > math.vut
+          printf 'import os\n\nfn main():\n  out("os=$(os.name())")\n' > native.vut
+          "$VUT_HOME/bin/vut" run hello.vut
+          "$VUT_HOME/bin/vut" run math.vut
+          "$VUT_HOME/bin/vut" run native.vut
+          # Reinstall (idempotent) must succeed.
+          sh install/install.sh --no-path
+      - name: Install from the local artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:VUT_RELEASE_MANIFEST = 'dist/releases.json'
+          $env:VUT_HOME = Join-Path $PWD '.smoke-home'
+          pwsh -NoProfile -File install/install.ps1 -NoPath
+          & (Join-Path $env:VUT_HOME 'bin/vut.exe') doctor
+          Set-Content hello.vut "fn main():`n  out(`"hello`")`n"
+          Set-Content math.vut "import math`n`nfn main():`n  out(`"sqrt=`$(math.sqrt(9.0))`")`n"
+          Set-Content native.vut "import os`n`nfn main():`n  out(`"os=`$(os.name())`")`n"
+          & (Join-Path $env:VUT_HOME 'bin/vut.exe') run hello.vut
+          & (Join-Path $env:VUT_HOME 'bin/vut.exe') run math.vut
+          & (Join-Path $env:VUT_HOME 'bin/vut.exe') run native.vut
+          pwsh -NoProfile -File install/install.ps1 -NoPath
+      - name: Checksum mismatch must abort
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dist/releases.json dist/releases-bad.json
+          sed -i.bak 's/"sha256": "[0-9a-f]*"/"sha256": "0000000000000000000000000000000000000000000000000000000000000000"/' dist/releases-bad.json
+          export VUT_RELEASE_MANIFEST="dist/releases-bad.json"
+          export VUT_HOME="$PWD/.smoke-bad"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            if pwsh -NoProfile -File install/install.ps1 -NoPath; then
+              echo "installer accepted a corrupt checksum" >&2
+              exit 1
+            fi
+          else
+            if sh install/install.sh --no-path; then
+              echo "installer accepted a corrupt checksum" >&2
+              exit 1
+            fi
+          fi
+
   sanitizers:
     name: Linux / ${{ matrix.sanitizer }} sanitizer
     runs-on: ubuntu-latest

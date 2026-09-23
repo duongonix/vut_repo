@@ -46,6 +46,9 @@ pub struct Symbol {
     pub receiver: Option<SymbolId>,
     /// `static fn Type.name`: an associated function with no implicit `self`.
     pub is_static: bool,
+    /// True when the declaration has generic type parameters, so `name[...]` is
+    /// a generic application rather than a collection access.
+    pub generic: bool,
 }
 #[derive(Clone, Debug)]
 pub struct ModuleInput {
@@ -76,6 +79,13 @@ pub struct ImplicitReceiverMethod {
     pub receiver: SymbolId,
     pub method: SymbolId,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LambdaCapture {
+    /// Name the closure body uses for the captured binding.
+    pub name: String,
+    /// Symbol of the enclosing local/parameter that is captured.
+    pub symbol: SymbolId,
+}
 #[derive(Clone, Debug)]
 pub struct LambdaInfo {
     pub symbol: SymbolId,
@@ -86,6 +96,8 @@ pub struct LambdaInfo {
     /// Receiver type inferred from the callee's expected receiver function type
     /// for a trailing `Call():` body.
     pub receiver: Option<SymbolId>,
+    /// Enclosing locals/parameters captured by the closure, in first-use order.
+    pub captures: Vec<LambdaCapture>,
     pub span: Span,
 }
 #[derive(Debug)]

@@ -39,9 +39,9 @@ Repository:
 ```text
 abc/
 └── math/
-    ├── v0.1.0/
-    ├── v0.2.0/
-    └── v1.0.0/
+    ├── 0.1.0/
+    ├── 0.2.0/
+    └── 1.0.0/
 ```
 
 Each version directory is a complete independent package.
@@ -150,9 +150,9 @@ math/
 Candidate directories:
 
 ```text
-v0.1.0
-v0.2.0
-v1.0.0
+0.1.0
+0.2.0
+1.0.0
 README.md
 dev
 ```
@@ -166,7 +166,7 @@ Only valid version-directory names participate in version resolution.
 Before installing a version, VPM must inspect:
 
 ```text
-math/v1.0.0/vpm.toml
+math/1.0.0/vpm.toml
 ```
 
 and validate:
@@ -261,7 +261,7 @@ Unit tests must not depend exclusively on live GitHub availability.
 1. GitHub is the default self-host provider.
 2. Source requires owner/repository/package.
 3. Repository root is not a package.
-4. Version folders use `v<semver>`.
+4. Version folders use bare `<semver>` with no `v` prefix.
 5. GitHub logic stays behind provider abstraction.
 6. Download only necessary package content where practical.
 7. Validate remote manifest identity.

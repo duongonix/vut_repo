@@ -49,9 +49,9 @@ Example repository:
 ```text
 abc/
 └── math/
-    ├── v0.1.0/
-    ├── v1.0.0/
-    └── v1.2.0/
+    ├── 0.1.0/
+    ├── 1.0.0/
+    └── 1.2.0/
 ```
 
 The same VPM package rules apply as GitHub.
@@ -106,13 +106,12 @@ GitLab repository identifiers
 
 ## 8. Version Discovery
 
-List package-directory children and retain only valid:
+List package-directory children and retain only valid bare-semver folders (no
+`v` prefix):
 
 ```text
-v<semver>
+<semver>
 ```
-
-folders.
 
 SemVer comparison belongs to shared VPM version-resolution code.
 
@@ -125,7 +124,7 @@ Do not implement GitLab-specific version sorting.
 For:
 
 ```text
-math/v1.2.0
+math/1.2.0
 ```
 
 require:
@@ -143,6 +142,19 @@ version = "1.2.0"
 Fetch only required package content where practical.
 
 Do not require a complete Git clone for every installation.
+
+---
+
+## 10a. Revision
+
+The locked revision is the last commit that touched the version directory:
+
+```text
+GET /projects/:id/repository/commits?path=<package>/<version>&per_page=1
+```
+
+Using the version-directory commit (rather than `HEAD`) makes the lockfile
+deterministic and detects later mutation of a published version.
 
 ---
 
@@ -206,3 +218,4 @@ Tests should verify provider-independent resolver behavior separately from GitLa
 6. GitLab API details remain provider-local.
 7. Credentials never enter project files.
 8. Remote manifest identity must be validated.
+9. The pinned revision is the version directory's commit, not `HEAD`.

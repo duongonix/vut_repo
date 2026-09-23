@@ -1,5 +1,4 @@
 mod cli;
-mod discovery;
 mod doctor;
 
 fn main() {

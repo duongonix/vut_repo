@@ -23,39 +23,39 @@ data Activity:
   link: str
   key: str
 
-async fn simple_get(url: str) -> result(str, Error):
+async fn simple_get(url: str) -> result[str, Error]:
   response = await http.get(url)?
   response.text()
 
-async fn post_string(url: str, body: str) -> result(Response, Error):
+async fn post_string(url: str, body: str) -> result[Response, Error]:
   await http.post(url, body)
 
-async fn post_bytes(url: str, body: bytes) -> result(Response, Error):
+async fn post_bytes(url: str, body: bytes) -> result[Response, Error]:
   await http.post_bytes(url, body)
 
-async fn custom_headers(url: str) -> result(Response, Error):
-  request = Request(method = Method.get, url = url)
+async fn custom_headers(url: str) -> result[Response, Error]:
+  request = Request(method: Method.get, url: url)
   request.header("Authorization", "Bearer token")
   request.header("Accept", "application/json")
   await request.send()
 
-async fn query_parameters(url: str) -> result(Response, Error):
-  request = Request(method = Method.get, url = url)
+async fn query_parameters(url: str) -> result[Response, Error]:
+  request = Request(method: Method.get, url: url)
   request.query("page", "2")
   request.query("limit", "20")
   await request.send()
 
-async fn client_reuse(url: str) -> result(Response, Error):
+async fn client_reuse(url: str) -> result[Response, Error]:
   client = http.client(time.seconds(30), 5)
   await client.get(url)
 
-async fn with_timeout(url: str) -> result(Response, Error):
-  request = Request(method = Method.get, url = url)
+async fn with_timeout(url: str) -> result[Response, Error]:
+  request = Request(method: Method.get, url: url)
   request.timeout(time.seconds(30))
   await request.send()
 
 fn status_text(code: int) -> str:
-  status = Status(code = code)
+  status = Status(code: code)
   text: str = if status.is_success():
     "success"
   elif status.is_redirect():
@@ -68,7 +68,7 @@ fn status_text(code: int) -> str:
     "other"
   text
 
-fn chunk_len(outcome: result(bytes, Error)) -> int:
+fn chunk_len(outcome: result[bytes, Error]) -> int:
   value: int = match outcome:
     ok(chunk): chunk.len()
     err(error): 0
@@ -88,8 +88,8 @@ async fn streaming_download(url: str) -> int:
   stream = http.get_stream(url)
   await drain(stream)
 
-async fn range_request(url: str) -> result(Response, Error):
-  request = Request(method = Method.get, url = url)
+async fn range_request(url: str) -> result[Response, Error]:
+  request = Request(method: Method.get, url: url)
   request.range(0, 1023)
   await request.send()
 

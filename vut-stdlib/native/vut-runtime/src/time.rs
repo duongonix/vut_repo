@@ -4,9 +4,13 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 fn epoch_nanos() -> i64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX),
-        Err(error) => -i64::try_from(error.duration().as_nanos()).unwrap_or(i64::MAX),
+        Ok(duration) => checked_nanos(duration.as_nanos()),
+        Err(error) => -checked_nanos(error.duration().as_nanos()),
     }
+}
+
+fn checked_nanos(value: u128) -> i64 {
+    i64::try_from(value).unwrap_or_else(|_| vut_runtime::abi::vut_rt_numeric_panic_v1(i64::MAX))
 }
 
 fn monotonic_origin() -> Instant {
@@ -32,7 +36,7 @@ pub extern "C" fn vut_rt_time_now_nanos_v1() -> i64 {
 /// Nanoseconds elapsed on a monotonic clock since the first instant query.
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_time_instant_nanos_v1() -> i64 {
-    i64::try_from(monotonic_origin().elapsed().as_nanos()).unwrap_or(i64::MAX)
+    checked_nanos(monotonic_origin().elapsed().as_nanos())
 }
 
 #[unsafe(no_mangle)]

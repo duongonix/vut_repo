@@ -1,0 +1,44 @@
+# Pure float helpers for `math` (no native calls).
+#
+# `float` is IEEE-754 binary64. These follow the same IEEE semantics as the
+# platform libm: domain errors yield NaN, `sign` propagates NaN, and `fract`
+# preserves the sign of the input.
+
+fn sign(value: float) -> float:
+  if value.is_nan():
+    return value
+  if value > 0.0:
+    return 1.0
+  if value < 0.0:
+    return -1.0
+  0.0
+
+fn fract(value: float) -> float:
+  value - value.trunc()
+
+fn radians(degrees: float) -> float:
+  degrees * 0.017453292519943295
+
+fn degrees(radians: float) -> float:
+  radians * 57.29577951308232
+
+fn is_inf(value: float) -> bool:
+  (not value.is_finite()) and (not value.is_nan())
+
+# `base` raised to an integer power by binary exponentiation. `float` multiply
+# never traps; it follows IEEE-754 (overflow yields `±Inf`, underflow yields 0).
+fn powi(base: float, exponent: int) -> float:
+  if exponent == 0:
+    return 1.0
+  negative = exponent < 0
+  remaining = exponent.abs()
+  result = 1.0
+  factor = base
+  for remaining > 0:
+    if remaining % 2 == 1:
+      result = result * factor
+    factor = factor * factor
+    remaining = remaining / 2
+  if negative:
+    return 1.0 / result
+  result

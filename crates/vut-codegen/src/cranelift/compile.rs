@@ -43,14 +43,28 @@ pub(super) fn compile(
     flag_builder
         .set("is_pic", "true")
         .map_err(|error| CodegenError::Backend(error.to_string()))?;
-    if backend.optimize {
+    if backend.level.is_optimizing() {
         flag_builder
             .set("opt_level", "speed")
             .map_err(|error| CodegenError::Backend(error.to_string()))?;
     }
+    // The Cranelift verifier is on by default (development/tests/CI). Production
+    // builds may disable it with `VUT_CL_VERIFIER=0` to reduce compile time; the
+    // policy is independent of the optimization level.
+    let verifier = std::env::var("VUT_CL_VERIFIER").map_or(true, |value| value != "0");
+    flag_builder
+        .set("enable_verifier", if verifier { "true" } else { "false" })
+        .map_err(|error| CodegenError::Backend(error.to_string()))?;
     let flags = settings::Flags::new(flag_builder);
-    let isa = isa::lookup(triple)
-        .map_err(|error| CodegenError::InvalidTarget(error.to_string()))?
+    let mut isa_builder =
+        isa::lookup(triple).map_err(|error| CodegenError::InvalidTarget(error.to_string()))?;
+    super::features::configure(
+        &mut isa_builder,
+        &backend.target.triple,
+        backend.target.cpu.as_deref(),
+        &backend.target.features,
+    )?;
+    let isa = isa_builder
         .finish(flags)
         .map_err(|error| CodegenError::Backend(error.to_string()))?;
     let builder = ObjectBuilder::new(isa, "vut", default_libcall_names())
@@ -172,7 +186,14 @@ pub(super) fn compile(
         if !info.needs_drop {
             continue;
         }
-        for retain in [true, false] {
+        // A move-only type (resource/future/vutcon) has no retain callback; the
+        // runtime transfer operations never duplicate it.
+        let variants: &[bool] = if info.ownership.is_linear() {
+            &[false]
+        } else {
+            &[true, false]
+        };
+        for &retain in variants {
             let name = format!(
                 "vut_type_{}_{}",
                 if retain { "retain" } else { "release" },
@@ -183,6 +204,23 @@ pub(super) fn compile(
                 .map_err(|error| CodegenError::Backend(error.to_string()))?;
             type_functions.insert((index, retain), id);
         }
+    }
+    // One drop thunk per capturing closure that owns managed captures. The
+    // runtime calls it when the closure's last reference is released.
+    let mut closure_drops: HashMap<vut_mir::SymbolId, FuncId> = HashMap::new();
+    for (symbol, layout) in &program.closure_layouts {
+        if !layout
+            .captures
+            .iter()
+            .any(|capture| program.layouts.types[capture.ty.0].needs_drop)
+        {
+            continue;
+        }
+        let name = format!("vut_closure_drop_{}", symbol.0);
+        let id = module
+            .declare_function(&name, Linkage::Local, &callback_signature)
+            .map_err(|error| CodegenError::Backend(error.to_string()))?;
+        closure_drops.insert(*symbol, id);
     }
     // One drop thunk per boxed concrete type; each interface/dyn vtable stores
     // the thunk in slot zero ahead of the concrete method addresses.
@@ -294,6 +332,8 @@ pub(super) fn compile(
                     &vtables,
                     &program.frames,
                     &future_thunks,
+                    &program.closure_layouts,
+                    &closure_drops,
                     &mut next_data,
                 )?;
             }
@@ -369,7 +409,10 @@ pub(super) fn compile(
         function.finalize(frontend_config);
         module
             .define_function(function_id, &mut context)
-            .map_err(|error| CodegenError::Backend(error.to_string()))?;
+            .map_err(|error| {
+                eprintln!("VUT-CODEGEN-DEBUG: {error:?}");
+                CodegenError::Backend(error.to_string())
+            })?;
         module.clear_context(&mut context);
     }
     define_future_thunks(&mut module, program, &declarations, &future_thunks)?;
@@ -408,6 +451,49 @@ pub(super) fn compile(
             value,
             *retain,
         )?;
+        function.ins().return_(&[]);
+        function.seal_all_blocks();
+        function.finalize(module.target_config());
+        module
+            .define_function(*function_id, &mut context)
+            .map_err(|error| CodegenError::Backend(error.to_string()))?;
+        module.clear_context(&mut context);
+    }
+    for (symbol, layout) in &program.closure_layouts {
+        let Some(function_id) = closure_drops.get(symbol) else {
+            continue;
+        };
+        let symbol_index = u32::try_from(symbol.0)
+            .map_err(|_| CodegenError::Backend("too many symbols for backend namespace".into()))?;
+        let mut context = Context::for_function(Function::with_name_signature(
+            UserFuncName::user(4, symbol_index),
+            callback_signature.clone(),
+        ));
+        let mut builder_context = FunctionBuilderContext::new();
+        let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
+        let block = function.create_block();
+        function.append_block_params_for_function_params(block);
+        function.switch_to_block(block);
+        let base = function.block_params(block)[0];
+        for capture in &layout.captures {
+            if !program.layouts.types[capture.ty.0].needs_drop {
+                continue;
+            }
+            let offset = i32::try_from(32_usize.saturating_add(capture.offset)).map_err(|_| {
+                CodegenError::Backend("closure capture offset exceeds backend limit".into())
+            })?;
+            let value = function
+                .ins()
+                .load(types::I64, MemFlagsData::trusted(), base, offset);
+            manage_value(
+                &mut function,
+                &mut module,
+                &program.layouts,
+                capture.ty,
+                value,
+                false,
+            )?;
+        }
         function.ins().return_(&[]);
         function.seal_all_blocks();
         function.finalize(module.target_config());

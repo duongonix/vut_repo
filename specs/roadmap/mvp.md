@@ -291,7 +291,7 @@ indentation
 newlines
 INDENT
 DEDENT
-@(...)
+@[...]
 function calls
 ranges
 optional marker ?
@@ -346,7 +346,7 @@ template variables
 template expressions
 invalid template expressions
 nested parentheses inside interpolation
-@(...) list literals
+@[...] list literals
 0..10
 0..=10
 relative imports
@@ -648,8 +648,8 @@ null
 
 T?
 
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 
 data types
 enum types
@@ -692,19 +692,19 @@ Do not silently introduce `dyn`.
 Lists must be homogeneous:
 
 ```vut
-@(1, 2, 3)
+@[1, 2, 3]
 ```
 
 Valid.
 
 ```vut
-@(1, "a", true)
+@[1, "a", true]
 ```
 
 Invalid unless explicitly:
 
 ```vut
-values: list(dyn)
+values: list[dyn]
 ```
 
 ## Removed Feature
@@ -793,8 +793,8 @@ Construction:
 
 ```vut
 user = User(
-  name = "Nam",
-  age = 20
+  name: "Nam",
+  age: 20
 )
 ```
 
@@ -827,7 +827,7 @@ Do not add another anonymous-record syntax.
 Support:
 
 ```vut
-values = @(1, 2, 3)
+values = @[1, 2, 3]
 ```
 
 ## Enums
@@ -963,7 +963,7 @@ multiple interfaces
 interface composition
 interface cycle detection
 interface-to-interface compatibility
-list(interface)
+list[interface]
 satisfaction caching
 ```
 
@@ -1402,9 +1402,9 @@ Package structure:
 
 ```text
 math/
-├── v0.1.0/
-├── v0.1.1/
-└── v1.0.0/
+├── 0.1.0/
+├── 0.1.1/
+└── 1.0.0/
 ```
 
 ## Registry Commands
@@ -1618,13 +1618,13 @@ fn main():
   name = input("Name: ")
 
   user = User(
-    name = name,
-    age = 20
+    name: name,
+    age: 20
   )
 
   user.greet()
 
-  values = @(10, 20, 30)
+  values = @[10, 20, 30]
 
   for value, index in values:
     out("$index: $value")

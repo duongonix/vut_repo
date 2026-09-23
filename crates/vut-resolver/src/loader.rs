@@ -82,18 +82,46 @@ pub fn load_source_root(
     prefix: &[String],
     sources: &mut SourceManager,
 ) -> Result<LoadedRoot, DiscoverError> {
+    load_source_root_with_overlays(root, prefix, sources, &BTreeMap::new())
+}
+
+/// Loads a source root while replacing path-backed modules with in-memory text.
+/// Overlay-only `.vut` files below the root participate in module discovery.
+///
+/// # Errors
+/// Returns filesystem, UTF-8, or non-Unicode module-path errors.
+pub fn load_source_root_with_overlays(
+    root: &Path,
+    prefix: &[String],
+    sources: &mut SourceManager,
+    overlays: &BTreeMap<PathBuf, String>,
+) -> Result<LoadedRoot, DiscoverError> {
     let canonical_root = fs::canonicalize(root).map_err(|error| DiscoverError::Io {
         path: root.to_owned(),
         message: error.to_string(),
     })?;
     let mut paths = Vec::new();
     visit(&canonical_root, &mut paths)?;
+    paths.extend(
+        overlays
+            .keys()
+            .filter(|path| {
+                path.starts_with(&canonical_root)
+                    && path.extension().is_some_and(|extension| extension == "vut")
+            })
+            .cloned(),
+    );
     paths.sort();
+    paths.dedup();
     let mut module_paths = BTreeMap::new();
     let mut diagnostics = DiagnosticSink::new();
     for path in paths {
         let (segments, is_mod) = logical_segments(&canonical_root, prefix, &path)?;
-        let source = sources.load_path(&path).map_err(DiscoverError::Source)?;
+        let source = if let Some(text) = overlays.get(&path) {
+            sources.set_path_text(&path, text.clone())
+        } else {
+            sources.load_path(&path).map_err(DiscoverError::Source)?
+        };
         let text = sources.get(source).map_err(DiscoverError::Source)?.text();
         let (tokens, lexical) = Lexer::new(source, text).lex();
         diagnostics.extend(lexical);
@@ -142,9 +170,7 @@ fn logical_segments(
             if is_mod {
                 continue;
             }
-            if stem != "lib" || prefix.is_empty() {
-                segments.push(stem.to_owned());
-            }
+            segments.push(stem.to_owned());
         } else {
             segments.push(text.to_owned());
         }
@@ -256,6 +282,33 @@ mod tests {
                 .iter()
                 .any(|(_, file)| file == &PathBuf::from("http/mod.vut"))
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_root_module_is_mod_and_lib_is_a_plain_module() {
+        let root = std::env::temp_dir().join(format!(
+            "vut-package-root-loader-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("mod.vut"), "fn boot() -> int:\n  1\n").unwrap();
+        fs::write(root.join("lib.vut"), "fn helper() -> int:\n  2\n").unwrap();
+
+        let mut sources = SourceManager::new();
+        let loaded = load_source_root(&root, &["math".into()], &mut sources).unwrap();
+        let paths = loaded
+            .modules
+            .iter()
+            .map(|module| module.logical_path.display())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"math".to_owned()));
+        assert!(paths.contains(&"math.lib".to_owned()));
         fs::remove_dir_all(root).unwrap();
     }
 

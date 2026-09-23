@@ -59,7 +59,7 @@ fn optional_else_branch_narrows_to_present_type() {
 
 #[test]
 fn optional_guard_clause_narrows_after_terminating_if() {
-    let source = "fn first(values: list(str?)) -> str:\n  for value in values:\n    if value == null:\n      continue\n    return value\n  \"\"\n\nfn main():\n  values: list(str?) = @()\n  values.push(\"a\")\n  values.push(null)\n  values.push(\"b\")\n  out(first(values))\n  empty: list(str?) = @()\n  empty.push(null)\n  out(first(empty))\n";
+    let source = "fn first(values: list[str?]) -> str:\n  for value in values:\n    if value == null:\n      continue\n    return value\n  \"\"\n\nfn main():\n  values: list[str?] = @[]\n  values.push(\"a\")\n  values.push(null)\n  values.push(\"b\")\n  out(first(values))\n  empty: list[str?] = @[]\n  empty.push(null)\n  out(first(empty))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "a\n\n");
@@ -91,7 +91,7 @@ fn optional_nested_control_flow_balances_ownership() {
 
 #[test]
 fn optional_bytes_narrowing_balances_ownership() {
-    let source = "fn size(value: bytes?) -> int:\n  if value != null:\n    return value.len()\n  0\n\nfn main():\n  raw: list(u8) = @(1, 2, 3)\n  out(size(bytes.from_list(raw)))\n  out(size(null))\n";
+    let source = "fn size(value: bytes?) -> int:\n  if value != null:\n    return value.len()\n  0\n\nfn main():\n  raw: list[u8] = @[1, 2, 3]\n  out(size(bytes.from_list(raw)))\n  out(size(null))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "3\n0\n");
@@ -139,7 +139,7 @@ fn scalar_optional_float_return() {
 
 #[test]
 fn map_get_and_remove_report_absence_as_null() {
-    let source = "fn main():\n  scores: map(str, int) = map((\"ann\", 30))\n  a: int? = scores.get(\"ann\")\n  if a != null:\n    out(\"ann=$(a)\")\n  missing: int? = scores.get(\"bob\")\n  if missing == null:\n    out(\"bob=absent\")\n  removed: int? = scores.remove(\"ann\")\n  if removed != null:\n    out(\"removed=$(removed)\")\n  gone: int? = scores.remove(\"ann\")\n  if gone == null:\n    out(\"gone=absent\")\n";
+    let source = "fn main():\n  scores: map[str, int] = (\"ann\": 30)\n  a: int? = scores.get(\"ann\")\n  if a != null:\n    out(\"ann=$(a)\")\n  missing: int? = scores.get(\"bob\")\n  if missing == null:\n    out(\"bob=absent\")\n  removed: int? = scores.remove(\"ann\")\n  if removed != null:\n    out(\"removed=$(removed)\")\n  gone: int? = scores.remove(\"ann\")\n  if gone == null:\n    out(\"gone=absent\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "ann=30\nbob=absent\nremoved=30\ngone=absent\n");
@@ -147,7 +147,7 @@ fn map_get_and_remove_report_absence_as_null() {
 
 #[test]
 fn map_get_and_remove_managed_values_balance_ownership() {
-    let source = "fn main():\n  names: map(str, str) = map((\"a\", \"alpha\"))\n  hit: str? = names.get(\"a\")\n  if hit != null:\n    out(hit)\n  miss: str? = names.get(\"z\")\n  if miss == null:\n    out(\"missing\")\n  taken: str? = names.remove(\"a\")\n  if taken != null:\n    out(taken)\n  empty: str? = names.remove(\"a\")\n  if empty == null:\n    out(\"empty\")\n";
+    let source = "fn main():\n  names: map[str, str] = (\"a\": \"alpha\")\n  hit: str? = names.get(\"a\")\n  if hit != null:\n    out(hit)\n  miss: str? = names.get(\"z\")\n  if miss == null:\n    out(\"missing\")\n  taken: str? = names.remove(\"a\")\n  if taken != null:\n    out(taken)\n  empty: str? = names.remove(\"a\")\n  if empty == null:\n    out(\"empty\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "alpha\nmissing\nalpha\nempty\n");
@@ -171,7 +171,7 @@ fn managed_optional_match_binding_narrows() {
 
 #[test]
 fn optional_data_match_binding_is_leak_free() {
-    let source = "data Person:\n  name: str\n  age: int\n\nfn label(person: Person?) -> str:\n  match person:\n    null: \"none\"\n    v: \"$(v.name) $(v.age)\"\n\nfn main():\n  out(label(Person(name = \"Ann\", age = 30)))\n  out(label(null))\n";
+    let source = "data Person:\n  name: str\n  age: int\n\nfn label(person: Person?) -> str:\n  match person:\n    null: \"none\"\n    v: \"$(v.name) $(v.age)\"\n\nfn main():\n  out(label(Person(name: \"Ann\", age: 30)))\n  out(label(null))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "Ann 30\nnone\n");
@@ -179,7 +179,7 @@ fn optional_data_match_binding_is_leak_free() {
 
 #[test]
 fn optional_enum_variant_match_narrows() {
-    let source = "enum Payload:\n  none\n  text(value: str)\n  count(value: int)\n\nfn label(payload: Payload?) -> str:\n  match payload:\n    null: \"absent\"\n    none: \"none\"\n    text(value): \"text $(value)\"\n    count(value): \"count $(value)\"\n\nfn main():\n  out(label(Payload.text(value = \"hi\")))\n  out(label(Payload.count(value = 4)))\n  out(label(Payload.none))\n  out(label(null))\n";
+    let source = "enum Payload:\n  none\n  text(value: str)\n  count(value: int)\n\nfn label(payload: Payload?) -> str:\n  match payload:\n    null: \"absent\"\n    none: \"none\"\n    text(value): \"text $(value)\"\n    count(value): \"count $(value)\"\n\nfn main():\n  out(label(Payload.text(value: \"hi\")))\n  out(label(Payload.count(value: 4)))\n  out(label(Payload.none))\n  out(label(null))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "text hi\ncount 4\nnone\nabsent\n");
@@ -187,7 +187,7 @@ fn optional_enum_variant_match_narrows() {
 
 #[test]
 fn optional_data_with_managed_fields_is_leak_free() {
-    let source = "data Person:\n  name: str\n  age: int\n\nfn find(flag: bool) -> Person?:\n  if flag:\n    return Person(name = \"Ann\", age = 30)\n  null\n\nfn main():\n  a: Person? = find(true)\n  if a != null:\n    out(\"$(a.name) $(a.age)\")\n  b: Person? = find(false)\n  if b == null:\n    out(\"none\")\n";
+    let source = "data Person:\n  name: str\n  age: int\n\nfn find(flag: bool) -> Person?:\n  if flag:\n    return Person(name: \"Ann\", age: 30)\n  null\n\nfn main():\n  a: Person? = find(true)\n  if a != null:\n    out(\"$(a.name) $(a.age)\")\n  b: Person? = find(false)\n  if b == null:\n    out(\"none\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "Ann 30\nnone\n");
@@ -195,7 +195,7 @@ fn optional_data_with_managed_fields_is_leak_free() {
 
 #[test]
 fn optional_list_handle_narrowing_is_leak_free() {
-    let source = "fn total(values: list(int)?) -> int:\n  if values == null:\n    return 0\n  values.len()\n\nfn main():\n  items: list(int) = @(1, 2, 3)\n  out(total(items))\n  out(total(null))\n";
+    let source = "fn total(values: list[int]?) -> int:\n  if values == null:\n    return 0\n  values.len()\n\nfn main():\n  items: list[int] = @[1, 2, 3]\n  out(total(items))\n  out(total(null))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "3\n0\n");

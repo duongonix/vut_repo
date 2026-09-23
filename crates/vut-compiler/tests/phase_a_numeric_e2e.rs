@@ -62,7 +62,7 @@ fn float_math_methods() {
 
 #[test]
 fn result_helpers() {
-    let source = "fn main():\n  okv: result(int, str) = ok(7)\n  out(\"is_ok=$(okv.is_ok()) is_err=$(okv.is_err()) unwrap=$(okv.unwrap_or(0))\")\n  errv: result(int, str) = err(\"x\")\n  out(\"is_ok2=$(errv.is_ok()) unwrap2=$(errv.unwrap_or(99))\")\n";
+    let source = "fn main():\n  okv: result[int, str] = ok(7)\n  out(\"is_ok=$(okv.is_ok()) is_err=$(okv.is_err()) unwrap=$(okv.unwrap_or(0))\")\n  errv: result[int, str] = err(\"x\")\n  out(\"is_ok2=$(errv.is_ok()) unwrap2=$(errv.unwrap_or(99))\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "is_ok=1 is_err=0 unwrap=7\nis_ok2=0 unwrap2=99\n");
@@ -70,7 +70,7 @@ fn result_helpers() {
 
 #[test]
 fn result_unwrap_or_with_managed_default_does_not_leak() {
-    let source = "fn main():\n  fallback = \"none\"\n  good: result(str, int) = ok(\"hi\")\n  good_out = good.unwrap_or(fallback)\n  out(\"good=$good_out\")\n  bad: result(str, int) = err(1)\n  bad_out = bad.unwrap_or(fallback)\n  out(\"bad=$bad_out\")\n  out(\"bool=$(false.to_str())\")\n";
+    let source = "fn main():\n  fallback = \"none\"\n  good: result[str, int] = ok(\"hi\")\n  good_out = good.unwrap_or(fallback)\n  out(\"good=$good_out\")\n  bad: result[str, int] = err(1)\n  bad_out = bad.unwrap_or(fallback)\n  out(\"bad=$bad_out\")\n  out(\"bool=$(false.to_str())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,
@@ -90,4 +90,21 @@ fn numeric_loop_does_not_leak() {
         "leak detector must report a clean exit: {stdout}"
     );
     assert_eq!(stdout, "total=199990000\nsqrt_sum=21065\n");
+}
+
+#[test]
+fn fixed_width_literals_conversions_and_unsigned_operations() {
+    let source = "fn main():\n  low: i8 = -128\n  high: u64 = 18446744073709551615\n  narrow: f32 = 1.5\n  wide = narrow.to_float()\n  again = wide.to_f32()\n  out(\"$(low.to_i64()) $high $(high / 3) $(high > 1) $(again.to_str())\")\n  x: u8 = 10\n  out(\"$(x.to_i16().to_i32().to_i64().to_int().to_u8().to_u16().to_u32().to_u64().to_usize().to_f32().to_f64().to_float())\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(
+        stdout,
+        "-128 18446744073709551615 6148914691236517205 1 1.5\n10\n"
+    );
+}
+
+#[test]
+fn negative_signed_to_unsigned_conversion_traps() {
+    let (code, _) = run("fn main():\n  value: i64 = -1\n  out(value.to_u64())\n");
+    assert_ne!(code, Some(0));
 }

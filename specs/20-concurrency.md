@@ -21,7 +21,7 @@ The single-thread `async`/`await` foundation is now specified and implemented by
 async fn             implemented (single-thread)
 await                implemented (single-thread)
 single-thread executor implemented (drives async main and Vutcons)
-vut / vutcon(T)      implemented (schedule concurrent tasks; sync + async callables)
+vut / vutcon[T]      implemented (schedule concurrent tasks; sync + async callables)
 threads API          deferred
 channels             deferred
 actors               deferred
@@ -339,26 +339,28 @@ The existence of `dyn` must not force synchronization overhead on ordinary stati
 
 ## 22. Runtime Scheduler
 
-This phase defines a single-thread executor for `async`/`await`:
+The scheduler is M:N: many tasks are multiplexed onto `M` worker OS threads
+(the caller is worker 0; `M` is `VUT_MAXPROCS` or `available_parallelism()`).
+See:
 
 ```text
 specs/async/04-runtime.md
+specs/async/08-vutcon.md
 ```
 
-If Vut later implements multi-threaded tasks, scheduler design is an
-implementation detail unless observable behavior depends on it.
+Scheduler internals are an implementation detail unless observable behavior
+depends on them.
 
-Possible future strategies include:
+Still deferred:
 
 ```text
 work stealing
-multi-thread executor
-platform event loops
+blocking offload
+platform event loops / reactors
+preemption
 ```
 
-No multi-threaded scheduler is currently required.
-
-Programs that do not use async do not require an executor.
+Programs that do not use async do not require a scheduler.
 
 ---
 

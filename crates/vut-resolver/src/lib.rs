@@ -3,10 +3,12 @@ mod loader;
 mod model;
 mod resolve;
 mod scope;
-pub use loader::{DiscoverError, LoadedRoot, load_source_file, load_source_root};
+pub use loader::{
+    DiscoverError, LoadedRoot, load_source_file, load_source_root, load_source_root_with_overlays,
+};
 pub use model::{
-    ImplicitReceiverMethod, LambdaInfo, MethodKey, Module, ModuleId, ModuleInput, ModulePath,
-    Resolution, ResolvedReference, Symbol, SymbolId, SymbolKind,
+    ImplicitReceiverMethod, LambdaCapture, LambdaInfo, MethodKey, Module, ModuleId, ModuleInput,
+    ModulePath, Resolution, ResolvedReference, Symbol, SymbolId, SymbolKind,
 };
 pub use resolve::Resolver;
 
@@ -43,7 +45,7 @@ mod tests {
     }
 
     #[test]
-    fn lifts_lambdas_to_anonymous_symbols_and_rejects_captures() {
+    fn lifts_lambdas_to_anonymous_symbols() {
         let resolution = Resolver::new(vec![module(
             0,
             &["main"],
@@ -65,14 +67,40 @@ mod tests {
             resolution.lambda_symbols.get(&lambda.span).copied(),
             Some(lambda.symbol)
         );
+        assert!(lambda.captures.is_empty());
+    }
 
-        let capture = Resolver::new(vec![module(
+    #[test]
+    fn records_captured_bindings() {
+        let resolution = Resolver::new(vec![module(
             0,
             &["main"],
             "fn apply(value: int, callback: fn(int) -> int) -> int:\n  callback(value)\nfn main():\n  base = 10\n  out(\"$(apply(3, x => x + base))\")\n",
         )])
         .resolve();
-        assert!(codes(&capture).contains(&"E1013"), "{:?}", codes(&capture));
+        assert!(
+            !resolution.diagnostics.has_errors(),
+            "{:?}",
+            resolution.diagnostics.as_slice()
+        );
+        let lambda = &resolution.lambdas[0];
+        assert_eq!(lambda.captures.len(), 1);
+        assert_eq!(lambda.captures[0].name, "base");
+    }
+
+    #[test]
+    fn rejects_assignment_to_a_captured_binding() {
+        let resolution = Resolver::new(vec![module(
+            0,
+            &["main"],
+            "fn apply(value: int, callback: fn(int) -> int) -> int:\n  callback(value)\nfn main():\n  base = 10\n  add = fn(x):\n    base = x\n    x + base\n",
+        )])
+        .resolve();
+        assert!(
+            codes(&resolution).contains(&"E1027"),
+            "{:?}",
+            codes(&resolution)
+        );
     }
 
     #[test]
@@ -194,7 +222,7 @@ mod tests {
         fs::create_dir_all(&package).unwrap();
         fs::write(project.join("main.vut"), "import math\n").unwrap();
         fs::write(project.join("nested").join("util.vut"), "VALUE = 1\n").unwrap();
-        fs::write(package.join("lib.vut"), "fn add() -> int:\n  1\n").unwrap();
+        fs::write(package.join("mod.vut"), "fn add() -> int:\n  1\n").unwrap();
         let mut sources = SourceManager::new();
         let mut inputs = load_source_root(&project, &[], &mut sources)
             .unwrap()
@@ -220,7 +248,7 @@ mod tests {
         );
         fs::remove_file(project.join("main.vut")).unwrap();
         fs::remove_file(project.join("nested").join("util.vut")).unwrap();
-        fs::remove_file(package.join("lib.vut")).unwrap();
+        fs::remove_file(package.join("mod.vut")).unwrap();
         fs::remove_dir(project.join("nested")).unwrap();
         fs::remove_dir(project).unwrap();
         fs::remove_dir(package).unwrap();

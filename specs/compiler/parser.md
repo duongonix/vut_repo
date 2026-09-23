@@ -414,7 +414,7 @@ member/call
 Parser should not determine whether:
 
 ```vut
-User(name = "Ha")
+User(name: "Ha")
 ```
 
 is a constructor or function call.
@@ -422,6 +422,23 @@ is a constructor or function call.
 Represent it as call-like syntax.
 
 Semantic resolution determines callee kind.
+
+---
+
+## 21a. Generic Application vs Indexing
+
+The parser must not decide whether `name[...]` is a generic application or a
+collection access. It records both readings when the bracket content admits each
+and leaves the choice to name resolution and type checking, which use symbol
+information:
+
+```vut
+parse[int](x)   # generic application: `parse` is a generic function
+values[0]       # collection access: `values` is a value
+parsers[i](x)   # collection access, then a call of the element
+```
+
+Capitalization and token-lookahead must not decide the reading.
 
 ---
 
@@ -451,8 +468,8 @@ Parse:
 
 ```vut
 User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 

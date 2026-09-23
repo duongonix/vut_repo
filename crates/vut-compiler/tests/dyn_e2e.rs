@@ -62,7 +62,7 @@ fn dyn_str_payload_is_leak_free() {
 
 #[test]
 fn dyn_data_payload_is_leak_free() {
-    let source = "data Person:\n  name: str\n\nfn main():\n  person = Person(name = \"ann\")\n  value: dyn = person\n  out(value)\n";
+    let source = "data Person:\n  name: str\n\nfn main():\n  person = Person(name: \"ann\")\n  value: dyn = person\n  out(value)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "<dyn>\n");
@@ -70,7 +70,7 @@ fn dyn_data_payload_is_leak_free() {
 
 #[test]
 fn dyn_enum_payload_is_leak_free() {
-    let source = "enum Payload:\n  none\n  text(value: str)\n\nfn main():\n  value: dyn = Payload.text(value = \"hi\")\n  out(value)\n";
+    let source = "enum Payload:\n  none\n  text(value: str)\n\nfn main():\n  value: dyn = Payload.text(value: \"hi\")\n  out(value)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "<dyn>\n");
@@ -102,7 +102,7 @@ fn dyn_null_is_absent_handle() {
 
 #[test]
 fn dyn_heterogeneous_list() {
-    let source = "fn main():\n  values: list(dyn) = @(1, \"hello\", true)\n  out(\"$(values.len())\")\n  for value in values:\n    out(value)\n";
+    let source = "fn main():\n  values: list[dyn] = @[1, \"hello\", true]\n  out(\"$(values.len())\")\n  for value in values:\n    out(value)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "3\n<dyn>\n<dyn>\n<dyn>\n");
@@ -110,7 +110,7 @@ fn dyn_heterogeneous_list() {
 
 #[test]
 fn dyn_data_field_is_leak_free() {
-    let source = "data Box:\n  value: dyn\n\nfn main():\n  boxed = Box(value = \"payload\")\n  out(boxed.value)\n  other = Box(value = 3)\n  out(other.value)\n";
+    let source = "data Box:\n  value: dyn\n\nfn main():\n  boxed = Box(value: \"payload\")\n  out(boxed.value)\n  other = Box(value: 3)\n  out(other.value)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "<dyn>\n<dyn>\n");
@@ -118,7 +118,7 @@ fn dyn_data_field_is_leak_free() {
 
 #[test]
 fn dyn_map_value_is_leak_free() {
-    let source = "fn main():\n  table: map(str, dyn) = map((\"n\", 1), (\"s\", \"two\"))\n  entry: dyn? = table.get(\"s\")\n  if entry != null:\n    out(entry)\n  table.set(\"b\", true)\n  out(\"$(table.len())\")\n";
+    let source = "fn main():\n  table: map[str, dyn] = (\"n\": 1, \"s\": \"two\")\n  entry: dyn? = table.get(\"s\")\n  if entry != null:\n    out(entry)\n  table.set(\"b\", true)\n  out(\"$(table.len())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "<dyn>\n3\n");
@@ -126,7 +126,7 @@ fn dyn_map_value_is_leak_free() {
 
 #[test]
 fn dyn_list_of_managed_payloads_is_leak_free() {
-    let source = "fn main():\n  values: list(dyn) = @(\"alpha\", \"beta\")\n  for value in values:\n    out(value)\n";
+    let source = "fn main():\n  values: list[dyn] = @[\"alpha\", \"beta\"]\n  for value in values:\n    out(value)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "<dyn>\n<dyn>\n");

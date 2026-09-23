@@ -3,7 +3,7 @@ use vut_ast::Expr;
 use vut_diagnostics::{Diagnostic, codes};
 use vut_hir::TypeId;
 use vut_memory::{Duplication, Transfer, transfer_for_use};
-use vut_types::Type;
+use vut_types::{SubscriptKind, Type};
 
 use super::super::interface::method_names;
 use super::super::layout::is_unsigned_type;
@@ -11,6 +11,65 @@ use super::super::{BinaryOp, BuiltinFunction, Instruction, Terminator, ValueId};
 use super::Builder;
 
 impl Builder<'_> {
+    /// Reads the enclosing locals captured by the lambda at `span`, producing an
+    /// owned value for the closure environment.
+    fn capture_values(&mut self, span: vut_source::Span) -> Vec<ValueId> {
+        let Some(captures) = self.semantics.closure_captures.get(&span).cloned() else {
+            return Vec::new();
+        };
+        let mut values = Vec::with_capacity(captures.len());
+        for (name, _) in captures {
+            if let Some(value) = self.read_capture(&name, span) {
+                values.push(value);
+            }
+        }
+        values
+    }
+    /// Reads a captured enclosing local into an owned value for the environment.
+    ///
+    /// The capture is one use from the enclosing function's perspective. When
+    /// the binding is still used after the closure, or is a borrowed receiver,
+    /// the environment receives a retained copy; otherwise the value is moved.
+    fn read_capture(&mut self, name: &str, span: vut_source::Span) -> Option<ValueId> {
+        let local = self.locals.get(name).copied()?;
+        let has_later_uses = self.remaining_uses.remaining(name) > 0;
+        self.remaining_uses.consume(name);
+        let value = self.value();
+        let Some(ty) = self.local_data[local.0].ty else {
+            self.emit(Instruction::Copy { value, local });
+            return Some(value);
+        };
+        if !self.layouts.types[ty.0].needs_drop {
+            self.emit(Instruction::Copy { value, local });
+            return Some(value);
+        }
+        // A receiver or an outer capture is borrowed; it must be retained rather
+        // than moved out of its real owner. A binding already moved into an
+        // earlier closure is retained for this closure as well.
+        let borrowed = self.receiver_local == Some(local) || self.borrowed_locals.contains(&local);
+        let retain = has_later_uses || borrowed || self.moved.contains(&local);
+        if self.layouts.types[ty.0].ownership.is_linear() {
+            if retain {
+                self.diagnostics.push(Diagnostic::error(
+                    codes::E8010,
+                    "cannot duplicate move-only value",
+                    span,
+                    "a captured move-only value may not also be used after the closure",
+                ));
+            }
+            self.moved.insert(local);
+            self.emit(Instruction::Move { value, local });
+            return Some(value);
+        }
+        if retain {
+            self.emit(Instruction::Copy { value, local });
+            self.emit(Instruction::Retain { value, ty });
+        } else {
+            self.moved.insert(local);
+            self.emit(Instruction::Move { value, local });
+        }
+        Some(value)
+    }
     #[expect(
         clippy::too_many_lines,
         reason = "MIR expression lowering is intentionally exhaustive"
@@ -19,23 +78,38 @@ impl Builder<'_> {
         match expr {
             Expr::Lambda { span, .. } => {
                 let symbol = self.lambda_symbols.get(span).copied()?;
+                let captures = self.capture_values(*span);
                 let value = self.value();
-                self.emit(Instruction::MakeFunction { value, symbol });
+                if captures.is_empty() {
+                    self.emit(Instruction::MakeFunction { value, symbol });
+                } else {
+                    self.emit(Instruction::MakeClosure {
+                        value,
+                        symbol,
+                        captures,
+                    });
+                }
                 Some(value)
             }
             Expr::Integer { text, .. } => {
                 let value = self.value();
                 self.emit(Instruction::ConstInt {
                     value,
-                    literal: text.replace('_', "").parse().ok()?,
+                    literal: text
+                        .replace('_', "")
+                        .parse::<u64>()
+                        .map(u64::cast_signed)
+                        .ok()?,
                 });
                 Some(value)
             }
-            Expr::Float { text, .. } => {
+            Expr::Float { text, span } => {
                 let value = self.value();
+                let ty = self.semantics.expression_types.get(span).copied();
                 self.emit(Instruction::ConstFloat {
                     value,
                     literal: text.replace('_', "").parse().ok()?,
+                    ty,
                 });
                 Some(value)
             }
@@ -179,7 +253,7 @@ impl Builder<'_> {
                 );
                 for item in values {
                     if element_coerced {
-                        // `list(dyn)`/`list(interface)`/`list(T?)` accept
+                        // `list[dyn]`/`list[interface]`/`list[T?]` accept
                         // heterogeneous concrete elements; each element is
                         // coerced to the element type before it is stored.
                         let actual = self.semantics.expression_types.get(&item.span()).copied();
@@ -292,7 +366,7 @@ impl Builder<'_> {
                     self.lower_builtin_value(&entry.key, &mut key_operand, &mut owned)?;
                     let key = *key_operand.first()?;
                     if value_coerced {
-                        // `map(K, dyn)`/`map(K, interface)`/`map(K, V?)` accept
+                        // `map[K, dyn]`/`map[K, interface]`/`map[K, V?]` accept
                         // heterogeneous concrete values; coerce each value to
                         // the declared value type before storing it.
                         let actual = self
@@ -334,6 +408,46 @@ impl Builder<'_> {
                 }
                 Some(value)
             }
+            Expr::Subscript {
+                object,
+                index,
+                span,
+                ..
+            } => {
+                if self.semantics.subscripts.get(span) == Some(&SubscriptKind::Generic) {
+                    // A generic application is only meaningful as a call callee;
+                    // the call lowering resolves the concrete specialization.
+                    self.expr(object)
+                } else {
+                    let index = index.as_deref()?;
+                    let mut arguments = Vec::new();
+                    let mut owned = Vec::new();
+                    self.lower_builtin_receiver(object, false, &mut arguments, &mut owned)?;
+                    self.lower_builtin_value(index, &mut arguments, &mut owned)?;
+                    let result_type = *self.semantics.expression_types.get(span)?;
+                    let collection_type = *self.semantics.expression_types.get(&object.span())?;
+                    let function = match self.semantics.types[collection_type.0] {
+                        Type::List(_) => BuiltinFunction::ListAt,
+                        Type::Array(_, _) => BuiltinFunction::ArrayAt,
+                        Type::Map(_, _) => BuiltinFunction::MapGet,
+                        _ => return None,
+                    };
+                    let value = self.value();
+                    self.emit(Instruction::RuntimeCall {
+                        value: Some(value),
+                        result_type: Some(result_type),
+                        function,
+                        arguments,
+                    });
+                    for (owned_value, owned_ty) in owned {
+                        self.emit(Instruction::Release {
+                            value: owned_value,
+                            ty: owned_ty,
+                        });
+                    }
+                    Some(value)
+                }
+            }
             Expr::Array { values, span } => {
                 let elements = values.iter().filter_map(|item| self.expr(item)).collect();
                 let ty = *self.semantics.expression_types.get(span)?;
@@ -346,6 +460,11 @@ impl Builder<'_> {
                 });
                 Some(value)
             }
+            Expr::Name(name) if name.text == "unit" => {
+                let value = self.value();
+                self.emit(Instruction::ConstInt { value, literal: 0 });
+                Some(value)
+            }
             Expr::Name(name) => {
                 let Some(local) = self.locals.get(&name.text).copied() else {
                     let ty = self.semantics.expression_types.get(&name.span).copied();
@@ -355,6 +474,17 @@ impl Builder<'_> {
                         let value = self.value();
                         self.emit(Instruction::MakeFunction { value, symbol });
                         return Some(value);
+                    }
+                    // A module-level constant reference is inlined from its
+                    // initializer (immutable scalar with no addressable storage).
+                    if self.constant_depth < 32
+                        && let Some(initializer) =
+                            self.semantics.constant_references.get(&name.span).cloned()
+                    {
+                        self.constant_depth += 1;
+                        let value = self.expr(&initializer);
+                        self.constant_depth -= 1;
+                        return value;
                     }
                     return None;
                 };
@@ -401,6 +531,15 @@ impl Builder<'_> {
                             "a `resource` has a single owner and may only be moved once",
                         ));
                         Transfer::Move
+                    }
+                } else if self.borrowed_locals.contains(&local) {
+                    // A closure capture aliases a value owned by the closure
+                    // environment: produce an owned reference for the consumer
+                    // without consuming the environment's copy.
+                    if is_copy {
+                        Transfer::Copy
+                    } else {
+                        Transfer::RetainedCopy
                     }
                 } else if is_receiver {
                     // `self` is borrowed by the caller: a read produces an owned
@@ -583,6 +722,8 @@ impl Builder<'_> {
                     }
                 } else {
                     self.emit(Instruction::Binary {
+                        operand_type: left_ty
+                            .filter(|ty| self.semantics.types[ty.0].numeric_kind().is_some()),
                         value,
                         op: *op,
                         left,
@@ -747,10 +888,26 @@ impl Builder<'_> {
                             ty: owned_ty,
                         });
                     }
+                    // The receiver function value is an owned reference the call
+                    // borrows; release it after the call.
+                    if let Some(ty) = callable_ty
+                        && self.layouts.types[ty.0].needs_drop
+                    {
+                        self.emit(Instruction::Release {
+                            value: callee_value,
+                            ty,
+                        });
+                    }
                     return value;
                 }
                 let builtin_target = self.semantics.builtin_calls.get(span).copied();
                 if let Some(function) = builtin_target {
+                    if matches!(
+                        function,
+                        BuiltinFunction::ChannelSend | BuiltinFunction::ChannelRecv
+                    ) {
+                        return self.lower_channel_op(callee.as_ref(), arguments, *span, function);
+                    }
                     if super::collections::is_higher_order(function) {
                         return self.lower_higher_order_builtin(
                             function,
@@ -773,7 +930,12 @@ impl Builder<'_> {
                             BuiltinFunction::BytesFromList | BuiltinFunction::BytesFromHex
                         ) && matches!(object.as_ref(), Expr::Name(name) if name.text == "bytes");
                         if !static_builtin {
-                            self.lower_builtin_receiver(object, &mut argument_values, &mut owned)?;
+                            self.lower_builtin_receiver(
+                                object,
+                                super::is_mutating_builtin(function),
+                                &mut argument_values,
+                                &mut owned,
+                            )?;
                         }
                     }
                     let receiver_ty = match callee.as_ref() {
@@ -900,6 +1062,69 @@ impl Builder<'_> {
                             argument_values.push(release);
                         }
                     }
+                    // `channel[T](capacity:)` passes the capacity (default zero)
+                    // and the element layout/callbacks to the runtime.
+                    if function == BuiltinFunction::ChannelNew {
+                        if argument_values.is_empty() {
+                            let capacity = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: capacity,
+                                literal: 0,
+                            });
+                            argument_values.push(capacity);
+                        }
+                        let element =
+                            self.semantics
+                                .expression_types
+                                .get(span)
+                                .copied()
+                                .and_then(|ty| match self.semantics.types[ty.0] {
+                                    Type::Channel(element) => Some(element),
+                                    _ => None,
+                                });
+                        if let Some(element_ty) = element {
+                            let size = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: size,
+                                literal: i64::try_from(
+                                    self.layouts.element_storage_size(element_ty),
+                                )
+                                .unwrap_or(i64::MAX),
+                            });
+                            argument_values.push(size);
+                            let align = self.value();
+                            self.emit(Instruction::ConstInt {
+                                value: align,
+                                literal: i64::try_from(
+                                    self.layouts.element_storage_align(element_ty),
+                                )
+                                .unwrap_or(i64::MAX),
+                            });
+                            argument_values.push(align);
+                            let retain = self.value();
+                            if self.layouts.types[element_ty.0].ownership.is_linear() {
+                                // A move-only element (e.g. `resource[T]`) has no
+                                // retain callback; the channel transfers
+                                // ownership, so no retain is needed.
+                                self.emit(Instruction::ConstInt {
+                                    value: retain,
+                                    literal: 0,
+                                });
+                            } else {
+                                self.emit(Instruction::TypeRetain {
+                                    value: retain,
+                                    ty: element_ty,
+                                });
+                            }
+                            argument_values.push(retain);
+                            let release = self.value();
+                            self.emit(Instruction::TypeRelease {
+                                value: release,
+                                ty: element_ty,
+                            });
+                            argument_values.push(release);
+                        }
+                    }
                     // `result.is_ok` / `result.is_err` read the tag directly.
                     if matches!(
                         function,
@@ -969,6 +1194,8 @@ impl Builder<'_> {
                         function,
                         arguments: argument_values,
                     });
+                    // A mutating subscript receiver writes its element back.
+                    self.apply_pending_writeback();
                     for (owned_value, owned_ty) in owned {
                         self.emit(Instruction::Release {
                             value: owned_value,
@@ -1004,6 +1231,16 @@ impl Builder<'_> {
                         callee: callee_value,
                         arguments: argument_values,
                     });
+                    // The callee is an owned reference (a moved local or a
+                    // retained copy); the call borrows it, so release it here.
+                    if let Some(ty) = callee_ty
+                        && self.layouts.types[ty.0].needs_drop
+                    {
+                        self.emit(Instruction::Release {
+                            value: callee_value,
+                            ty,
+                        });
+                    }
                     return value;
                 }
                 let mut lowered = Vec::new();
@@ -1107,9 +1344,34 @@ impl Builder<'_> {
                                 .variadic
                                 .map(|element| (signature.parameters.len(), element))
                         });
+                let template = self
+                    .instance_templates
+                    .get(&target)
+                    .copied()
+                    .unwrap_or(target);
+                let signature_parameter_names = self
+                    .parameter_names
+                    .get(&template)
+                    .cloned()
+                    .unwrap_or_default();
+                let signature_parameters = self
+                    .semantics
+                    .function_signatures
+                    .get(&target)
+                    .map(|signature| signature.parameters.clone())
+                    .unwrap_or_default();
+                // Arguments are placed by declared parameter index so named
+                // arguments may appear in any order. Data construction has no
+                // function signature, so its arguments keep source order and are
+                // assembled field-by-field below.
+                let arity = signature_parameter_names
+                    .len()
+                    .max(signature_parameters.len());
+                let mut ordered: Vec<Option<ValueId>> = vec![None; arity];
+                let mut positional = 0usize;
                 for (index, argument) in arguments.iter().enumerate() {
                     if is_extern {
-                        // A `resource(T)` argument to a `ptr(T)` native
+                        // A `resource[T]` argument to a `ptr[T]` native
                         // parameter is borrowed at the ABI boundary: the owner
                         // is not moved, retained, or released.
                         let pointer_parameter = extern_parameters.get(index).is_some_and(|ty| {
@@ -1127,8 +1389,57 @@ impl Builder<'_> {
                     } else if variadic_target.is_some_and(|(fixed, _)| index >= fixed) {
                         // Variadic arguments are collected after the loop.
                     } else {
-                        lowered.push(self.expr(&argument.value)?);
+                        let value = self.expr(&argument.value)?;
+                        let slot = if let Some(name) = &argument.name {
+                            signature_parameter_names
+                                .iter()
+                                .position(|candidate| candidate == &name.text)
+                        } else {
+                            let current = positional;
+                            positional += 1;
+                            Some(current)
+                        };
+                        if let Some(index) = slot.filter(|index| *index < arity) {
+                            let actual = self
+                                .semantics
+                                .expression_types
+                                .get(&argument.value.span())
+                                .copied();
+                            let expected = signature_parameters.get(index).copied();
+                            ordered[index] = Some(self.coerce_value(value, actual, expected));
+                        } else {
+                            lowered.push(value);
+                        }
                     }
+                }
+                // Materialize omitted trailing parameters that declare a default
+                // (functions and methods only; extern defaults are rejected).
+                if !is_extern {
+                    for (index, slot) in ordered.iter_mut().enumerate().skip(positional) {
+                        if slot.is_some() {
+                            continue;
+                        }
+                        let Some(Some(default)) = self
+                            .parameter_defaults
+                            .get(&template)
+                            .and_then(|defaults| defaults.get(index))
+                            .cloned()
+                        else {
+                            continue;
+                        };
+                        if let Some(value) = self.expr(&default) {
+                            let actual = self
+                                .semantics
+                                .expression_types
+                                .get(&default.span())
+                                .copied();
+                            let expected = signature_parameters.get(index).copied();
+                            *slot = Some(self.coerce_value(value, actual, expected));
+                        }
+                    }
+                }
+                for value in ordered.into_iter().flatten() {
+                    lowered.push(value);
                 }
                 if let Some((fixed, element)) = variadic_target {
                     let trailing = arguments.get(fixed.min(arguments.len())..).unwrap_or(&[]);
@@ -1136,32 +1447,6 @@ impl Builder<'_> {
                         self.lower_variadic_arguments(trailing, element, &mut owned)?;
                     lowered.push(data);
                     lowered.push(len);
-                }
-                if !is_extern && variadic_target.is_none() {
-                    let expected_parameters = self
-                        .semantics
-                        .function_signatures
-                        .get(&target)
-                        .map(|signature| signature.parameters.clone())
-                        .unwrap_or_default();
-                    let receiver_offset = lowered.len().saturating_sub(arguments.len());
-                    for (index, argument) in arguments.iter().enumerate() {
-                        let Some(expected) = expected_parameters.get(index).copied() else {
-                            break;
-                        };
-                        let Some(actual) = self
-                            .semantics
-                            .expression_types
-                            .get(&argument.value.span())
-                            .copied()
-                        else {
-                            continue;
-                        };
-                        let position = index + receiver_offset;
-                        if let Some(slot) = lowered.get_mut(position) {
-                            *slot = self.coerce_value(*slot, Some(actual), Some(expected));
-                        }
-                    }
                 }
                 if let Some(type_index) = self
                     .semantics
@@ -1300,6 +1585,16 @@ impl Builder<'_> {
                 member,
                 span,
             } => {
+                // A module-qualified constant reference is inlined from its
+                // initializer (immutable scalar with no addressable storage).
+                if self.constant_depth < 32
+                    && let Some(initializer) = self.semantics.constant_references.get(span).cloned()
+                {
+                    self.constant_depth += 1;
+                    let value = self.expr(&initializer);
+                    self.constant_depth -= 1;
+                    return value;
+                }
                 if let Some(ty) = self.semantics.expression_types.get(span).copied()
                     && let Type::Enum(symbol) = self.semantics.types[ty.0]
                     && let Some(variant_index) =
@@ -1440,7 +1735,7 @@ impl Builder<'_> {
             Expr::ResultPropagate { value, .. } => self.lower_result_propagate(value),
             Expr::Await { value, .. } => {
                 let operand_ty = self.semantics.expression_types.get(&value.span()).copied();
-                // A `vutcon(T)`, a native `future(T)`, and a direct `async fn`
+                // A `vutcon[T]`, a native `future[T]`, and a direct `async fn`
                 // call are all poll tasks awaited the same way.
                 if let Some(operand_ty) = operand_ty
                     && matches!(
@@ -1502,6 +1797,76 @@ impl Builder<'_> {
         }
     }
 
+    /// Lowers `ch.send(v)` / `ch.recv()` into a runtime op plus a suspension.
+    /// `send` transfers ownership of the value; `recv` yields `T?` built from
+    /// the received value and its presence flag.
+    fn lower_channel_op(
+        &mut self,
+        callee: &Expr,
+        arguments: &[vut_ast::Argument],
+        span: vut_source::Span,
+        function: BuiltinFunction,
+    ) -> Option<ValueId> {
+        let Expr::Member { object, .. } = callee else {
+            return None;
+        };
+        let channel_ty = self
+            .semantics
+            .expression_types
+            .get(&object.span())
+            .copied()?;
+        let Type::Channel(inner) = self.semantics.types[channel_ty.0] else {
+            return None;
+        };
+        let mut receiver = Vec::new();
+        let mut owned = Vec::new();
+        self.lower_builtin_receiver(object, false, &mut receiver, &mut owned)?;
+        let channel = *receiver.first()?;
+        if function == BuiltinFunction::ChannelSend {
+            let value = self.expr(&arguments.first()?.value)?;
+            let handle = self.value();
+            self.emit(Instruction::RuntimeCall {
+                value: Some(handle),
+                result_type: None,
+                function: BuiltinFunction::ChannelSend,
+                arguments: vec![channel, value],
+            });
+            let result = self.value();
+            let unit = self.semantics.expression_types.get(&span).copied()?;
+            self.emit(Instruction::AwaitFuture {
+                value: result,
+                handle,
+                result_type: unit,
+            });
+            return Some(result);
+        }
+        let handle = self.value();
+        self.emit(Instruction::RuntimeCall {
+            value: Some(handle),
+            result_type: None,
+            function: BuiltinFunction::ChannelRecv,
+            arguments: vec![channel],
+        });
+        let value = self.value();
+        let present = self.value();
+        self.emit(Instruction::AwaitChannelRecv {
+            value,
+            present,
+            handle,
+            result_type: inner,
+        });
+        let optional = self.value();
+        let optional_ty = self.semantics.expression_types.get(&span).copied()?;
+        self.emit(Instruction::OptionalFromValue {
+            value: optional,
+            present,
+            payload: value,
+            ty: optional_ty,
+            inner,
+        });
+        Some(optional)
+    }
+
     /// Lowers `values.len()` / `values.at(i)` for the current variadic parameter.
     fn lower_variadic_builtin(
         &mut self,
@@ -1550,6 +1915,7 @@ impl Builder<'_> {
             len,
             index,
             element,
+            in_bounds: false,
         });
         // The view borrows its elements; an extracted managed element becomes an
         // owned reference.

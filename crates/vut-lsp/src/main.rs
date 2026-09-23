@@ -10,32 +10,37 @@
     clippy::wildcard_imports
 )]
 
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
-use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc::Result, lsp_types::*};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tower_lsp::{
+    Client, LanguageServer, LspService, Server,
+    jsonrpc::{Error, Result},
+    lsp_types::*,
+};
 use vut_ast::File;
-use vut_lexer::Lexer;
-use vut_parser::Parser;
-use vut_resolver::{ModuleInput, ModulePath, Resolver, SymbolKind as ResolverSymbolKind};
-use vut_source::{SourceId, Span};
-use vut_types::{Analyzer, builtin_method_signature, builtin_methods};
+use vut_resolver::SymbolKind as ResolverSymbolKind;
+use vut_source::Span;
+use vut_types::builtin_method_signature;
 
+mod completion;
+mod diagnostics;
+mod documents;
 mod members;
+mod presentation;
+mod project;
+mod query;
+mod rename;
 mod semantic_tokens;
+mod signature_help;
 mod symbols;
 
-use members::{
-    active_parameter, call_context, find_member, member_context, parameter_infos, receiver_kind,
-    receiver_kind_at,
-};
+use documents::{Document, Documents};
+use members::{find_member, receiver_kind};
 use symbols::symbols;
-
-#[derive(Default)]
-struct Documents(RwLock<HashMap<Url, String>>);
 
 struct Backend {
     client: Client,
     documents: Arc<Documents>,
+    projects: project::ProjectAnalysis,
 }
 
 impl Backend {
@@ -43,69 +48,74 @@ impl Backend {
         Self {
             client,
             documents: Arc::new(Documents::default()),
+            projects: project::ProjectAnalysis::default(),
         }
     }
 
-    async fn analyze(&self, uri: &Url, text: &str) -> Analysis {
-        let source = SourceId::from_index(0);
-        let (tokens, lexical) = Lexer::new(source, text).lex();
-        let (file, syntax) = Parser::new(source, text, tokens).parse();
-        let resolution = Resolver::new(vec![ModuleInput {
-            logical_path: ModulePath(vec!["main".into()]),
-            filesystem_path: uri.to_file_path().ok(),
-            file: file.clone(),
-        }])
-        .resolve();
-        let semantics = Analyzer::new(&resolution).analyze();
-        let diagnostics = lexical
-            .as_slice()
-            .iter()
-            .chain(syntax.as_slice())
-            .chain(resolution.diagnostics.as_slice())
-            .chain(semantics.diagnostics.as_slice())
-            .filter_map(|d| {
-                let label = d.primary.as_ref()?;
-                Some(Diagnostic {
-                    range: range(text, label.span),
-                    severity: Some(match d.severity {
-                        vut_diagnostics::Severity::Error => DiagnosticSeverity::ERROR,
-                        vut_diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
-                        vut_diagnostics::Severity::Note => DiagnosticSeverity::INFORMATION,
-                        vut_diagnostics::Severity::Help => DiagnosticSeverity::HINT,
-                    }),
-                    code: d
-                        .code
-                        .map(|value| NumberOrString::String(value.as_str().into())),
-                    code_description: None,
-                    source: Some("vut".into()),
-                    message: format!("{}: {}", d.title, label.message),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                })
-            })
-            .collect();
-        Analysis {
-            file,
-            resolution,
-            semantics,
-            diagnostics,
-        }
+    async fn snapshot(&self, uri: &Url) -> std::result::Result<project::ProjectSnapshot, String> {
+        let documents = self.documents.snapshot().await;
+        self.snapshot_with_documents(uri, &documents).await
+    }
+
+    async fn snapshot_with_documents(
+        &self,
+        uri: &Url,
+        documents: &HashMap<Url, Document>,
+    ) -> std::result::Result<project::ProjectSnapshot, String> {
+        let path = uri
+            .to_file_path()
+            .map_err(|()| "Vut LSP only supports file URIs".to_owned())?;
+        let overlays = Documents::overlays(documents);
+        self.projects.analyze(&path, &overlays).await
+    }
+
+    async fn analyze(&self, uri: &Url) -> std::result::Result<Analysis, String> {
+        let snapshot = self.snapshot(uri).await?;
+        let current_source = source_for_uri(&snapshot, uri)
+            .ok_or_else(|| "document is not part of the analyzed project".to_owned())?;
+        let checked = snapshot.checked;
+        Ok(Analysis {
+            file: snapshot.file,
+            resolution: checked.resolution,
+            semantics: checked.semantics,
+            sources: snapshot.sources,
+            current_source,
+            root: snapshot.root,
+        })
     }
 
     async fn publish(&self, uri: Url) {
-        let text = self
-            .documents
-            .0
-            .read()
-            .await
-            .get(&uri)
-            .cloned()
-            .unwrap_or_default();
-        let analysis = self.analyze(&uri, &text).await;
-        self.client
-            .publish_diagnostics(uri, analysis.diagnostics, None)
-            .await;
+        let documents = self.documents.snapshot().await;
+        match self.snapshot_with_documents(&uri, &documents).await {
+            Ok(snapshot) => {
+                let mut reports = diagnostics::collect(&snapshot);
+                for (document_uri, document) in documents {
+                    let Some(source) = source_for_uri(&snapshot, &document_uri) else {
+                        continue;
+                    };
+                    self.client
+                        .publish_diagnostics(
+                            document_uri,
+                            reports.remove(&source).unwrap_or_default(),
+                            Some(document.version),
+                        )
+                        .await;
+                }
+            }
+            Err(message) => {
+                let version = documents.get(&uri).map(|document| document.version);
+                self.client
+                    .publish_diagnostics(
+                        uri,
+                        vec![Diagnostic::new_simple(
+                            Range::new(Position::new(0, 0), Position::new(0, 0)),
+                            message,
+                        )],
+                        version,
+                    )
+                    .await;
+            }
+        }
     }
 }
 
@@ -113,12 +123,52 @@ struct Analysis {
     file: File,
     resolution: vut_resolver::Resolution,
     semantics: vut_types::SemanticResult,
-    diagnostics: Vec<Diagnostic>,
+    sources: HashMap<vut_source::SourceId, project::SourceSnapshot>,
+    current_source: vut_source::SourceId,
+    root: PathBuf,
+}
+
+fn location(a: &Analysis, span: Span) -> Option<Location> {
+    let source = a.sources.get(&span.source())?;
+    Some(Location::new(
+        Url::from_file_path(source.path.as_ref()?).ok()?,
+        range(&source.text, span),
+    ))
+}
+
+fn source_for_uri(snapshot: &project::ProjectSnapshot, uri: &Url) -> Option<vut_source::SourceId> {
+    source_for_uri_parts(&snapshot.sources, uri)
+}
+
+fn source_for_uri_parts(
+    sources: &HashMap<vut_source::SourceId, project::SourceSnapshot>,
+    uri: &Url,
+) -> Option<vut_source::SourceId> {
+    let path = normalize_path(uri.to_file_path().ok()?);
+    sources.iter().find_map(|(id, source)| {
+        source
+            .path
+            .as_ref()
+            .is_some_and(|candidate| normalize_path(candidate.clone()) == path)
+            .then_some(*id)
+    })
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        if let Some(target) = params
+            .initialization_options
+            .as_ref()
+            .and_then(|value| value.get("target"))
+            .and_then(serde_json::Value::as_str)
+        {
+            self.projects.set_target(target.to_owned()).await;
+        }
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -126,9 +176,13 @@ impl LanguageServer for Backend {
                 )),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
-                rename_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                })),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".into()]),
@@ -168,35 +222,31 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let doc = params.text_document;
         self.documents
-            .0
-            .write()
-            .await
-            .insert(doc.uri.clone(), doc.text);
+            .open(doc.uri.clone(), doc.text, doc.version)
+            .await;
         self.publish(doc.uri).await;
     }
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.last() {
             self.documents
-                .0
-                .write()
-                .await
-                .insert(params.text_document.uri.clone(), change.text.clone());
+                .open(
+                    params.text_document.uri.clone(),
+                    change.text.clone(),
+                    params.text_document.version,
+                )
+                .await;
             self.publish(params.text_document.uri).await;
         }
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        self.documents
-            .0
-            .write()
-            .await
-            .remove(&params.text_document.uri);
+        self.documents.close(&params.text_document.uri).await;
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
             .await;
     }
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
         match vut_tooling::format_source(&text) {
@@ -212,157 +262,145 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         Ok(Some(DocumentSymbolResponse::Nested(symbols(
             &a.file, &text,
         ))))
+    }
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let documents = self.documents.snapshot().await;
+        let Some(uri) = documents.keys().min_by_key(|uri| uri.as_str()).cloned() else {
+            return Ok(Some(Vec::new()));
+        };
+        let Ok(snapshot) = self.snapshot_with_documents(&uri, &documents).await else {
+            return Ok(None);
+        };
+        let checked = snapshot.checked;
+        let a = Analysis {
+            file: snapshot.file,
+            current_source: source_for_uri_parts(&snapshot.sources, &uri)
+                .unwrap_or(vut_source::SourceId::from_index(0)),
+            sources: snapshot.sources,
+            semantics: checked.semantics,
+            resolution: checked.resolution,
+            root: snapshot.root,
+        };
+        let queries = query::SemanticQueries::new(&a.resolution);
+        Ok(Some(
+            queries
+                .workspace_symbols(&params.query)
+                .filter_map(|symbol| {
+                    Some(SymbolInformation {
+                        name: symbol.name.clone(),
+                        kind: symbol_kind(symbol.kind),
+                        tags: None,
+                        deprecated: None,
+                        location: location(&a, symbol.span)?,
+                        container_name: Some(
+                            a.resolution.modules[symbol.module.0].logical_path.display(),
+                        ),
+                    })
+                })
+                .collect(),
+        ))
     }
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let offset = offset(&text, params.text_document_position_params.position);
-        let target = a
-            .resolution
-            .references
-            .iter()
-            .find(|r| contains(r.span, offset))
-            .map(|r| r.symbol)
-            .or_else(|| {
-                a.resolution
-                    .symbols
-                    .iter()
-                    .find(|s| contains(s.span, offset))
-                    .map(|s| s.id)
-            });
-        Ok(target.map(|id| {
-            GotoDefinitionResponse::Scalar(Location {
-                uri,
-                range: range(&text, a.resolution.symbols[id.0].span),
-            })
-        }))
+        let queries = query::SemanticQueries::new(&a.resolution);
+        let response = queries
+            .symbol_at(a.current_source, offset)
+            .and_then(|id| location(&a, queries.definition_span(id)))
+            .map(GotoDefinitionResponse::Scalar);
+        Ok(response)
     }
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let at = offset(&text, params.text_document_position.position);
-        let id = a
-            .resolution
-            .references
-            .iter()
-            .find(|r| contains(r.span, at))
-            .map(|r| r.symbol)
-            .or_else(|| {
-                a.resolution
-                    .symbols
-                    .iter()
-                    .find(|s| contains(s.span, at))
-                    .map(|s| s.id)
-            });
-        Ok(id.map(|symbol| {
-            a.resolution
-                .references
-                .iter()
-                .filter(|r| r.symbol == symbol)
-                .map(|r| Location {
-                    uri: uri.clone(),
-                    range: range(&text, r.span),
-                })
-                .chain(
-                    a.resolution
-                        .symbols
-                        .iter()
-                        .filter(|s| s.id == symbol)
-                        .map(|s| Location {
-                            uri: uri.clone(),
-                            range: range(&text, s.span),
-                        }),
-                )
-                .collect()
-        }))
+        let queries = query::SemanticQueries::new(&a.resolution);
+        let Some(symbol) = queries.symbol_at(a.current_source, at) else {
+            return Ok(None);
+        };
+        let mut locations: Vec<_> = queries
+            .references(symbol)
+            .filter_map(|reference| location(&a, reference.span))
+            .collect();
+        if params.context.include_declaration
+            && let Some(declaration) = location(&a, queries.declaration(symbol).span)
+        {
+            locations.push(declaration);
+        }
+        Ok(Some(locations))
     }
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let at = offset(&text, params.text_document_position.position);
-        let id = a
-            .resolution
-            .references
-            .iter()
-            .find(|r| contains(r.span, at))
-            .map(|r| r.symbol)
-            .or_else(|| {
-                a.resolution
-                    .symbols
-                    .iter()
-                    .find(|s| contains(s.span, at))
-                    .map(|s| s.id)
-            });
-        Ok(id.map(|symbol| WorkspaceEdit {
-            changes: Some(HashMap::from([(
-                uri,
-                a.resolution
-                    .references
-                    .iter()
-                    .filter(|r| r.symbol == symbol)
-                    .map(|r| TextEdit {
-                        range: range(&text, r.span),
-                        new_text: params.new_name.clone(),
-                    })
-                    .chain(
-                        a.resolution
-                            .symbols
-                            .iter()
-                            .filter(|s| s.id == symbol)
-                            .map(|s| TextEdit {
-                                range: range(&text, s.span),
-                                new_text: params.new_name.clone(),
-                            }),
-                    )
-                    .collect(),
-            )])),
-            document_changes: None,
-            change_annotations: None,
-        }))
+        let Some(target) = rename::target(&a, a.current_source, at) else {
+            return Ok(None);
+        };
+        rename::edits(&a, &target, &params.new_name)
+            .map(Some)
+            .map_err(Error::invalid_params)
+    }
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.documents.text(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
+        let at = offset(&text, params.position);
+        Ok(rename::target(&a, a.current_source, at).map(|target| target.response))
     }
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let at = offset(&text, params.text_document_position_params.position);
-        let symbol = a
-            .resolution
-            .references
-            .iter()
-            .find(|r| contains(r.span, at))
-            .map(|r| r.symbol)
-            .or_else(|| {
-                a.resolution
-                    .symbols
-                    .iter()
-                    .find(|s| contains(s.span, at))
-                    .map(|s| s.id)
-            });
+        let symbol = query::SemanticQueries::new(&a.resolution).symbol_at(a.current_source, at);
         if let Some(id) = symbol {
             let s = &a.resolution.symbols[id.0];
             return Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(signature(&a, id))),
+                contents: HoverContents::Scalar(MarkedString::String(
+                    presentation::symbol_signature(&a, id),
+                )),
                 range: Some(range(&text, s.span)),
             }));
         }
@@ -375,81 +413,58 @@ impl LanguageServer for Backend {
                 range: Some(range(&text, member.member_span)),
             }));
         }
+        if let Some((span, ty)) = a
+            .semantics
+            .expression_types
+            .iter()
+            .filter(|(span, _)| span.source() == a.current_source && contains(**span, at))
+            .min_by_key(|(span, _)| span.end().saturating_sub(span.start()))
+        {
+            return Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(format!(
+                    "type: {}",
+                    presentation::render_type(&a, *ty)
+                ))),
+                range: Some(range(&text, *span)),
+            }));
+        }
         Ok(None)
     }
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let at = offset(&text, params.text_document_position.position);
-        let mut items: Vec<CompletionItem> = a
-            .resolution
-            .symbols
-            .iter()
-            .filter(|s| s.public || s.module.0 == 0)
-            .map(|s| CompletionItem {
-                label: s.name.clone(),
-                kind: Some(completion_kind(s.kind)),
-                detail: Some(signature(&a, s.id)),
-                ..CompletionItem::default()
-            })
-            .collect();
-        if let Some((dot, partial)) = member_context(&text, at)
-            && let Some(kind) = receiver_kind_at(&a, dot)
-        {
-            items.extend(
-                builtin_methods(kind)
-                    .iter()
-                    .filter(|(name, _)| name.starts_with(&partial))
-                    .map(|(name, rendered)| CompletionItem {
-                        label: (*name).to_owned(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some((*rendered).to_owned()),
-                        ..CompletionItem::default()
-                    }),
-            );
-        }
-        Ok(Some(CompletionResponse::Array(items)))
+        Ok(Some(CompletionResponse::Array(completion::items(
+            &a, &text, at,
+        ))))
     }
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let a = self.analyze(&uri, &text).await;
+        let Ok(a) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         let at = offset(&text, params.text_document_position_params.position);
-        let Some(call) = call_context(&text, at) else {
-            return Ok(None);
-        };
-        let Some(kind) = receiver_kind_at(&a, call.dot) else {
-            return Ok(None);
-        };
-        let Some(rendered) = builtin_method_signature(kind, &call.member) else {
-            return Ok(None);
-        };
-        let active = active_parameter(&text, call.open, at);
-        Ok(Some(SignatureHelp {
-            signatures: vec![SignatureInformation {
-                label: rendered.to_owned(),
-                documentation: None,
-                parameters: Some(parameter_infos(rendered)),
-                active_parameter: Some(active),
-            }],
-            active_signature: Some(0),
-            active_parameter: Some(active),
-        }))
+        Ok(signature_help::help(&a, &text, at))
     }
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
-        let Some(text) = self.documents.0.read().await.get(&uri).cloned() else {
+        let Some(text) = self.documents.text(&uri).await else {
             return Ok(None);
         };
-        let analysis = self.analyze(&uri, &text).await;
+        let Ok(analysis) = self.analyze(&uri).await else {
+            return Ok(None);
+        };
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
             data: semantic_tokens::tokens(&text, &analysis.resolution),
@@ -497,32 +512,6 @@ fn offset(text: &str, position: Position) -> usize {
 fn contains(span: Span, value: usize) -> bool {
     span.start() <= value && value <= span.end()
 }
-fn signature(a: &Analysis, id: vut_resolver::SymbolId) -> String {
-    let s = &a.resolution.symbols[id.0];
-    let kind = match s.kind {
-        ResolverSymbolKind::Function => "fn",
-        ResolverSymbolKind::Method => "fn",
-        ResolverSymbolKind::Data => "data",
-        ResolverSymbolKind::Interface => "interface",
-        ResolverSymbolKind::Enum => "enum",
-        ResolverSymbolKind::TypeAlias => "type",
-        _ => "let",
-    };
-    if let Some(sig) = a.semantics.function_signatures.get(&id) {
-        format!(
-            "{kind} {}({}) -> {:?}",
-            s.name,
-            sig.parameters
-                .iter()
-                .map(|p| format!("{:?}", a.semantics.types[p.0]))
-                .collect::<Vec<_>>()
-                .join(", "),
-            a.semantics.types[sig.result.0]
-        )
-    } else {
-        format!("{kind} {}", s.name)
-    }
-}
 fn completion_kind(kind: ResolverSymbolKind) -> CompletionItemKind {
     match kind {
         ResolverSymbolKind::Function => CompletionItemKind::FUNCTION,
@@ -534,6 +523,24 @@ fn completion_kind(kind: ResolverSymbolKind) -> CompletionItemKind {
         ResolverSymbolKind::Module => CompletionItemKind::MODULE,
         ResolverSymbolKind::Parameter => CompletionItemKind::VARIABLE,
         _ => CompletionItemKind::VARIABLE,
+    }
+}
+
+fn symbol_kind(kind: ResolverSymbolKind) -> tower_lsp::lsp_types::SymbolKind {
+    match kind {
+        ResolverSymbolKind::Module => tower_lsp::lsp_types::SymbolKind::MODULE,
+        ResolverSymbolKind::Function => tower_lsp::lsp_types::SymbolKind::FUNCTION,
+        ResolverSymbolKind::Method => tower_lsp::lsp_types::SymbolKind::METHOD,
+        ResolverSymbolKind::Data => tower_lsp::lsp_types::SymbolKind::STRUCT,
+        ResolverSymbolKind::Interface => tower_lsp::lsp_types::SymbolKind::INTERFACE,
+        ResolverSymbolKind::Enum => tower_lsp::lsp_types::SymbolKind::ENUM,
+        ResolverSymbolKind::TypeAlias | ResolverSymbolKind::TypeParameter => {
+            tower_lsp::lsp_types::SymbolKind::TYPE_PARAMETER
+        }
+        ResolverSymbolKind::Parameter | ResolverSymbolKind::Binding | ResolverSymbolKind::Local => {
+            tower_lsp::lsp_types::SymbolKind::VARIABLE
+        }
+        ResolverSymbolKind::AnonymousFunction => tower_lsp::lsp_types::SymbolKind::FUNCTION,
     }
 }
 

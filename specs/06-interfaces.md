@@ -227,7 +227,7 @@ fn make_sound(animal: Animal):
 Concrete values satisfying the interface may be passed directly.
 
 ```vut
-dog = Dog(name = "Milo")
+dog = Dog(name: "Milo")
 
 make_sound(dog)
 ```
@@ -255,7 +255,7 @@ data Dog:
 this must fail:
 
 ```vut
-make_sound(Dog(name = "Milo"))
+make_sound(Dog(name: "Milo"))
 ```
 
 if `Dog.speak()` does not exist.
@@ -266,7 +266,7 @@ The compiler should produce a diagnostic similar to:
 error[E4102]: `Dog` does not satisfy interface `Animal`
   --> src/main.vut:10:12
    |
-10 | make_sound(Dog(name = "Milo"))
+10 | make_sound(Dog(name: "Milo"))
    |            ^^^^^^^^^^^^^^^^^^ `Dog` cannot be used as `Animal`
    |
    = missing method:
@@ -495,7 +495,7 @@ Collections may use interface element types.
 Example:
 
 ```vut
-animals: list(Animal)
+animals: list[Animal]
 ```
 
 The list may contain:
@@ -511,10 +511,10 @@ provided every concrete type satisfies `Animal`.
 Example conceptually:
 
 ```vut
-animals: list(Animal) = @(
-  Dog(name = "Milo"),
-  Cat(name = "Luna")
-)
+animals: list[Animal] = @[
+  Dog(name: "Milo"),
+  Cat(name: "Luna")
+]
 ```
 
 This is controlled heterogeneous storage based on shared static behavior.
@@ -522,7 +522,7 @@ This is controlled heterogeneous storage based on shared static behavior.
 It is not equivalent to:
 
 ```text
-list(dyn)
+list[dyn]
 ```
 
 ---
@@ -648,7 +648,7 @@ Example:
 fn process(reader: Reader):
   ...
 
-file = File(path = "data.txt")
+file = File(path: "data.txt")
 
 process(file)
 ```
@@ -692,7 +692,7 @@ A generic type parameter may declare one or more interface bounds. Multiple
 bounds are separated by `+`:
 
 ```vut
-fn render(T: Printable + Named)(value: T) -> str:
+fn render[T: Printable + Named](value: T) -> str:
   ...
 ```
 
@@ -710,7 +710,7 @@ bound interface of `T`:
 interface Encodable:
   to_json() -> Value
 
-fn encode(T: Encodable)(value: T) -> str:
+fn encode[T: Encodable](value: T) -> str:
   stringify(value.to_json())
 ```
 
@@ -746,12 +746,12 @@ This revision specifies bound instance-method access on a type parameter.
 Out of scope, to be specified separately:
 
 - associated/static interface requirements and factory/conversion methods;
-- implementations over type constructors such as `list(T)`, `map(K, V)`,
-  `array(T, N)`, and `T?`;
+- implementations over type constructors such as `list[T]`, `map[K, V]`,
+  `[T, N]`, and `T?`;
 - generic derive/metaprogramming;
-- bounds with generic interface arguments (`T: Decoder(str)`);
+- bounds with generic interface arguments (`T: Decoder[str]`);
 - field/method access on a generic type application while its argument is still
-  a type parameter (`b.get()` where `b: Box(T)`).
+  a type parameter (`b.get()` where `b: Box[T]`).
 
 ---
 
@@ -763,13 +763,13 @@ refer to the implementing type through `Self`:
 
 ```vut
 interface Decodable:
-  static from_json(value: Value) -> result(Self, Error)
+  static from_json(value: Value) -> result[Self, Error]
 ```
 
 The implementing type provides a matching associated function with `static fn`:
 
 ```vut
-static fn User.from_json(value: Value) -> result(User, Error):
+static fn User.from_json(value: Value) -> result[User, Error]:
   ...
 ```
 

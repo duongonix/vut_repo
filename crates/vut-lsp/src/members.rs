@@ -2,6 +2,7 @@
 
 use tower_lsp::lsp_types::{ParameterInformation, ParameterLabel};
 use vut_ast::{Block, Expr, File, ForKind, Item, Stmt, TemplateSegment};
+use vut_hir::TypeId;
 use vut_source::Span;
 use vut_types::{BuiltinKind, builtin_kind};
 
@@ -134,6 +135,12 @@ fn expr_members(expression: &Expr, uses: &mut Vec<MemberUse>) {
                 member_span: member.span,
             });
         }
+        Expr::Subscript { object, index, .. } => {
+            expr_members(object, uses);
+            if let Some(index) = index {
+                expr_members(index, uses);
+            }
+        }
         Expr::Lambda { body, .. } => match body {
             vut_ast::LambdaBody::Expression(value) => expr_members(value, uses),
             vut_ast::LambdaBody::Block(block) => block_members(block, uses),
@@ -167,12 +174,17 @@ pub(super) fn receiver_kind(a: &Analysis, receiver: Span) -> Option<BuiltinKind>
 
 /// Resolves the builtin method family of the expression ending at `dot`.
 pub(super) fn receiver_kind_at(a: &Analysis, dot: usize) -> Option<BuiltinKind> {
+    receiver_type_at(a, dot).and_then(|ty| builtin_kind(&a.semantics.types[ty.0]))
+}
+
+/// Resolves the semantic type of the expression ending immediately before a dot.
+pub(super) fn receiver_type_at(a: &Analysis, dot: usize) -> Option<TypeId> {
     a.semantics
         .expression_types
         .iter()
         .filter(|(span, _)| span.start() <= dot && span.end() <= dot)
         .max_by_key(|(span, _)| span.end())
-        .and_then(|(_, ty)| builtin_kind(&a.semantics.types[ty.0]))
+        .map(|(_, ty)| *ty)
 }
 
 /// Finds the `.member` context at the cursor, returning the dot offset and the
@@ -195,28 +207,11 @@ pub(super) fn member_context(text: &str, at: usize) -> Option<(usize, String)> {
 pub(super) struct CallContext {
     pub(super) dot: usize,
     pub(super) member: String,
-    pub(super) open: usize,
 }
 
 /// Locates the innermost unclosed call before the cursor and its member callee.
 pub(super) fn call_context(text: &str, at: usize) -> Option<CallContext> {
-    let end = at.min(text.len());
-    let mut depth = 0_i32;
-    let mut open = None;
-    for (index, character) in text[..end].char_indices().rev() {
-        match character {
-            ')' => depth += 1,
-            '(' => {
-                if depth == 0 {
-                    open = Some(index);
-                    break;
-                }
-                depth -= 1;
-            }
-            _ => {}
-        }
-    }
-    let open = open?;
+    let open = open_call(text, at)?;
     let before = text[..open].trim_end();
     let name_start = before
         .rfind(|character: char| !(character == '_' || character.is_alphanumeric()))
@@ -229,8 +224,26 @@ pub(super) fn call_context(text: &str, at: usize) -> Option<CallContext> {
     Some(CallContext {
         dot,
         member: member.to_owned(),
-        open,
     })
+}
+
+/// Locates the opening parenthesis of the innermost unclosed call.
+pub(super) fn open_call(text: &str, at: usize) -> Option<usize> {
+    let end = at.min(text.len());
+    let mut depth = 0_i32;
+    for (index, character) in text[..end].char_indices().rev() {
+        match character {
+            ')' => depth += 1,
+            '(' => {
+                if depth == 0 {
+                    return Some(index);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Counts top-level arguments consumed before the cursor.
@@ -253,18 +266,72 @@ pub(super) fn parameter_infos(rendered: &str) -> Vec<ParameterInformation> {
     let Some(start) = rendered.find('(') else {
         return Vec::new();
     };
-    let Some(end) = rendered[start..].find(')').map(|index| start + index) else {
+    let Some(end) = matching_close(rendered, start) else {
         return Vec::new();
     };
     let inner = &rendered[start + 1..end];
     if inner.trim().is_empty() {
         return Vec::new();
     }
-    inner
-        .split(',')
+    split_top_level(inner)
+        .into_iter()
         .map(|parameter| ParameterInformation {
             label: ParameterLabel::Simple(parameter.trim().to_owned()),
             documentation: None,
         })
         .collect()
+}
+
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0_u32;
+    for (relative, character) in text[open..].char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + relative);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0_i32;
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(&text[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    result.push(&text[start..]);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameters_preserve_nested_generic_commas() {
+        let values = parameter_infos("fn f(values: map[str, list[int]], callback: fn(int, str))");
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn open_call_finds_innermost_unclosed_call() {
+        let source = "outer(1, inner(2, ";
+        assert_eq!(open_call(source, source.len()), Some(14));
+        assert_eq!(active_parameter(source, 14, source.len()), 1);
+    }
 }

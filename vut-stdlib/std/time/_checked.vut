@@ -1,0 +1,31 @@
+# Check before evaluation; never silently wrap a time value.
+import time._native as native
+
+fn fail(value: i64):
+  unsafe:
+    native.overflow(value)
+
+fn add(a: i64, b: i64) -> i64:
+  maximum: i64 = 9223372036854775807
+  minimum: i64 = -9223372036854775808
+  if b > 0 and a > maximum - b:
+    fail(b)
+  if b < 0 and a < minimum - b:
+    fail(b)
+  a + b
+
+fn subtract(a: i64, b: i64) -> i64:
+  maximum: i64 = 9223372036854775807
+  minimum: i64 = -9223372036854775808
+  if b < 0 and a > maximum + b:
+    fail(b)
+  if b > 0 and a < minimum + b:
+    fail(b)
+  a - b
+
+fn scale(count: i64, factor: i64) -> i64:
+  maximum: i64 = 9223372036854775807
+  minimum: i64 = -9223372036854775808
+  if count > maximum / factor or count < minimum / factor:
+    fail(count)
+  count * factor

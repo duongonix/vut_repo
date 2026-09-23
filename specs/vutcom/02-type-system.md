@@ -18,7 +18,7 @@ introduces a nominal composition domain `UI`.
 The primary associated type is:
 
 ```vut
-vutcom(UI)
+vutcom[UI]
 ```
 
 Different domains produce incompatible Vutcom types.
@@ -31,7 +31,7 @@ composition Build
 means:
 
 ```text
-vutcom(UI) != vutcom(Build)
+vutcom[UI] != vutcom[Build]
 ```
 
 ---
@@ -41,23 +41,23 @@ vutcom(UI) != vutcom(Build)
 Given:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   ...
 
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   ...
 ```
 
 this is valid:
 
 ```vut
-page: vutcom(UI) = Home()
+page: vutcom[UI] = Home()
 ```
 
 This is invalid:
 
 ```vut
-page: vutcom(UI) = Release()
+page: vutcom[UI] = Release()
 ```
 
 No runtime domain check should be required.
@@ -66,12 +66,12 @@ No runtime domain check should be required.
 
 ## 3. Domain Parameters
 
-`vutcom(D)` requires `D` to resolve to a composition domain.
+`vutcom[D]` requires `D` to resolve to a composition domain.
 
 The compiler should reject:
 
 ```vut
-value: vutcom(int)
+value: vutcom[int]
 ```
 
 with a specific diagnostic.
@@ -85,7 +85,7 @@ Do not silently interpret arbitrary ordinary types as composition domains.
 A function declared:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   ...
 ```
 
@@ -100,7 +100,7 @@ Composition-aware return analysis must integrate with normal Vut control-flow ch
 Given:
 
 ```vut
-fn Card(children: vutcom(UI)) -> vutcom(UI):
+fn Card(children: vutcom[UI]) -> vutcom[UI]:
   ...
 ```
 
@@ -111,7 +111,7 @@ Card():
   ...
 ```
 
-must be type checked as `vutcom(UI)`.
+must be type checked as `vutcom[UI]`.
 
 A Build composition inside the block must fail.
 
@@ -124,21 +124,21 @@ A callable may accept a trailing composition block only if its signature support
 Example container:
 
 ```vut
-fn Card(children: vutcom(UI)) -> vutcom(UI):
+fn Card(children: vutcom[UI]) -> vutcom[UI]:
   ...
 ```
 
 Example leaf:
 
 ```vut
-fn Text(value: str) -> vutcom(UI):
+fn Text(value: str) -> vutcom[UI]:
   ...
 ```
 
 The type checker must reject:
 
 ```vut
-Text(value = "Hello"):
+Text(value: "Hello"):
   Other()
 ```
 
@@ -153,10 +153,10 @@ Vutcom must work with Vut generics.
 Desired example:
 
 ```vut
-fn ListView(T)(
-  items: list(T),
-  render: fn(T) -> vutcom(UI)
-) -> vutcom(UI):
+fn ListView[T](
+  items: list[T],
+  render: fn(T) -> vutcom[UI]
+) -> vutcom[UI]:
   Column():
     for item in items:
       render(item)
@@ -166,8 +166,8 @@ Usage:
 
 ```vut
 ListView(
-  items = users,
-  render = user => UserCard(user)
+  items: users,
+  render: user: > UserCard(user)
 )
 ```
 
@@ -186,8 +186,8 @@ However, do not invent higher-kinded types or a new generic system solely for Vu
 MVP should prioritize concrete domain parameters such as:
 
 ```vut
-vutcom(UI)
-vutcom(Build)
+vutcom[UI]
+vutcom[Build]
 ```
 
 ---
@@ -201,8 +201,8 @@ Example conceptually:
 ```vut
 fn Route(
   path: str,
-  page: vutcom(UI)
-) -> vutcom(Route):
+  page: vutcom[UI]
+) -> vutcom[Route]:
   ...
 ```
 
@@ -210,8 +210,8 @@ Then:
 
 ```vut
 Route(
-  path = "/",
-  page = Home()
+  path: "/",
+  page: Home()
 )
 ```
 
@@ -219,7 +219,7 @@ is valid.
 
 This does NOT merge the UI and Route domains.
 
-`vutcom(UI)` remains an ordinary typed argument owned by the Route API.
+`vutcom[UI]` remains an ordinary typed argument owned by the Route API.
 
 ---
 
@@ -227,12 +227,12 @@ This does NOT merge the UI and Route domains.
 
 ## 10. Ownership Direction
 
-`vutcom(D)` must be opaque and non-Copy.
+`vutcom[D]` must be opaque and non-Copy.
 
 Canonical direction:
 
 ```text
-vutcom(D)
+vutcom[D]
 =
 opaque
 +
@@ -262,7 +262,7 @@ Duplicating a composition without ownership analysis could duplicate ownership i
 Do NOT immediately hardcode:
 
 ```text
-vutcom(D) = Linear
+vutcom[D] = Linear
 ```
 
 without integrating it with Vut's generic ownership model.
@@ -288,11 +288,11 @@ Composition-producing functions may capture values.
 Example:
 
 ```vut
-fn UserCard(user: User) -> vutcom(UI):
+fn UserCard(user: User) -> vutcom[UI]:
   Button(
-    onclick = () => open(user.id)
+    onclick: () => open(user.id)
   ):
-    Text(value = user.name)
+    Text(value: user.name)
 ```
 
 The compiler must determine what must survive with the resulting composition.
@@ -317,7 +317,7 @@ Possible optimization strategies include:
 Given:
 
 ```vut
-child: vutcom(UI) = Content()
+child: vutcom[UI] = Content()
 ```
 
 and:
@@ -388,7 +388,7 @@ Composition ownership must remain correct through:
 Example:
 
 ```vut
-fn Home(user: User?) -> vutcom(UI):
+fn Home(user: User?) -> vutcom[UI]:
   Column():
     if user:
       Profile(user)
@@ -402,14 +402,14 @@ No branch may create invalid duplicate ownership.
 
 ## 17. Type Inference
 
-Where the expected domain is known, the type checker may propagate the expected `vutcom(D)` type into nested composition.
+Where the expected domain is known, the type checker may propagate the expected `vutcom[D]` type into nested composition.
 
 Example:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
-    Text(value = "Hello")
+    Text(value: "Hello")
 ```
 
 The body context knows the expected domain is `UI`.
@@ -429,8 +429,8 @@ Examples:
 ### Domain mismatch
 
 ```text
-expected `vutcom(UI)`
-found `vutcom(Build)`
+expected `vutcom[UI]`
+found `vutcom[Build]`
 ```
 
 ### Invalid domain
@@ -448,8 +448,8 @@ found `vutcom(Build)`
 ### Child domain mismatch
 
 ```text
-child composition requires `vutcom(UI)`
-found `vutcom(Route)`
+child composition requires `vutcom[UI]`
+found `vutcom[Route]`
 ```
 
 ### Invalid composition call
@@ -487,9 +487,9 @@ The implementation must preserve:
 ```text
 different composition domains are statically distinct
 
-vutcom(D) is opaque
+vutcom[D] is opaque
 
-vutcom(D) is not implicitly Copy
+vutcom[D] is not implicitly Copy
 
 cross-domain composition is explicit
 

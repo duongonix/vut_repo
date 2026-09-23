@@ -15,11 +15,13 @@ fn constant() -> Program {
             arrays: HashMap::new(),
             lists: HashMap::new(),
             maps: HashMap::new(),
+            channels: HashMap::new(),
             results: HashMap::new(),
             enums: HashMap::new(),
             optionals: HashMap::new(),
             callables: HashMap::new(),
             aggregates: std::collections::HashSet::new(),
+            unsigned: std::collections::HashSet::new(),
             types: vec![TypeInfo {
                 size: 8,
                 alignment: 8,
@@ -36,6 +38,7 @@ fn constant() -> Program {
         diagnostics: vut_mir::DiagnosticSink::new(),
         frames: HashMap::new(),
         awaits: HashMap::new(),
+        closure_layouts: HashMap::new(),
         functions: vec![MirFunction {
             symbol: SymbolId(0),
             receiver: None,

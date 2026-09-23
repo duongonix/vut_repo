@@ -1,0 +1,97 @@
+# Typed process outcomes decoded from owned native replies, using exact scalar ABI.
+import _internal.abi
+import process._native as native
+
+enum ProcessErrorKind:
+  not_found
+  permission_denied
+  invalid_input
+  spawn_failed
+  io
+  unsupported
+  other
+
+data ProcessError:
+  kind: ProcessErrorKind
+  message: str
+
+data ExitStatus:
+  _success: bool
+  _code: i32?
+
+fn ExitStatus.success() -> bool:
+  self._success
+
+fn ExitStatus.code() -> i32?:
+  self._code
+
+data Output:
+  status: ExitStatus
+  stdout: bytes
+  stderr: bytes
+
+fn error(raw: bytes) -> ProcessError:
+  code = abi.status(raw)
+  kind: ProcessErrorKind = if code == 1:
+    ProcessErrorKind.not_found
+  elif code == 2:
+    ProcessErrorKind.permission_denied
+  elif code == 4:
+    ProcessErrorKind.invalid_input
+  elif code == 8:
+    ProcessErrorKind.unsupported
+  elif code >= 9 and code <= 13:
+    ProcessErrorKind.io
+  else:
+    ProcessErrorKind.other
+  ProcessError(kind: kind, message: abi.message(raw))
+
+fn build_status(success: usize, has_code: usize, code: i32) -> ExitStatus:
+  value: i32? = null
+  if has_code != 0:
+    value = code
+  ExitStatus(_success: success != 0, _code: value)
+
+fn status(handle: resource[native.ReplyHandle]) -> result[ExitStatus, ProcessError]:
+  unsafe:
+    valid = native.reply_ok(handle)
+    raw = native.reply_error(handle)
+    success = native.reply_success(handle)
+    has_code = native.reply_has_code(handle)
+    code = native.reply_code(handle)
+    if valid == 0:
+      return err(error(raw))
+    return ok(build_status(success, has_code, code))
+
+fn optional_status(handle: resource[native.ReplyHandle]) -> result[ExitStatus?, ProcessError]:
+  unsafe:
+    valid = native.reply_ok(handle)
+    raw = native.reply_error(handle)
+    ready = native.reply_ready(handle)
+    success = native.reply_success(handle)
+    has_code = native.reply_has_code(handle)
+    code = native.reply_code(handle)
+    if valid == 0:
+      return err(error(raw))
+    value: ExitStatus? = null
+    if ready != 0:
+      value = build_status(success, has_code, code)
+    return ok(value)
+
+fn output(handle: resource[native.ReplyHandle]) -> result[Output, ProcessError]:
+  unsafe:
+    valid = native.reply_ok(handle)
+    raw = native.reply_error(handle)
+    success = native.reply_success(handle)
+    has_code = native.reply_has_code(handle)
+    code = native.reply_code(handle)
+    stdout = native.reply_stdout(handle)
+    stderr = native.reply_stderr(handle)
+    if valid == 0:
+      return err(error(raw))
+    return ok(Output(status: build_status(success, has_code, code), stdout: stdout, stderr: stderr))
+
+fn completed(raw: bytes) -> result[unit, ProcessError]:
+  if not abi.is_ok(raw):
+    return err(error(raw))
+  ok(unit)

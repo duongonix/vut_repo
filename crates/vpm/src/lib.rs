@@ -1,12 +1,17 @@
 //! VPM project workflow and package metadata foundation.
 #![allow(clippy::missing_errors_doc)]
+mod artifact;
 pub mod compatibility;
+mod global;
 mod lockfile;
 mod manifest;
 mod messages;
+mod native;
+mod native_plan;
 mod package_validation;
 mod project;
 mod provider;
+mod publish;
 mod resolver;
 mod source;
 mod store;
@@ -20,7 +25,8 @@ use clap::{Parser, Subcommand};
 pub use manifest::{Dependency, Manifest};
 use messages::{ColorMode, Style};
 pub use project::{
-    AddReport, InstallReport, add, build, check, init, install, new, remove, update,
+    AddReport, AnalysisSourceRoot, InstallReport, add, analysis_source_roots, build, check, init,
+    install, new, remove, update,
 };
 pub use provider::{
     GitHubProvider, GitLabProvider, PackageProvider, PackageSnapshot, ProviderError,
@@ -53,7 +59,27 @@ enum Command {
     Remove {
         package: String,
     },
-    Install,
+    Install {
+        /// Install a published CLI package globally when present; otherwise
+        /// install the current project's dependencies.
+        package: Option<String>,
+    },
+    Uninstall {
+        package: String,
+    },
+    Exec {
+        package: String,
+        #[arg(long)]
+        bin: Option<String>,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    Publish {
+        /// Publication target; defaults to the official registry.
+        registry: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     Update,
     Build {
         #[arg(long)]
@@ -135,8 +161,12 @@ fn execute(cli: &Cli, style: Style) -> Result<i32, CliFailure> {
         | Command::Init
         | Command::Add { .. }
         | Command::Remove { .. }
-        | Command::Install
-        | Command::Update => setup(&cli.command, &cwd, style, quiet),
+        | Command::Update
+        | Command::Install { package: None } => setup(&cli.command, &cwd, style, quiet),
+        Command::Install { package: Some(_) }
+        | Command::Uninstall { .. }
+        | Command::Exec { .. } => global_commands(&cli.command, style, quiet),
+        Command::Publish { .. } => publish_command(&cli.command, &cwd, style, quiet),
         Command::Build { .. } | Command::Check | Command::Test { .. } | Command::Run { .. } => {
             build_commands(&cli.command, &cwd, style, quiet)
         }
@@ -180,7 +210,7 @@ fn setup(command: &Command, cwd: &Path, style: Style, quiet: bool) -> Result<i32
             remove(cwd, package)?;
             emit(quiet, &messages::removed(style, package));
         }
-        Command::Install => {
+        Command::Install { package: None } => {
             let report = install(cwd)?;
             emit(quiet, &install_line(style, &report));
         }
@@ -204,6 +234,58 @@ fn install_line(style: Style, report: &InstallReport) -> String {
     } else {
         messages::installed(style, report.installed)
     }
+}
+
+/// Global package commands: `install <package>`, `uninstall`, `exec`.
+fn global_commands(command: &Command, style: Style, quiet: bool) -> Result<i32, CliFailure> {
+    match command {
+        Command::Install {
+            package: Some(package),
+        } => {
+            let report = global::install(package)?;
+            emit(
+                quiet,
+                &messages::global_installed(style, &report.package, &report.bins),
+            );
+        }
+        Command::Uninstall { package } => {
+            global::uninstall(package)?;
+            emit(quiet, &messages::uninstalled(style, package));
+        }
+        Command::Exec { package, bin, args } => {
+            let code = global::exec(package, bin.as_deref(), args)?;
+            if code != 0 {
+                return Ok(code);
+            }
+        }
+        _ => unreachable!("global_commands only handles global package commands"),
+    }
+    Ok(0)
+}
+
+/// Publication command: `publish [registry] [--dry-run]`.
+fn publish_command(
+    command: &Command,
+    root: &Path,
+    style: Style,
+    quiet: bool,
+) -> Result<i32, CliFailure> {
+    let Command::Publish { registry, dry_run } = command else {
+        unreachable!("publish_command only handles `publish`");
+    };
+    let report = publish::publish(root, registry.as_deref(), *dry_run)?;
+    emit(
+        quiet,
+        &messages::published(
+            style,
+            &report.package,
+            &report.version,
+            &report.registry,
+            report.files,
+            report.dry_run,
+        ),
+    );
+    Ok(0)
 }
 
 /// Compiler-backed commands: `build`, `check`, `test`, `run`.
@@ -341,9 +423,37 @@ mod cli_tests {
         ] {
             assert!(Cli::try_parse_from(command).is_ok());
         }
-        for deferred in ["login", "publish", "yank"] {
+        for deferred in ["login", "yank"] {
             assert!(Cli::try_parse_from(["vpm", deferred]).is_err());
         }
+    }
+
+    #[test]
+    fn global_and_publish_commands_have_stable_cli_contracts() {
+        for command in [
+            vec!["vpm", "install"],
+            vec!["vpm", "install", "math"],
+            vec!["vpm", "install", "math@1.0.0"],
+            vec!["vpm", "uninstall", "math"],
+            vec!["vpm", "exec", "math"],
+            vec!["vpm", "exec", "math", "--bin", "math-tool", "--", "arg"],
+            vec!["vpm", "publish"],
+            vec!["vpm", "publish", "alice/vut-packages"],
+            vec!["vpm", "publish", "--dry-run"],
+            vec!["vpm", "publish", "alice/vut-packages", "--dry-run"],
+        ] {
+            assert!(Cli::try_parse_from(command.clone()).is_ok(), "{command:?}");
+        }
+        assert!(matches!(
+            Cli::try_parse_from(["vpm", "install"]).unwrap().command,
+            Command::Install { package: None }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["vpm", "install", "math"])
+                .unwrap()
+                .command,
+            Command::Install { package: Some(_) }
+        ));
     }
 
     #[test]

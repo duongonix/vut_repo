@@ -47,9 +47,10 @@ fn _args() -> bytes:
     _native_args()
 
 enum EnvErrorKind:
-  not_found
-  invalid_input
-  invalid_data
+  invalid_name
+  invalid_value
+  invalid_encoding
+  unsupported
   other
 
 data EnvError:
@@ -57,78 +58,64 @@ data EnvError:
   message: str
 
 fn _kind(code: int) -> EnvErrorKind:
-  kind: EnvErrorKind = if code == 1:
-    EnvErrorKind.not_found
-  elif code == 4:
-    EnvErrorKind.invalid_input
-  elif code == 11:
-    EnvErrorKind.invalid_data
-  else:
-    EnvErrorKind.other
-  kind
+  if code == 14:
+    return EnvErrorKind.invalid_name
+  if code == 15:
+    return EnvErrorKind.invalid_value
+  if code == 11:
+    return EnvErrorKind.invalid_encoding
+  if code == 8:
+    return EnvErrorKind.unsupported
+  EnvErrorKind.other
 
-fn _error(code: int, raw: bytes) -> EnvError:
-  EnvError(kind = _kind(code), message = abi.message(raw))
+fn _error(raw: bytes) -> EnvError:
+  EnvError(kind: _kind(abi.status(raw)), message: abi.message(raw))
 
-fn _ok_opt(text: str) -> result(str?, EnvError):
-  ok(text)
+fn _completed(raw: bytes) -> result[unit, EnvError]:
+  if not abi.is_ok(raw):
+    return err(_error(raw))
+  ok(unit)
 
-fn _err_opt(code: int, raw: bytes) -> result(str?, EnvError):
-  err(_error(code, raw))
-
-fn _ok_flag() -> result(bool, EnvError):
-  ok(true)
-
-fn _err_flag(code: int, raw: bytes) -> result(bool, EnvError):
-  err(_error(code, raw))
-
-fn _ok_list(values: list(str)) -> result(list(str), EnvError):
-  ok(values)
-
-fn _err_list(code: int, raw: bytes) -> result(list(str), EnvError):
-  err(_error(code, raw))
-
-fn _flag_result(raw: bytes) -> result(bool, EnvError):
-  value: result(bool, EnvError) = if abi.is_ok(raw):
-    _ok_flag()
-  else:
-    _err_flag(abi.status(raw), raw)
-  value
-
-# Returns the value of `name`, or `null` when it is not set.
-fn get(name: str) -> result(str?, EnvError):
+fn get(name: str) -> result[str?, EnvError]:
   raw = _get(name)
-  value: result(str?, EnvError) = if abi.is_ok(raw):
-    _ok_opt(abi.raw_text(raw))
-  else:
-    _err_opt(abi.status(raw), raw)
-  value
+  if abi.status(raw) == 1:
+    return ok(null)
+  if not abi.is_ok(raw):
+    return err(_error(raw))
+  match abi.payload(raw).to_str():
+    ok(text): ok(text)
+    err(error): err(EnvError(kind: EnvErrorKind.invalid_encoding, message: "invalid environment encoding"))
 
+# Invalid names are false; malformed values still count as present.
 fn has(name: str) -> bool:
   _has(name) != 0
 
-fn set(name: str, value: str) -> result(bool, EnvError):
-  _flag_result(_set(name, value))
+fn set(name: str, value: str) -> result[unit, EnvError]:
+  _completed(_set(name, value))
 
-fn remove(name: str) -> result(bool, EnvError):
-  _flag_result(_remove(name))
+fn remove(name: str) -> result[unit, EnvError]:
+  _completed(_remove(name))
 
-# All variables as `key=value` text entries, sorted by key.
-fn all() -> result(list(str), EnvError):
+fn all() -> result[map[str, str], EnvError]:
   raw = _all()
-  result: result(list(str), EnvError) = if abi.is_ok(raw):
-    _ok_list(abi.fields(raw))
-  else:
-    _err_list(abi.status(raw), raw)
-  result
+  if not abi.is_ok(raw):
+    return err(_error(raw))
+  values: map[str, str] = ()
+  fields = abi.fields(raw)
+  key = ""
+  for value, index in fields:
+    if index % 2 == 0:
+      key = value
+    else:
+      values.set(key, value)
+  ok(values)
 
-# Raw process arguments, including the program name at index 0.
-fn args() -> list(str):
+# Includes the executable at argument zero.
+fn args() -> list[str]:
   abi.fields(_args())
 
-fn arg(index: int) -> str?:
+fn arg(index: usize) -> str?:
   values = args()
-  value: str? = null
-  if index < values.len():
-    value = values.at(index)
-  value
+  if index >= values.len().to_usize():
+    return null
+  values.at(index.to_int())

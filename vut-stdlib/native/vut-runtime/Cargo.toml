@@ -12,6 +12,7 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 vut-runtime = { path = "../../../crates/vut-runtime" }
 bytes = "1"
+getrandom = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream"] }
 rustls = "0.23"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "net", "macros"] }

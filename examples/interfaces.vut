@@ -31,11 +31,11 @@ fn describe(animal: Animal) -> str:
 
 fn pick(wide: bool) -> Animal:
   if wide:
-    return Dog(name = "Rex")
-  return Bird(name = "Pip")
+    return Dog(name: "Rex")
+  return Bird(name: "Pip")
 
 fn main():
-  out(describe(Dog(name = "Rex")))
-  out(describe(Bird(name = "Pip")))
+  out(describe(Dog(name: "Rex")))
+  out(describe(Bird(name: "Pip")))
   out(describe(pick(true)))
   out(describe(pick(false)))

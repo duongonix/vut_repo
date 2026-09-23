@@ -6,16 +6,17 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub const VERSION: u32 = 13;
-pub const ALLOC: &str = "vut_rt_alloc_v1";
-pub const REALLOC: &str = "vut_rt_realloc_v1";
-pub const FREE: &str = "vut_rt_free_v1";
+/// Exported symbol that reports the runtime ABI revision (`vut_rt_<module>_<op>_vN`).
+pub const ABI_VERSION: &str = "vut_rt_abi_version_v1";
 pub const PANIC: &str = "vut_rt_panic_v1";
 pub const BOUNDS_PANIC: &str = "vut_rt_bounds_panic_v1";
+pub const NUMERIC_PANIC: &str = "vut_rt_numeric_panic_v1";
 pub const BOUNDS_CHECK: &str = "vut_rt_bounds_check_v1";
 pub const PRINT: &str = "vut_rt_print_v1";
 pub const OUT: &str = "vut_rt_out_v1";
 pub const INPUT: &str = "vut_rt_input_v1";
 pub const FORMAT_I64: &str = "vut_rt_format_i64_v1";
+pub const FORMAT_U64: &str = "vut_rt_format_u64_v1";
 pub const FORMAT_F64: &str = "vut_rt_format_f64_v1";
 pub const F64_MOD: &str = "vut_rt_f64_mod_v1";
 pub const CONCAT: &str = "vut_rt_concat_v1";
@@ -118,6 +119,9 @@ pub const BOOL_TO_STR: &str = "vut_rt_bool_to_str_v1";
 pub const LIST_NEW: &str = "vut_rt_list_new_v1";
 pub const LIST_RETAIN: &str = "vut_rt_list_retain_v1";
 pub const LIST_RELEASE: &str = "vut_rt_list_release_v1";
+pub const LIST_MAKE_UNIQUE: &str = "vut_rt_list_make_unique_v1";
+pub const MAP_MAKE_UNIQUE: &str = "vut_rt_map_make_unique_v1";
+pub const BYTES_MAKE_UNIQUE: &str = "vut_rt_bytes_make_unique_v1";
 pub const LIST_LEN: &str = "vut_rt_list_len_v1";
 pub const LIST_IS_EMPTY: &str = "vut_rt_list_is_empty_v1";
 pub const LIST_CAPACITY: &str = "vut_rt_list_capacity_v1";
@@ -125,6 +129,8 @@ pub const LIST_DATA: &str = "vut_rt_list_data_v1";
 pub const LIST_RESERVE: &str = "vut_rt_list_reserve_v1";
 pub const LIST_PUSH: &str = "vut_rt_list_push_v1";
 pub const LIST_AT: &str = "vut_rt_list_at_v1";
+/// Unchecked element access; the caller must have proven the index in bounds.
+pub const LIST_AT_UNCHECKED: &str = "vut_rt_list_at_unchecked_v1";
 pub const LIST_SET: &str = "vut_rt_list_set_v1";
 pub const LIST_INSERT: &str = "vut_rt_list_insert_v1";
 pub const LIST_REMOVE: &str = "vut_rt_list_remove_v1";
@@ -150,6 +156,7 @@ pub const MAP_IS_EMPTY: &str = "vut_rt_map_is_empty_v1";
 pub const MAP_CAPACITY: &str = "vut_rt_map_capacity_v1";
 pub const MAP_RESERVE: &str = "vut_rt_map_reserve_v1";
 pub const MAP_GET: &str = "vut_rt_map_get_v1";
+pub const MAP_AT: &str = "vut_rt_map_at_v1";
 pub const MAP_SET: &str = "vut_rt_map_set_v1";
 pub const MAP_CONTAINS_KEY: &str = "vut_rt_map_contains_key_v1";
 pub const MAP_REMOVE: &str = "vut_rt_map_remove_v1";
@@ -169,6 +176,8 @@ pub const TASK_POLL: &str = "vut_rt_task_poll_v1";
 pub const TASK_RESULT: &str = "vut_rt_task_result_v1";
 pub const EXECUTOR_RUN: &str = "vut_rt_executor_run_v1";
 pub const EXECUTOR_DRAIN: &str = "vut_rt_executor_drain_v1";
+pub const SCHEDULER_MAX_RUNNING: &str = "vut_rt_scheduler_max_running_v1";
+pub const SCHEDULER_WORKER_COUNT: &str = "vut_rt_scheduler_worker_count_v1";
 pub const RESOURCE_NEW: &str = "vut_rt_resource_new_v1";
 pub const RESOURCE_PTR: &str = "vut_rt_resource_ptr_v1";
 pub const RESOURCE_RELEASE: &str = "vut_rt_resource_release_v1";
@@ -181,24 +190,35 @@ pub const ASYNC_ON_RESUME: &str = "vut_rt_async_on_resume_v1";
 pub const FRAME_ALLOC: &str = "vut_rt_frame_alloc_v1";
 pub const FRAME_FREE: &str = "vut_rt_frame_free_v1";
 pub const FRAME_LIVE_COUNT: &str = "vut_rt_frame_live_count_v1";
-pub const INTERFACE_NEW: &str = "vut_rt_interface_new";
-pub const INTERFACE_DATA: &str = "vut_rt_interface_data";
-pub const INTERFACE_SET_VTABLE: &str = "vut_rt_interface_set_vtable";
-pub const INTERFACE_VTABLE: &str = "vut_rt_interface_vtable";
-pub const INTERFACE_RETAIN: &str = "vut_rt_interface_retain";
-pub const INTERFACE_RELEASE: &str = "vut_rt_interface_release";
+pub const INTERFACE_NEW: &str = "vut_rt_interface_new_v1";
+pub const INTERFACE_DATA: &str = "vut_rt_interface_data_v1";
+pub const INTERFACE_SET_VTABLE: &str = "vut_rt_interface_set_vtable_v1";
+pub const INTERFACE_VTABLE: &str = "vut_rt_interface_vtable_v1";
+pub const INTERFACE_RETAIN: &str = "vut_rt_interface_retain_v1";
+pub const INTERFACE_RELEASE: &str = "vut_rt_interface_release_v1";
+pub const CLOSURE_NEW: &str = "vut_rt_closure_new_v1";
+pub const CLOSURE_RETAIN: &str = "vut_rt_closure_retain_v1";
+pub const CLOSURE_RELEASE: &str = "vut_rt_closure_release_v1";
+pub const CLOSURE_LIVE_COUNT: &str = "vut_rt_closure_live_count_v1";
+pub const CHANNEL_NEW: &str = "vut_rt_channel_new_v1";
+pub const CHANNEL_RETAIN: &str = "vut_rt_channel_retain_v1";
+pub const CHANNEL_RELEASE: &str = "vut_rt_channel_release_v1";
+pub const CHANNEL_CLOSE: &str = "vut_rt_channel_close_v1";
+pub const CHANNEL_SEND: &str = "vut_rt_channel_send_v1";
+pub const CHANNEL_RECV: &str = "vut_rt_channel_recv_v1";
+pub const CHANNEL_LIVE_COUNT: &str = "vut_rt_channel_live_count_v1";
 
 pub use crate::bytes::{
     vut_rt_bytes_at_v1, vut_rt_bytes_byte_at_v1, vut_rt_bytes_capacity_v1, vut_rt_bytes_clear_v1,
     vut_rt_bytes_clone_v1, vut_rt_bytes_compare_v1, vut_rt_bytes_ends_with_v1, vut_rt_bytes_eq_v1,
     vut_rt_bytes_extend_v1, vut_rt_bytes_find_v1, vut_rt_bytes_first_v1,
     vut_rt_bytes_from_hex_error_index_v1, vut_rt_bytes_from_hex_v1, vut_rt_bytes_is_empty_v1,
-    vut_rt_bytes_last_v1, vut_rt_bytes_len_v1, vut_rt_bytes_new_v1, vut_rt_bytes_push_v1,
-    vut_rt_bytes_read_int_v1, vut_rt_bytes_release_v1, vut_rt_bytes_reserve_v1,
-    vut_rt_bytes_resize_v1, vut_rt_bytes_retain_v1, vut_rt_bytes_set_v1, vut_rt_bytes_slice_v1,
-    vut_rt_bytes_starts_with_v1, vut_rt_bytes_to_hex_v1, vut_rt_bytes_truncate_v1,
-    vut_rt_bytes_utf8_error_len_v1, vut_rt_bytes_utf8_valid_up_to_v1, vut_rt_bytes_write_int_v1,
-    vut_rt_live_bytes_count_v1,
+    vut_rt_bytes_last_v1, vut_rt_bytes_len_v1, vut_rt_bytes_make_unique_v1, vut_rt_bytes_new_v1,
+    vut_rt_bytes_push_v1, vut_rt_bytes_read_int_v1, vut_rt_bytes_release_v1,
+    vut_rt_bytes_reserve_v1, vut_rt_bytes_resize_v1, vut_rt_bytes_retain_v1, vut_rt_bytes_set_v1,
+    vut_rt_bytes_slice_v1, vut_rt_bytes_starts_with_v1, vut_rt_bytes_to_hex_v1,
+    vut_rt_bytes_truncate_v1, vut_rt_bytes_utf8_error_len_v1, vut_rt_bytes_utf8_valid_up_to_v1,
+    vut_rt_bytes_write_int_v1, vut_rt_live_bytes_count_v1,
 };
 
 mod interface;
@@ -217,32 +237,44 @@ pub use crate::async_handle::{
     vut_rt_async_signal_v1,
 };
 pub use crate::awaiting::{vut_rt_async_await_child_v1, vut_rt_future_await_v1};
+pub use crate::channel::{
+    ManagedChannel, vut_rt_channel_close_v1, vut_rt_channel_live_count_v1, vut_rt_channel_new_v1,
+    vut_rt_channel_recv_v1, vut_rt_channel_release_v1, vut_rt_channel_retain_v1,
+    vut_rt_channel_send_v1,
+};
+pub use crate::closure::{
+    live_closures, vut_rt_closure_live_count_v1, vut_rt_closure_new_v1, vut_rt_closure_release_v1,
+    vut_rt_closure_retain_v1,
+};
 pub use crate::executor::{vut_rt_executor_drain_v1, vut_rt_executor_run_v1};
 pub use crate::frame::{vut_rt_frame_alloc_v1, vut_rt_frame_free_v1, vut_rt_frame_live_count_v1};
 pub use crate::resource::{
     vut_rt_resource_live_count_v1, vut_rt_resource_new_v1, vut_rt_resource_ptr_v1,
     vut_rt_resource_release_v1,
 };
+pub use crate::scheduler::{vut_rt_scheduler_max_running_v1, vut_rt_scheduler_worker_count_v1};
 pub use crate::task::{vut_rt_task_new_v1, vut_rt_task_poll_v1, vut_rt_task_result_v1};
 pub use crate::vutcon::{vut_rt_vutcon_live_count_v1, vut_rt_vutcon_spawn_v1};
 pub use io::{vut_rt_input_v1, vut_rt_out_v1, vut_rt_print_v1};
 pub use join::vut_rt_list_join_v1;
 pub use list::{
     ManagedList, vut_rt_array_contains_v1, vut_rt_array_reverse_v1, vut_rt_array_sort_v1,
-    vut_rt_array_to_list_v1, vut_rt_bytes_from_list_v1, vut_rt_bytes_to_list_v1, vut_rt_list_at_v1,
-    vut_rt_list_capacity_v1, vut_rt_list_clear_v1, vut_rt_list_contains_v1, vut_rt_list_data_v1,
-    vut_rt_list_extend_v1, vut_rt_list_find_index_v1, vut_rt_list_first_v1, vut_rt_list_insert_v1,
-    vut_rt_list_is_empty_v1, vut_rt_list_last_v1, vut_rt_list_len_v1, vut_rt_list_new_v1,
-    vut_rt_list_pop_v1, vut_rt_list_push_v1, vut_rt_list_release_v1, vut_rt_list_remove_v1,
-    vut_rt_list_reserve_v1, vut_rt_list_retain_v1, vut_rt_list_reverse_v1, vut_rt_list_set_v1,
+    vut_rt_array_to_list_v1, vut_rt_bytes_from_list_v1, vut_rt_bytes_to_list_v1,
+    vut_rt_list_at_unchecked_v1, vut_rt_list_at_v1, vut_rt_list_capacity_v1, vut_rt_list_clear_v1,
+    vut_rt_list_contains_v1, vut_rt_list_data_v1, vut_rt_list_extend_v1, vut_rt_list_find_index_v1,
+    vut_rt_list_first_v1, vut_rt_list_insert_v1, vut_rt_list_is_empty_v1, vut_rt_list_last_v1,
+    vut_rt_list_len_v1, vut_rt_list_make_unique_v1, vut_rt_list_new_v1, vut_rt_list_pop_v1,
+    vut_rt_list_push_v1, vut_rt_list_release_v1, vut_rt_list_remove_v1, vut_rt_list_reserve_v1,
+    vut_rt_list_retain_v1, vut_rt_list_reverse_v1, vut_rt_list_set_v1,
     vut_rt_list_shrink_to_fit_v1, vut_rt_list_slice_v1, vut_rt_list_sort_v1, vut_rt_list_swap_v1,
     vut_rt_list_truncate_v1,
 };
 pub use map::{
-    ManagedMap, vut_rt_map_capacity_v1, vut_rt_map_clear_v1, vut_rt_map_contains_key_v1,
-    vut_rt_map_get_or_v1, vut_rt_map_get_v1, vut_rt_map_is_empty_v1, vut_rt_map_keys_v1,
-    vut_rt_map_len_v1, vut_rt_map_new_v1, vut_rt_map_release_v1, vut_rt_map_remove_v1,
-    vut_rt_map_reserve_v1, vut_rt_map_retain_v1, vut_rt_map_set_v1, vut_rt_map_values_v1,
+    ManagedMap, vut_rt_map_at_v1, vut_rt_map_capacity_v1, vut_rt_map_clear_v1,
+    vut_rt_map_contains_key_v1, vut_rt_map_get_or_v1, vut_rt_map_get_v1, vut_rt_map_is_empty_v1,
+    vut_rt_map_keys_v1, vut_rt_map_len_v1, vut_rt_map_make_unique_v1, vut_rt_map_new_v1,
+    vut_rt_map_release_v1, vut_rt_map_remove_v1, vut_rt_map_reserve_v1, vut_rt_map_retain_v1,
+    vut_rt_map_set_v1, vut_rt_map_values_v1,
 };
 pub use numeric::{
     vut_rt_bool_to_str_v1, vut_rt_f64_abs_v1, vut_rt_f64_ceil_v1, vut_rt_f64_clamp_v1,
@@ -257,22 +289,24 @@ pub use ownership::{
     vut_rt_slot_retain_map_v1, vut_rt_slot_retain_string_v1,
 };
 pub use panic::{
-    bounds_op, signed_index, vut_rt_bounds_check_v1, vut_rt_bounds_panic_v1, vut_rt_panic_v1,
+    bounds_op, signed_index, vut_rt_bounds_check_v1, vut_rt_bounds_panic_v1,
+    vut_rt_numeric_panic_v1, vut_rt_panic_v1,
 };
 pub use string::{
     ManagedString, managed_string, string_value, vut_rt_bytes_to_str_v1, vut_rt_char_from_code_v1,
     vut_rt_concat_v1, vut_rt_drop_string_v1, vut_rt_format_f64_v1, vut_rt_format_i64_v1,
-    vut_rt_int_to_float_v1, vut_rt_release_string_v1, vut_rt_retain_string_v1,
-    vut_rt_string_byte_len_v1, vut_rt_string_char_at_v1, vut_rt_string_char_len_v1,
-    vut_rt_string_chars_v1, vut_rt_string_compare_v1, vut_rt_string_contains_v1,
-    vut_rt_string_ends_with_v1, vut_rt_string_find_v1, vut_rt_string_from_utf8_v1,
-    vut_rt_string_is_empty_v1, vut_rt_string_lines_v1, vut_rt_string_pad_left_v1,
-    vut_rt_string_pad_right_v1, vut_rt_string_repeat_v1, vut_rt_string_replace_v1,
-    vut_rt_string_rfind_v1, vut_rt_string_split_v1, vut_rt_string_split_whitespace_v1,
-    vut_rt_string_starts_with_v1, vut_rt_string_strip_prefix_v1, vut_rt_string_strip_suffix_v1,
-    vut_rt_string_substring_v1, vut_rt_string_to_bytes_v1, vut_rt_string_to_f64_v1,
-    vut_rt_string_to_i64_v1, vut_rt_string_to_lower_v1, vut_rt_string_to_upper_v1,
-    vut_rt_string_trim_end_v1, vut_rt_string_trim_start_v1, vut_rt_string_trim_v1,
+    vut_rt_format_u64_v1, vut_rt_int_to_float_v1, vut_rt_release_string_v1,
+    vut_rt_retain_string_v1, vut_rt_string_byte_len_v1, vut_rt_string_char_at_v1,
+    vut_rt_string_char_len_v1, vut_rt_string_chars_v1, vut_rt_string_compare_v1,
+    vut_rt_string_contains_v1, vut_rt_string_ends_with_v1, vut_rt_string_find_v1,
+    vut_rt_string_from_utf8_v1, vut_rt_string_is_empty_v1, vut_rt_string_lines_v1,
+    vut_rt_string_pad_left_v1, vut_rt_string_pad_right_v1, vut_rt_string_repeat_v1,
+    vut_rt_string_replace_v1, vut_rt_string_rfind_v1, vut_rt_string_split_v1,
+    vut_rt_string_split_whitespace_v1, vut_rt_string_starts_with_v1, vut_rt_string_strip_prefix_v1,
+    vut_rt_string_strip_suffix_v1, vut_rt_string_substring_v1, vut_rt_string_to_bytes_v1,
+    vut_rt_string_to_f64_v1, vut_rt_string_to_i64_v1, vut_rt_string_to_lower_v1,
+    vut_rt_string_to_upper_v1, vut_rt_string_trim_end_v1, vut_rt_string_trim_start_v1,
+    vut_rt_string_trim_v1,
 };
 pub(crate) static LIVE_STRINGS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) static LIVE_LISTS: AtomicUsize = AtomicUsize::new(0);
@@ -300,13 +334,8 @@ pub fn live_managed_allocations() -> usize {
         + crate::bytes::live_bytes_allocations()
         + live_list_allocations()
         + live_map_allocations()
+        + crate::closure::live_closures()
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RuntimeAbi {
-    pub version: u32,
-}
-pub const CURRENT: RuntimeAbi = RuntimeAbi { version: VERSION };
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_live_string_count_v1() -> usize {
@@ -326,6 +355,13 @@ pub extern "C" fn vut_rt_live_map_count_v1() -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_live_allocation_count_v1() -> usize {
     live_managed_allocations()
+}
+
+/// Reports the runtime ABI revision, so a linked program can detect a runtime
+/// mismatch at startup (and the symbol's presence is a link-time check).
+#[unsafe(no_mangle)]
+pub extern "C" fn vut_rt_abi_version_v1() -> u32 {
+    VERSION
 }
 
 #[unsafe(no_mangle)]

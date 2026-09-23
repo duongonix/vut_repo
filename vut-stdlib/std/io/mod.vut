@@ -8,15 +8,16 @@
 # Native primitives only provide raw stream chunk read / write / flush; all
 # higher-level behavior (read_all, copy, buffering, line splitting) lives here.
 import _internal.abi
+import _internal.count as count
 
 @link_name("vut_rt_io_stdin_read_v1")
 extern "C" fn _native_stdin_read() -> bytes
 
-@link_name("vut_rt_io_stdout_write_v1")
-extern "C" fn _native_stdout_write(blob: bytes) -> bytes
+@link_name("vut_rt_io_stdout_write_v2")
+extern "C" fn _native_stdout_write(blob: bytes) -> resource[count.Handle]
 
-@link_name("vut_rt_io_stderr_write_v1")
-extern "C" fn _native_stderr_write(blob: bytes) -> bytes
+@link_name("vut_rt_io_stderr_write_v2")
+extern "C" fn _native_stderr_write(blob: bytes) -> resource[count.Handle]
 
 @link_name("vut_rt_io_flush_v1")
 extern "C" fn _native_flush() -> bytes
@@ -25,11 +26,11 @@ fn _stdin_read() -> bytes:
   unsafe:
     _native_stdin_read()
 
-fn _stdout_write(blob: bytes) -> bytes:
+fn _stdout_write(blob: bytes) -> resource[count.Handle]:
   unsafe:
     _native_stdout_write(blob)
 
-fn _stderr_write(blob: bytes) -> bytes:
+fn _stderr_write(blob: bytes) -> resource[count.Handle]:
   unsafe:
     _native_stderr_write(blob)
 
@@ -74,69 +75,77 @@ fn _kind(code: int) -> IoErrorKind:
   kind
 
 fn _error(code: int, raw: bytes) -> IoError:
-  IoError(kind = _kind(code), message = abi.message(raw))
+  IoError(kind: _kind(code), message: abi.message(raw))
 
 # Maps a shared native status code to an `IoError`. Used by other stdlib modules
 # (fs/process) whose stream types surface failures through `io.Reader`/`Writer`.
 fn error_from_status(code: int, raw: bytes) -> IoError:
   _error(code, raw)
 
-fn _ok_bytes(value: bytes) -> result(bytes, IoError):
+fn _ok_bytes(value: bytes) -> result[bytes, IoError]:
   ok(value)
 
-fn _err_bytes(code: int, raw: bytes) -> result(bytes, IoError):
+fn _err_bytes(code: int, raw: bytes) -> result[bytes, IoError]:
   err(_error(code, raw))
 
-fn _ok_size(value: int) -> result(int, IoError):
+fn _ok_size(value: usize) -> result[usize, IoError]:
   ok(value)
 
-fn _err_size(code: int, raw: bytes) -> result(int, IoError):
+fn _ok_flag() -> result[unit, IoError]:
+  ok(unit)
+
+fn _err_flag(code: int, raw: bytes) -> result[unit, IoError]:
   err(_error(code, raw))
 
-fn _ok_flag() -> result(bool, IoError):
-  ok(true)
-
-fn _err_flag(code: int, raw: bytes) -> result(bool, IoError):
-  err(_error(code, raw))
-
-fn _ok_text(value: str) -> result(str, IoError):
+fn _ok_text(value: str) -> result[str, IoError]:
   ok(value)
 
-fn _ok_line(value: str?) -> result(str?, IoError):
+fn _ok_line(value: str?) -> result[str?, IoError]:
   ok(value)
 
 fn _invalid_utf8() -> IoError:
-  IoError(kind = IoErrorKind.invalid_data, message = "invalid UTF-8")
+  IoError(kind: IoErrorKind.invalid_data, message: "invalid UTF-8")
 
-fn _bytes_result(raw: bytes) -> result(bytes, IoError):
-  value: result(bytes, IoError) = if abi.is_ok(raw):
+fn _bytes_result(raw: bytes) -> result[bytes, IoError]:
+  value: result[bytes, IoError] = if abi.is_ok(raw):
     _ok_bytes(abi.payload(raw))
   else:
     _err_bytes(abi.status(raw), raw)
   value
 
-fn _size_result(raw: bytes) -> result(int, IoError):
-  value: result(int, IoError) = if abi.is_ok(raw):
-    _ok_size(abi.payload(raw).read_i64_le(0))
-  else:
-    _err_size(abi.status(raw), raw)
-  value
+fn _size_result(handle: resource[count.Handle]) -> result[usize, IoError]:
+  unsafe:
+    valid = count.valid(handle)
+    raw = count.error(handle)
+    size = count.value(handle)
+    if valid == 0:
+      return err(_error(abi.status(raw), raw))
+    ok(size.to_usize())
 
-fn _flag_result(raw: bytes) -> result(bool, IoError):
-  value: result(bool, IoError) = if abi.is_ok(raw):
+fn _flag_result(raw: bytes) -> result[unit, IoError]:
+  value: result[unit, IoError] = if abi.is_ok(raw):
     _ok_flag()
   else:
     _err_flag(abi.status(raw), raw)
   value
 
 # A source of bytes. `read()` returns a bounded chunk; empty means end of input.
+fn bytes_from_status(raw: bytes) -> result[bytes, IoError]:
+  _bytes_result(raw)
+
+fn size_from_native(handle: resource[count.Handle]) -> result[usize, IoError]:
+  _size_result(handle)
+
+fn unit_from_status(raw: bytes) -> result[unit, IoError]:
+  _flag_result(raw)
+
 interface Reader:
-  read() -> result(bytes, IoError)
+  read() -> result[bytes, IoError]
 
 # A sink of bytes. `write()` may write fewer bytes than requested.
 interface Writer:
-  write(blob: bytes) -> result(int, IoError)
-  flush() -> result(bool, IoError)
+  write(blob: bytes) -> result[usize, IoError]
+  flush() -> result[unit, IoError]
 
 # ---- Standard streams ----
 
@@ -149,19 +158,19 @@ data Stdout:
 data Stderr:
   _unit: int = 0
 
-fn Stdin.read() -> result(bytes, IoError):
+fn Stdin.read() -> result[bytes, IoError]:
   _bytes_result(_stdin_read())
 
-fn Stdout.write(blob: bytes) -> result(int, IoError):
+fn Stdout.write(blob: bytes) -> result[usize, IoError]:
   _size_result(_stdout_write(blob))
 
-fn Stdout.flush() -> result(bool, IoError):
+fn Stdout.flush() -> result[unit, IoError]:
   _flag_result(_flush_stream())
 
-fn Stderr.write(blob: bytes) -> result(int, IoError):
+fn Stderr.write(blob: bytes) -> result[usize, IoError]:
   _size_result(_stderr_write(blob))
 
-fn Stderr.flush() -> result(bool, IoError):
+fn Stderr.flush() -> result[unit, IoError]:
   _flag_result(_flush_stream())
 
 fn stdin() -> Stdin:
@@ -176,26 +185,28 @@ fn stderr() -> Stderr:
 # ---- Convenience / compatibility ----
 
 # Writes `text` to standard error without a trailing newline.
-fn eprint(text: str) -> result(bool, IoError):
-  _flag_result(_stderr_write(text.to_bytes()))
+fn eprint(text: str) -> result[unit, IoError]:
+  written = _size_result(_stderr_write(text.to_bytes()))?
+  ok(unit)
 
 # Writes `text` followed by a newline to standard error.
-fn eprintln(text: str) -> result(bool, IoError):
-  _flag_result(_stderr_write((text + "\n").to_bytes()))
+fn eprintln(text: str) -> result[unit, IoError]:
+  written = _size_result(_stderr_write((text + "\n").to_bytes()))?
+  ok(unit)
 
-fn flush() -> result(bool, IoError):
+fn flush() -> result[unit, IoError]:
   _flag_result(_flush_stream())
 
 # ---- Reader helpers ----
 
 # Reads the whole stream into memory.
-fn read_all(reader: Reader) -> result(bytes, IoError):
+fn read_all(reader: Reader) -> result[bytes, IoError]:
   accumulated = bytes()
   done = false
   failure: IoError? = null
   for not done and failure == null:
     chunk: bytes = bytes()
-    outcome: result(bytes, IoError) = reader.read()
+    outcome: result[bytes, IoError] = reader.read()
     match outcome:
       ok(blob):
         chunk = blob
@@ -211,8 +222,8 @@ fn read_all(reader: Reader) -> result(bytes, IoError):
   ok(accumulated)
 
 # Reads the whole stream and decodes it as UTF-8.
-fn read_to_str(reader: Reader) -> result(str, IoError):
-  value: result(str, IoError) = match read_all(reader):
+fn read_to_str(reader: Reader) -> result[str, IoError]:
+  value: result[str, IoError] = match read_all(reader):
     ok(blob):
       match blob.to_str():
         ok(text): _ok_text(text)
@@ -221,49 +232,34 @@ fn read_to_str(reader: Reader) -> result(str, IoError):
   value
 
 # Copies every byte from `reader` to `writer`, returning the byte count.
-fn copy(reader: Reader, writer: Writer) -> result(int, IoError):
-  total = 0
-  done = false
-  failure: IoError? = null
-  for not done and failure == null:
-    chunk: bytes = bytes()
-    outcome: result(bytes, IoError) = reader.read()
-    match outcome:
-      ok(blob):
-        chunk = blob
-      err(error):
-        failure = error
-    if failure == null:
-      if chunk.len() == 0:
-        done = true
-      else:
-        written_outcome: result(int, IoError) = writer.write(chunk)
-        match written_outcome:
-          ok(written):
-            total = total + written
-          err(error):
-            failure = error
-  if failure != null:
-    return err(failure)
+fn copy(reader: Reader, writer: Writer) -> result[u64, IoError]:
+  total: u64 = 0
+  maximum: u64 = 18446744073709551615
+  for:
+    chunk = reader.read()?
+    if chunk.len() == 0:
+      break
+    offset: usize = 0
+    size = chunk.len().to_usize()
+    for offset < size:
+      written = writer.write(chunk.slice(offset.to_int(), chunk.len()))?
+      if written == 0 or written > size - offset:
+        return err(IoError(kind: IoErrorKind.invalid_data, message: "invalid writer byte count"))
+      if total > maximum - written.to_u64():
+        return err(IoError(kind: IoErrorKind.invalid_data, message: "copy byte count overflow"))
+      offset = offset + written
+      total = total + written.to_u64()
   ok(total)
 
-# Writes all of `blob`, retrying partial writes.
-fn write_all(writer: Writer, blob: bytes) -> result(bool, IoError):
-  offset = 0
-  failure: IoError? = null
-  for offset < blob.len() and failure == null:
-    outcome: result(int, IoError) = writer.write(blob.slice(offset, blob.len()))
-    match outcome:
-      ok(written):
-        if written <= 0:
-          failure = IoError(kind = IoErrorKind.other, message = "writer made no progress")
-        else:
-          offset = offset + written
-      err(error):
-        failure = error
-  if failure != null:
-    return err(failure)
-  ok(true)
+fn write_all(writer: Writer, blob: bytes) -> result[unit, IoError]:
+  offset: usize = 0
+  size = blob.len().to_usize()
+  for offset < size:
+    written = writer.write(blob.slice(offset.to_int(), blob.len()))?
+    if written == 0 or written > size - offset:
+      return err(IoError(kind: IoErrorKind.invalid_data, message: "invalid writer byte count"))
+    offset = offset + written
+  ok(unit)
 
 # ---- Buffered reader ----
 
@@ -273,17 +269,17 @@ data BufferedReader:
   finished: bool = false
 
 fn buffered(reader: Reader) -> BufferedReader:
-  BufferedReader(inner = reader, buffer = bytes())
+  BufferedReader(inner: reader, buffer: bytes())
 
-fn BufferedReader.read() -> result(bytes, IoError):
+fn BufferedReader.read() -> result[bytes, IoError]:
   if self.buffer.len() > 0:
     result_bytes = self.buffer
     self.buffer = bytes()
     return ok(result_bytes)
   if self.finished:
     return ok(bytes())
-  outcome: result(bytes, IoError) = self.inner.read()
-  value: result(bytes, IoError) = match outcome:
+  outcome: result[bytes, IoError] = self.inner.read()
+  value: result[bytes, IoError] = match outcome:
     ok(blob):
       if blob.len() == 0:
         self.finished = true
@@ -292,12 +288,12 @@ fn BufferedReader.read() -> result(bytes, IoError):
   value
 
 # Reads exactly `size` bytes; `unexpected_eof` when the stream ends first.
-fn BufferedReader.read_exact(size: int) -> result(bytes, IoError):
+fn BufferedReader.read_exact(size: usize) -> result[bytes, IoError]:
   accumulated = bytes()
   failure: IoError? = null
-  for accumulated.len() < size and failure == null:
+  for accumulated.len().to_usize() < size and failure == null:
     chunk: bytes = bytes()
-    outcome: result(bytes, IoError) = self.read()
+    outcome: result[bytes, IoError] = self.read()
     match outcome:
       ok(blob):
         chunk = blob
@@ -305,14 +301,14 @@ fn BufferedReader.read_exact(size: int) -> result(bytes, IoError):
         failure = error
     if failure == null:
       if chunk.len() == 0:
-        failure = IoError(kind = IoErrorKind.unexpected_eof, message = "unexpected end of input")
+        failure = IoError(kind: IoErrorKind.unexpected_eof, message: "unexpected end of input")
       else:
         accumulated.extend(chunk)
   if failure != null:
     return err(failure)
-  if accumulated.len() > size:
-    self.buffer = accumulated.slice(size, accumulated.len())
-    accumulated = accumulated.slice(0, size)
+  if accumulated.len().to_usize() > size:
+    self.buffer = accumulated.slice(size.to_int(), accumulated.len())
+    accumulated = accumulated.slice(0, size.to_int())
   ok(accumulated)
 
 fn _find_newline(buffer: bytes) -> int:
@@ -327,14 +323,14 @@ fn _find_newline(buffer: bytes) -> int:
 
 # Reads one line, returning `null` at end of input before any character.
 # A trailing `\r` (CRLF input) is removed.
-fn BufferedReader.read_line() -> result(str?, IoError):
+fn BufferedReader.read_line() -> result[str?, IoError]:
   searching = true
   failure: IoError? = null
   for searching and failure == null:
     if _find_newline(self.buffer) >= 0 or self.finished:
       searching = false
     else:
-      outcome: result(bytes, IoError) = self.inner.read()
+      outcome: result[bytes, IoError] = self.inner.read()
       match outcome:
         ok(blob):
           if blob.len() == 0:
@@ -358,7 +354,7 @@ fn BufferedReader.read_line() -> result(str?, IoError):
     self.buffer = bytes()
   if line_bytes.len() > 0 and line_bytes.at(line_bytes.len() - 1) == 13:
     line_bytes = line_bytes.slice(0, line_bytes.len() - 1)
-  value: result(str?, IoError) = match line_bytes.to_str():
+  value: result[str?, IoError] = match line_bytes.to_str():
     ok(text): _ok_line(text)
     err(error): err(_invalid_utf8())
   value
@@ -370,33 +366,28 @@ data BufferedWriter:
   buffer: bytes
 
 fn buffered_writer(writer: Writer) -> BufferedWriter:
-  BufferedWriter(inner = writer, buffer = bytes())
+  BufferedWriter(inner: writer, buffer: bytes())
 
-fn BufferedWriter.write(blob: bytes) -> result(int, IoError):
+fn BufferedWriter.write(blob: bytes) -> result[usize, IoError]:
   self.buffer.extend(blob)
   if self.buffer.len() < 8192:
-    return _ok_size(blob.len())
-  flushed: result(bool, IoError) = self.flush()
-  value: result(int, IoError) = match flushed:
-    ok(flag): _ok_size(blob.len())
+    return _ok_size(blob.len().to_usize())
+  flushed: result[unit, IoError] = self.flush()
+  value: result[usize, IoError] = match flushed:
+    ok(flag): _ok_size(blob.len().to_usize())
     err(error): err(error)
   value
 
-fn BufferedWriter.write_all(blob: bytes) -> result(bool, IoError):
-  value: result(bool, IoError) = match self.write(blob):
+fn BufferedWriter.write_all(blob: bytes) -> result[unit, IoError]:
+  value: result[unit, IoError] = match self.write(blob):
     ok(written): _ok_flag()
     err(error): err(error)
   value
 
-fn BufferedWriter.flush() -> result(bool, IoError):
-  if self.buffer.len() == 0:
-    return self.inner.flush()
-  pending = self.buffer
-  self.buffer = bytes()
-  value: result(bool, IoError) = match self.inner.write(pending):
-    ok(written):
-      if written < pending.len():
-        self.buffer = pending.slice(written, pending.len())
-      self.inner.flush()
-    err(error): err(error)
-  value
+fn BufferedWriter.flush() -> result[unit, IoError]:
+  for self.buffer.len() > 0:
+    written = self.inner.write(self.buffer)?
+    if written == 0 or written > self.buffer.len().to_usize():
+      return err(IoError(kind: IoErrorKind.invalid_data, message: "invalid writer byte count"))
+    self.buffer = self.buffer.slice(written.to_int(), self.buffer.len())
+  self.inner.flush()

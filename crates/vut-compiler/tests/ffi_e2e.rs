@@ -254,7 +254,7 @@ fn passes_lambda_as_c_callback() {
 
 #[test]
 fn opaque_handle_round_trip() {
-    let source = "opaque data Counter\nextern \"C\" fn counter_create() -> ptr(Counter)\nextern \"C\" fn counter_inc(counter: ptr(Counter))\nextern \"C\" fn counter_get(counter: ptr(Counter)) -> i32\nextern \"C\" fn counter_destroy(counter: ptr(Counter))\nfn main():\n  unsafe:\n    counter = counter_create()\n    counter_inc(counter)\n    counter_inc(counter)\n    out(\"$(counter_get(counter))\")\n    counter_destroy(counter)\n";
+    let source = "opaque data Counter\nextern \"C\" fn counter_create() -> ptr[Counter]\nextern \"C\" fn counter_inc(counter: ptr[Counter])\nextern \"C\" fn counter_get(counter: ptr[Counter]) -> i32\nextern \"C\" fn counter_destroy(counter: ptr[Counter])\nfn main():\n  unsafe:\n    counter = counter_create()\n    counter_inc(counter)\n    counter_inc(counter)\n    out(\"$(counter_get(counter))\")\n    counter_destroy(counter)\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "2\n");
@@ -287,8 +287,7 @@ fn rejects_extern_function_body() {
 #[test]
 fn rejects_non_ffi_safe_signatures() {
     for source in [
-        "extern \"C\" fn foo(value: bool)\n",
-        "extern \"C\" fn foo(value: map(str, i32))\n",
+        "extern \"C\" fn foo(value: map[str, i32])\n",
         "data Point:\n  x: f32\nextern \"C\" fn foo(point: Point)\n",
         "@repr(C)\ndata Point:\n  x: f32\nextern \"C\" fn foo(point: Point)\n",
     ] {
@@ -301,9 +300,54 @@ fn rejects_non_ffi_safe_signatures() {
 }
 
 #[test]
+fn accepts_bool_across_ffi() {
+    let codes = check_codes(
+        "extern \"C\" fn flag(value: bool) -> bool\nextern \"C\" fn peek(value: ptr[bool]) -> i32\n",
+    );
+    assert!(!codes.contains(&"E8004".to_owned()), "{codes:?}");
+}
+
+#[test]
+fn rejects_capturing_closure_as_ffi_callback() {
+    // A capturing closure is a tagged heap pointer, not a function address.
+    let codes = check_codes(
+        "extern \"C\" fn use_cb(cb: extern \"C\" fn(i32) -> i32)\nfn main():\n  base = 10\n  unsafe:\n    use_cb(fn(v: i32): v + base)\n",
+    );
+    assert!(codes.contains(&"E8013".to_owned()), "{codes:?}");
+}
+
+#[test]
+fn accepts_non_capturing_closure_as_ffi_callback() {
+    let codes = check_codes(
+        "extern \"C\" fn use_cb(cb: extern \"C\" fn(i32) -> i32)\nfn main():\n  unsafe:\n    use_cb(fn(v: i32): v + 1)\n",
+    );
+    assert!(!codes.contains(&"E8013".to_owned()), "{codes:?}");
+}
+
+#[test]
+fn rejects_resource_field_in_repr_c() {
+    let codes =
+        check_codes("opaque data Handle\n@repr(C)\ndata Wrapper:\n  handle: resource[Handle]\n");
+    assert!(codes.contains(&"E8014".to_owned()), "{codes:?}");
+}
+
+#[test]
+fn rejects_pointer_to_resource() {
+    let codes =
+        check_codes("opaque data Handle\nextern \"C\" fn bad(value: ptr[resource[Handle]])\n");
+    assert!(codes.contains(&"E8004".to_owned()), "{codes:?}");
+}
+
+#[test]
+fn rejects_repr_c_on_opaque_data() {
+    let codes = check_codes("@repr(C)\nopaque data Engine\n");
+    assert!(codes.contains(&"E8006".to_owned()), "{codes:?}");
+}
+
+#[test]
 fn accepts_official_runtime_managed_handles() {
     let codes = check_codes(
-        "extern \"C\" fn a(value: str) -> bytes\nextern \"C\" fn b(value: bytes) -> str\nextern \"C\" fn c(values: list(str)) -> i32\n",
+        "extern \"C\" fn a(value: str) -> bytes\nextern \"C\" fn b(value: bytes) -> str\nextern \"C\" fn c(values: list[str]) -> i32\n",
     );
     assert!(!codes.contains(&"E8004".to_owned()), "{codes:?}");
 }
@@ -311,7 +355,7 @@ fn accepts_official_runtime_managed_handles() {
 #[test]
 fn accepts_pointer_to_repr_struct_and_opaque() {
     let codes = check_codes(
-        "@repr(C)\ndata Point:\n  x: f32\nopaque data Engine\nextern \"C\" fn a(point: ptr(Point))\nextern \"C\" fn b(engine: ptr(Engine)) -> i32\n",
+        "@repr(C)\ndata Point:\n  x: f32\nopaque data Engine\nextern \"C\" fn a(point: ptr[Point])\nextern \"C\" fn b(engine: ptr[Engine]) -> i32\n",
     );
     assert!(!codes.contains(&"E8004".to_owned()), "{codes:?}");
 }
@@ -327,7 +371,7 @@ fn extern_call_requires_unsafe() {
 #[test]
 fn named_callback_parameters_parse() {
     let codes = check_codes(
-        "type Callback = extern \"C\" fn(a: i32, b: ptr(void)) -> i32\nextern \"C\" fn use_it(callback: Callback)\n",
+        "type Callback = extern \"C\" fn(a: i32, b: ptr[void]) -> i32\nextern \"C\" fn use_it(callback: Callback)\n",
     );
     assert!(
         !codes.iter().any(|code| code.starts_with("E01")),
@@ -338,7 +382,7 @@ fn named_callback_parameters_parse() {
 #[test]
 fn valid_extern_signatures_are_accepted() {
     let codes = check_codes(
-        "extern \"C\" fn a(x: i8, y: i64, z: f32, p: ptr(u8), len: usize)\nextern \"C\" fn b() -> void\n",
+        "extern \"C\" fn a(x: i8, y: i64, z: f32, p: ptr[u8], len: usize)\nextern \"C\" fn b() -> void\n",
     );
     assert!(!codes.contains(&"E8004".to_owned()), "{codes:?}");
 }
@@ -346,7 +390,7 @@ fn valid_extern_signatures_are_accepted() {
 #[test]
 fn accepts_resource_handles_in_extern_signatures() {
     let codes = check_codes(
-        "opaque data Token\nextern \"C\" fn make() -> resource(Token)\nextern \"C\" fn use_it(token: resource(Token))\n",
+        "opaque data Token\nextern \"C\" fn make() -> resource[Token]\nextern \"C\" fn use_it(token: resource[Token])\n",
     );
     assert!(!codes.contains(&"E8004".to_owned()), "{codes:?}");
 }
@@ -354,13 +398,13 @@ fn accepts_resource_handles_in_extern_signatures() {
 #[test]
 fn rejects_invalid_resource_pointee() {
     let codes =
-        check_codes("data NotOpaque:\n  x: f32\nextern \"C\" fn make() -> resource(NotOpaque)\n");
+        check_codes("data NotOpaque:\n  x: f32\nextern \"C\" fn make() -> resource[NotOpaque]\n");
     assert!(codes.contains(&"E8004".to_owned()), "{codes:?}");
 }
 
 #[test]
 fn resource_is_dropped_at_scope_exit() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    token = native_resource_create()\n    out(\"in=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"out=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    token = native_resource_create()\n    out(\"in=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"out=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "in=1\nout=0\n");
@@ -368,7 +412,7 @@ fn resource_is_dropped_at_scope_exit() {
 
 #[test]
 fn resource_moves_into_function_and_drops_once() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn consume(token: resource(Token)):\n  unsafe:\n    out(\"consume=$(native_resource_outstanding())\")\nfn main():\n  unsafe:\n    token = native_resource_create()\n    out(\"before=$(native_resource_outstanding())\")\n    consume(token)\n    out(\"after=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn consume(token: resource[Token]):\n  unsafe:\n    out(\"consume=$(native_resource_outstanding())\")\nfn main():\n  unsafe:\n    token = native_resource_create()\n    out(\"before=$(native_resource_outstanding())\")\n    consume(token)\n    out(\"after=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "before=1\nconsume=1\nafter=0\n");
@@ -376,7 +420,7 @@ fn resource_moves_into_function_and_drops_once() {
 
 #[test]
 fn resource_data_field_drops_exactly_once() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Holder:\n  token: resource(Token)\nfn scoped():\n  unsafe:\n    holder = Holder(token = native_resource_create())\n    out(\"held=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"done=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Holder:\n  token: resource[Token]\nfn scoped():\n  unsafe:\n    holder = Holder(token: native_resource_create())\n    out(\"held=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"done=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "held=1\ndone=0\n");
@@ -384,7 +428,7 @@ fn resource_data_field_drops_exactly_once() {
 
 #[test]
 fn resource_early_return_drops_the_resource() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped() -> int:\n  unsafe:\n    token = native_resource_create()\n    if true:\n      return 1\n  0\nfn main():\n  result = scoped()\n  unsafe:\n    out(\"out=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped() -> int:\n  unsafe:\n    token = native_resource_create()\n    if true:\n      return 1\n  0\nfn main():\n  result = scoped()\n  unsafe:\n    out(\"out=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "out=0\n");
@@ -392,7 +436,7 @@ fn resource_early_return_drops_the_resource() {
 
 #[test]
 fn resource_reassignment_drops_the_previous_value() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    token = native_resource_create()\n    token = native_resource_create()\n    out(\"out=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    token = native_resource_create()\n    token = native_resource_create()\n    out(\"out=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "out=1\n");
@@ -400,7 +444,7 @@ fn resource_reassignment_drops_the_previous_value() {
 
 #[test]
 fn resource_local_can_be_borrowed_repeatedly() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_use(token: ptr(Token)) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\nfn borrow_twice() -> u64:\n  unsafe:\n    token = native_resource_create()\n    a = native_resource_use(token)\n    b = native_resource_use(token)\n    out(\"live=$(native_resource_outstanding())\")\n    a + b\nfn main():\n  sum = borrow_twice()\n  unsafe:\n    out(\"sum=$sum after=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_use(token: ptr[Token]) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\nfn borrow_twice() -> u64:\n  unsafe:\n    token = native_resource_create()\n    a = native_resource_use(token)\n    b = native_resource_use(token)\n    out(\"live=$(native_resource_outstanding())\")\n    a + b\nfn main():\n  sum = borrow_twice()\n  unsafe:\n    out(\"sum=$sum after=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "live=1\nsum=14 after=0\n");
@@ -408,7 +452,7 @@ fn resource_local_can_be_borrowed_repeatedly() {
 
 #[test]
 fn resource_field_can_be_borrowed() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_use(token: ptr(Token)) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Holder:\n  token: resource(Token)\nfn read_holder(holder: Holder) -> u64:\n  unsafe:\n    native_resource_use(holder.token)\nfn read_one() -> u64:\n  unsafe:\n    holder = Holder(token = native_resource_create())\n    read_holder(holder)\nfn main():\n  v = read_one()\n  unsafe:\n    out(\"v=$v after=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_use(token: ptr[Token]) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Holder:\n  token: resource[Token]\nfn read_holder(holder: Holder) -> u64:\n  unsafe:\n    native_resource_use(holder.token)\nfn read_one() -> u64:\n  unsafe:\n    holder = Holder(token: native_resource_create())\n    read_holder(holder)\nfn main():\n  v = read_one()\n  unsafe:\n    out(\"v=$v after=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "v=7 after=0\n");
@@ -416,7 +460,7 @@ fn resource_field_can_be_borrowed() {
 
 #[test]
 fn resource_field_of_borrowed_receiver_can_be_borrowed() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_use(token: ptr(Token)) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Inner:\n  token: resource(Token)\ndata Outer:\n  inner: Inner\nfn Inner.read() -> u64:\n  unsafe:\n    native_resource_use(self.token)\nfn Outer.via() -> u64:\n  self.inner.read()\nfn run() -> u64:\n  unsafe:\n    outer = Outer(inner = Inner(token = native_resource_create()))\n    v = outer.via()\n    out(\"live=$(native_resource_outstanding())\")\n    v\nfn main():\n  v = run()\n  unsafe:\n    out(\"v=$v after=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_use(token: ptr[Token]) -> u64\nextern \"C\" fn native_resource_outstanding() -> usize\ndata Inner:\n  token: resource[Token]\ndata Outer:\n  inner: Inner\nfn Inner.read() -> u64:\n  unsafe:\n    native_resource_use(self.token)\nfn Outer.via() -> u64:\n  self.inner.read()\nfn run() -> u64:\n  unsafe:\n    outer = Outer(inner: Inner(token: native_resource_create()))\n    v = outer.via()\n    out(\"live=$(native_resource_outstanding())\")\n    v\nfn main():\n  v = run()\n  unsafe:\n    out(\"v=$v after=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "live=1\nv=7 after=0\n");
@@ -425,7 +469,7 @@ fn resource_field_of_borrowed_receiver_can_be_borrowed() {
 #[test]
 fn resource_used_after_move_is_rejected() {
     let codes = check_codes(
-        "opaque data Token\nextern \"C\" fn make() -> resource(Token)\nfn consume(token: resource(Token)):\n  0\nfn main():\n  unsafe:\n    token = make()\n  consume(token)\n  consume(token)\n",
+        "opaque data Token\nextern \"C\" fn make() -> resource[Token]\nfn consume(token: resource[Token]):\n  0\nfn main():\n  unsafe:\n    token = make()\n  consume(token)\n  consume(token)\n",
     );
     assert!(
         codes.iter().any(|code| code == "E8009" || code == "E8010"),
@@ -436,7 +480,7 @@ fn resource_used_after_move_is_rejected() {
 #[test]
 fn resource_inside_branch_is_rejected() {
     let codes = check_codes(
-        "opaque data Token\nextern \"C\" fn make() -> resource(Token)\nfn consume(token: resource(Token)):\n  0\nfn main():\n  unsafe:\n    token = make()\n    if true:\n      consume(token)\n",
+        "opaque data Token\nextern \"C\" fn make() -> resource[Token]\nfn consume(token: resource[Token]):\n  0\nfn main():\n  unsafe:\n    token = make()\n    if true:\n      consume(token)\n",
     );
     assert!(codes.contains(&"E8011".to_owned()), "{codes:?}");
 }
@@ -444,14 +488,14 @@ fn resource_inside_branch_is_rejected() {
 #[test]
 fn resource_field_projection_is_rejected() {
     let codes = check_codes(
-        "opaque data Token\nextern \"C\" fn make() -> resource(Token)\ndata Holder:\n  token: resource(Token)\nfn main():\n  unsafe:\n    holder = Holder(token = make())\n    value = holder.token\n",
+        "opaque data Token\nextern \"C\" fn make() -> resource[Token]\ndata Holder:\n  token: resource[Token]\nfn main():\n  unsafe:\n    holder = Holder(token: make())\n    value = holder.token\n",
     );
     assert!(codes.contains(&"E8012".to_owned()), "{codes:?}");
 }
 
 #[test]
 fn resource_flows_through_result_and_question_operator() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn make_ok() -> result(resource(Token), int):\n  unsafe:\n    ok(native_resource_create())\nfn load(flag: bool) -> result(resource(Token), int):\n  if flag:\n    return make_ok()\n  err(5)\nfn run(flag: bool) -> result(int, int):\n  unsafe:\n    token = load(flag)?\n    out(\"live=$(native_resource_outstanding())\")\n  ok(1)\nfn main():\n  match run(true):\n    ok(value): out(\"ok\")\n    err(error): out(\"err=$error\")\n  unsafe:\n    out(\"after=$(native_resource_outstanding())\")\n  match run(false):\n    ok(value): out(\"ok2\")\n    err(error): out(\"err2=$error\")\n  unsafe:\n    out(\"after2=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn make_ok() -> result[resource[Token], int]:\n  unsafe:\n    ok(native_resource_create())\nfn load(flag: bool) -> result[resource[Token], int]:\n  if flag:\n    return make_ok()\n  err(5)\nfn run(flag: bool) -> result[int, int]:\n  unsafe:\n    token = load(flag)?\n    out(\"live=$(native_resource_outstanding())\")\n  ok(1)\nfn main():\n  match run(true):\n    ok(value): out(\"ok\")\n    err(error): out(\"err=$error\")\n  unsafe:\n    out(\"after=$(native_resource_outstanding())\")\n  match run(false):\n    ok(value): out(\"ok2\")\n    err(error): out(\"err2=$error\")\n  unsafe:\n    out(\"after2=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "live=1\nok\nafter=0\nerr2=5\nafter2=0\n");
@@ -459,7 +503,7 @@ fn resource_flows_through_result_and_question_operator() {
 
 #[test]
 fn resource_created_each_loop_iteration_drops_once() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    for index in @(0, 1, 2):\n      token = native_resource_create()\n      out(\"iter=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nfn scoped():\n  unsafe:\n    for index in @[0, 1, 2]:\n      token = native_resource_create()\n      out(\"iter=$(native_resource_outstanding())\")\nfn main():\n  scoped()\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "iter=1\niter=1\niter=1\nend=0\n");
@@ -467,8 +511,24 @@ fn resource_created_each_loop_iteration_drops_once() {
 
 #[test]
 fn resource_crosses_await_and_drops_once() {
-    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource(Token)\nextern \"C\" fn native_resource_outstanding() -> usize\nasync fn make_token() -> resource(Token):\n  unsafe:\n    native_resource_create()\nasync fn scoped():\n  unsafe:\n    token = await make_token()\n    out(\"live=$(native_resource_outstanding())\")\nasync fn main():\n  await scoped()\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nasync fn make_token() -> resource[Token]:\n  unsafe:\n    native_resource_create()\nasync fn scoped():\n  unsafe:\n    token = await make_token()\n    out(\"live=$(native_resource_outstanding())\")\nasync fn main():\n  await scoped()\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
     let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "live=1\nend=0\n");
+}
+
+#[test]
+fn resource_created_in_vutcon_drops_once() {
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nasync fn main():\n  job = vut(fn():\n    unsafe:\n      token = native_resource_create()\n      out(\"inner=$(native_resource_outstanding())\")\n  )\n  await job\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
+    let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "inner=1\nend=0\n");
+}
+
+#[test]
+fn resource_sent_through_channel_drops_once() {
+    let source = "opaque data Token\nextern \"C\" fn native_resource_create() -> resource[Token]\nextern \"C\" fn native_resource_outstanding() -> usize\nasync fn main():\n  ch = channel[resource[Token]](capacity: 1)\n  unsafe:\n    ch.send(native_resource_create())\n    out(\"queued=$(native_resource_outstanding())\")\n  received = ch.recv()\n  unsafe:\n    out(\"received=$(native_resource_outstanding())\")\n  if received != null:\n    out(\"present\")\n  unsafe:\n    out(\"end=$(native_resource_outstanding())\")\n";
+    let (code, stdout) = run_with_native(source, &[rust_fixture().to_owned()], &[]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "queued=1\nreceived=1\npresent\nend=0\n");
 }

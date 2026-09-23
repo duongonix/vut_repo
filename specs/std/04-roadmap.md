@@ -240,10 +240,12 @@ Use explicit Result-based errors.
 Implement foundational utility modules:
 
 ```text
-math
-random
-ffi
+math        implemented (constants, float/int utilities, native transcendentals)
+random      implemented as `math.rng` / `math.random*` (see specs/std/math.md)
+ffi         pending
 ```
+
+See `specs/std/math.md` for the `math` module contract.
 
 Then add other utility modules only when needed:
 

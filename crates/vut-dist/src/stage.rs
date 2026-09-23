@@ -1,11 +1,16 @@
-//! Distribution assembly: staging tree, manifest, archive and checksum.
+//! Distribution assembly: staging tree, manifest, version metadata, archive and
+//! checksum.
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use crate::archive;
 use crate::checksum;
-use crate::cli::Args;
+use crate::cli::AssembleArgs;
 use crate::manifest::{FORMAT_VERSION, Manifest};
+use crate::version::VersionInfo;
+
+/// Build profile recorded for every `vut-dist` artifact (release-only tool).
+const PROFILE: &str = "release";
 
 /// Result of assembling one distribution.
 pub struct Artifact {
@@ -19,7 +24,7 @@ pub struct Artifact {
 /// # Errors
 /// Returns an error when the target is invalid, a required artifact is missing,
 /// or I/O/encoding fails.
-pub fn assemble(args: &Args) -> Result<Artifact, Box<dyn Error>> {
+pub fn assemble(args: &AssembleArgs) -> Result<Artifact, Box<dyn Error>> {
     let profile = vut_linker::TargetProfile::parse(&args.target)?;
     let windows = profile.is_windows();
     let version = env!("CARGO_PKG_VERSION");
@@ -37,6 +42,7 @@ pub fn assemble(args: &Args) -> Result<Artifact, Box<dyn Error>> {
     stage_binaries(&args.bin_dir, &bin_dir, windows)?;
     stage_runtime(&profile, args, &runtime_dir)?;
     stage_stdlib(args, &std_dir)?;
+    stage_legal(args, &staging)?;
 
     let archive_name = format!("{dist_name}.{}", if windows { "zip" } else { "tar.gz" });
     let manifest = Manifest {
@@ -51,13 +57,30 @@ pub fn assemble(args: &Args) -> Result<Artifact, Box<dyn Error>> {
         abi_version: vut_runtime::abi::VERSION,
         target: args.target.clone(),
         archive: archive_name.clone(),
+        channel: args.channel.clone(),
+        profile: PROFILE.to_owned(),
+        cranelift: args.cranelift.clone(),
         build_commit: args
             .build_commit
             .clone()
             .or_else(|| std::env::var("GITHUB_SHA").ok()),
         minimum_os: args.minimum_os.clone(),
     };
+    let version_info = VersionInfo {
+        vut: manifest.vut.clone(),
+        vpm: manifest.vpm.clone(),
+        stdlib: manifest.stdlib.clone(),
+        runtime: manifest.runtime.clone(),
+        abi_version: manifest.abi_version,
+        manifest_format: manifest.format_version,
+        channel: manifest.channel.clone(),
+        profile: manifest.profile.clone(),
+        cranelift: manifest.cranelift.clone(),
+        target: manifest.target.clone(),
+        build_commit: manifest.build_commit.clone(),
+    };
     std::fs::write(staging.join("manifest.json"), manifest.to_json())?;
+    std::fs::write(staging.join("version.json"), version_info.to_json())?;
 
     let archive_path = args.out.join(&archive_name);
     if windows {
@@ -65,6 +88,12 @@ pub fn assemble(args: &Args) -> Result<Artifact, Box<dyn Error>> {
     } else {
         archive::tar_gz_tree(&staging, &archive_path)?;
     }
+    // Keep the per-target manifest next to the archive so the release-level
+    // manifest can be merged without unpacking every artifact.
+    std::fs::write(
+        args.out.join(format!("{dist_name}.manifest.json")),
+        manifest.to_json(),
+    )?;
     let checksum = checksum::sha256_file(&archive_path)?;
     append_checksum(&args.out, &checksum, &archive_name)?;
 
@@ -91,9 +120,27 @@ fn stage_binaries(
     Ok(())
 }
 
+/// Copies the license (required) and third-party notices (optional) into the
+/// artifact so a distribution is self-describing.
+fn stage_legal(args: &AssembleArgs, destination: &Path) -> Result<(), Box<dyn Error>> {
+    let license = args
+        .license
+        .clone()
+        .unwrap_or_else(default_license)
+        .canonicalize()
+        .map_err(|_| "the LICENSE file was not found; pass --license <path>")?;
+    std::fs::copy(&license, destination.join("LICENSE"))?;
+
+    let notices = args.notices.clone().unwrap_or_else(default_notices);
+    if notices.is_file() {
+        std::fs::copy(&notices, destination.join("THIRD-PARTY-NOTICES.md"))?;
+    }
+    Ok(())
+}
+
 fn stage_runtime(
     profile: &vut_linker::TargetProfile,
-    args: &Args,
+    args: &AssembleArgs,
     destination: &Path,
 ) -> Result<(), Box<dyn Error>> {
     let windows = profile.is_windows();
@@ -124,7 +171,7 @@ fn stage_runtime(
     Ok(())
 }
 
-fn stage_stdlib(args: &Args, destination: &Path) -> Result<(), Box<dyn Error>> {
+fn stage_stdlib(args: &AssembleArgs, destination: &Path) -> Result<(), Box<dyn Error>> {
     let root = args.std.clone().unwrap_or_else(default_stdlib_root);
     if !root.is_dir() {
         return Err(format!("stdlib source `{}` was not found", root.display()).into());
@@ -173,10 +220,12 @@ fn executable(name: &str, windows: bool) -> String {
 }
 
 fn core_source_names(windows: bool) -> Vec<&'static str> {
+    // A distribution ships the linkable static archive, never the development
+    // `.rlib` (which lacks the embedded Rust std the standalone linker needs).
     if windows {
-        vec!["libvut_runtime.rlib", "vut_runtime.lib", "vut-core.lib"]
+        vec!["vut_runtime.lib", "vut-core.lib", "libvut_runtime.rlib"]
     } else {
-        vec!["libvut_runtime.a", "libvut-core.a"]
+        vec!["libvut_runtime.a", "libvut-core.a", "libvut_runtime.rlib"]
     }
 }
 
@@ -206,6 +255,14 @@ fn stdlib_distribution_name(windows: bool) -> &'static str {
 
 fn default_stdlib_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vut-stdlib/std")
+}
+
+fn default_license() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../LICENSE")
+}
+
+fn default_notices() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../THIRD-PARTY-NOTICES.md")
 }
 
 #[cfg(test)]

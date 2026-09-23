@@ -4,14 +4,16 @@
 //! on Windows MSVC, `cc` or `ld.lld` elsewhere. It resolves the prebuilt
 //! `vut-startup` object, maps runtime `.rlib` inputs to their C-linkable
 //! staticlib siblings, links the runtime archives, and adds the system
-//! libraries measured in M-LINK.0. No `rustc` is invoked for the final link.
+//! libraries and library search paths from the resolved linker. No `rustc` is
+//! invoked for the final link.
 use std::path::{Path, PathBuf};
 
 use crate::assets;
-use crate::backend::{BackendKind, LinkerBackend, driver_program, toolchain_hint};
+use crate::backend::{BackendKind, LinkerBackend, toolchain_hint};
 use crate::error::{LinkError, LinkFailure};
 use crate::plan::LinkPlan;
 use crate::process;
+use crate::resolver::ResolvedLinker;
 use crate::startup::StartupObject;
 use crate::system_libs;
 use crate::target::{Flavor, TargetProfile};
@@ -20,18 +22,39 @@ use crate::target::{Flavor, TargetProfile};
 pub struct SystemBackend {
     kind: BackendKind,
     profile: TargetProfile,
+    program: PathBuf,
+    search_paths: Vec<PathBuf>,
+    environment: Vec<(String, String)>,
 }
 
 impl SystemBackend {
     #[must_use]
-    pub fn new(kind: BackendKind, profile: TargetProfile) -> Self {
-        Self { kind, profile }
+    pub fn new(resolved: ResolvedLinker, profile: TargetProfile) -> Self {
+        Self {
+            kind: resolved.kind,
+            profile,
+            program: resolved.program,
+            search_paths: resolved.search_paths,
+            environment: resolved.environment,
+        }
     }
 
     /// Linker program for this backend and target.
     #[must_use]
     pub(crate) fn driver(&self) -> PathBuf {
-        PathBuf::from(driver_program(&self.profile, self.kind))
+        self.program.clone()
+    }
+
+    /// All library search paths: the plan's explicit ones plus the resolved
+    /// platform/SDK ones, deduplicated.
+    fn search_paths(&self, plan: &LinkPlan) -> Vec<PathBuf> {
+        let mut seen = std::collections::HashSet::new();
+        self.search_paths
+            .iter()
+            .chain(plan.search_paths.iter())
+            .filter(|path| seen.insert(path.as_os_str().to_owned()))
+            .cloned()
+            .collect()
     }
 
     /// Full argument vector for a resolved startup object.
@@ -53,6 +76,9 @@ impl SystemBackend {
             format!("/OUT:{}", plan.output.display()),
             startup.display().to_string(),
         ];
+        for path in self.search_paths(plan) {
+            arguments.push(format!("/LIBPATH:{}", path.display()));
+        }
         append_archives(&mut arguments, plan)?;
         for library in system_libs::system_libraries(&self.profile) {
             arguments.push(with_lib_extension(library));
@@ -66,6 +92,9 @@ impl SystemBackend {
             plan.output.display().to_string(),
             startup.display().to_string(),
         ];
+        for path in self.search_paths(plan) {
+            arguments.push(format!("-L{}", path.display()));
+        }
         append_archives(&mut arguments, plan)?;
         for library in system_libs::system_libraries(&self.profile) {
             arguments.push(format!("-l{library}"));
@@ -118,7 +147,8 @@ impl LinkerBackend for SystemBackend {
         let startup = self.resolve_startup(plan)?;
         let program = self.driver();
         let arguments = self.argv(plan, &startup)?;
-        process::run(&program, &arguments, &plan.output).map_err(|error| self.enrich(error))
+        process::run(&program, &arguments, &plan.output, &self.environment)
+            .map_err(|error| self.enrich(error))
     }
 }
 
@@ -155,6 +185,17 @@ fn with_lib_extension(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolver::LinkerSource;
+
+    fn resolved(kind: BackendKind, profile: &TargetProfile) -> ResolvedLinker {
+        ResolvedLinker {
+            kind,
+            program: PathBuf::from(crate::backend::driver_program(profile, kind)),
+            search_paths: Vec::new(),
+            environment: Vec::new(),
+            source: LinkerSource::System,
+        }
+    }
 
     fn plan(target: &str) -> LinkPlan {
         LinkPlan {
@@ -171,7 +212,7 @@ mod tests {
     #[test]
     fn msvc_uses_link_exe_with_crt_libraries() {
         let profile = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
-        let backend = SystemBackend::new(BackendKind::System, profile);
+        let backend = SystemBackend::new(resolved(BackendKind::System, &profile), profile);
         assert_eq!(backend.driver(), PathBuf::from("link.exe"));
         let arguments = backend
             .argv(
@@ -189,16 +230,37 @@ mod tests {
     }
 
     #[test]
+    fn msvc_emits_libpath_search_paths() {
+        let profile = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
+        let mut resolved = resolved(BackendKind::System, &profile);
+        resolved.search_paths = vec![PathBuf::from("C:/SDK/lib")];
+        let backend = SystemBackend::new(resolved, profile);
+        let mut plan = plan("x86_64-pc-windows-msvc");
+        plan.search_paths = vec![PathBuf::from("C:/project/lib")];
+        let arguments = backend
+            .argv(&plan, Path::new("vut-startup.obj"))
+            .expect("argv");
+        assert!(
+            arguments.iter().any(|arg| arg == "/LIBPATH:C:/SDK/lib"),
+            "{arguments:?}"
+        );
+        assert!(
+            arguments.iter().any(|arg| arg == "/LIBPATH:C:/project/lib"),
+            "{arguments:?}"
+        );
+    }
+
+    #[test]
     fn lld_backend_uses_lld_link_on_windows() {
         let profile = TargetProfile::parse("aarch64-pc-windows-msvc").unwrap();
-        let backend = SystemBackend::new(BackendKind::Lld, profile);
+        let backend = SystemBackend::new(resolved(BackendKind::Lld, &profile), profile);
         assert_eq!(backend.driver(), PathBuf::from("lld-link"));
     }
 
     #[test]
     fn linux_uses_cc_with_gcc_runtime_libraries() {
         let profile = TargetProfile::parse("x86_64-unknown-linux-gnu").unwrap();
-        let backend = SystemBackend::new(BackendKind::System, profile);
+        let backend = SystemBackend::new(resolved(BackendKind::System, &profile), profile);
         assert_eq!(backend.driver(), PathBuf::from("cc"));
         let arguments = backend
             .argv(
@@ -213,9 +275,24 @@ mod tests {
     }
 
     #[test]
+    fn unix_emits_l_search_paths() {
+        let profile = TargetProfile::parse("x86_64-unknown-linux-gnu").unwrap();
+        let backend = SystemBackend::new(resolved(BackendKind::System, &profile), profile);
+        let mut plan = plan("x86_64-unknown-linux-gnu");
+        plan.search_paths = vec![PathBuf::from("/usr/local/lib")];
+        let arguments = backend
+            .argv(&plan, Path::new("vut-startup.o"))
+            .expect("argv");
+        assert!(
+            arguments.iter().any(|arg| arg == "-L/usr/local/lib"),
+            "{arguments:?}"
+        );
+    }
+
+    #[test]
     fn darwin_adds_frameworks() {
         let profile = TargetProfile::parse("aarch64-apple-darwin").unwrap();
-        let backend = SystemBackend::new(BackendKind::System, profile);
+        let backend = SystemBackend::new(resolved(BackendKind::System, &profile), profile);
         let arguments = backend
             .argv(&plan("aarch64-apple-darwin"), Path::new("vut-startup.o"))
             .expect("argv");
@@ -235,7 +312,7 @@ mod tests {
     #[test]
     fn rlib_runtime_without_static_sibling_fails_with_a_hint() {
         let profile = TargetProfile::parse("x86_64-pc-windows-msvc").unwrap();
-        let backend = SystemBackend::new(BackendKind::System, profile);
+        let backend = SystemBackend::new(resolved(BackendKind::System, &profile), profile);
         let mut plan = plan("x86_64-pc-windows-msvc");
         plan.runtime = Some(PathBuf::from("definitely-missing/libvut_runtime.rlib"));
         let error = backend

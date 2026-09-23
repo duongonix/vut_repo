@@ -5,8 +5,18 @@ use super::*;
 impl<'a> Analyzer<'a> {
     #[must_use]
     pub fn new(resolution: &'a Resolution) -> Self {
+        Self::for_target(resolution, std::mem::size_of::<usize>())
+    }
+    /// Constructs an analyzer using the target's pointer width, not the host's.
+    ///
+    /// # Panics
+    /// Panics if the supplied pointer size is not supported by Vut targets.
+    #[must_use]
+    pub fn for_target(resolution: &'a Resolution, pointer_bytes: usize) -> Self {
+        assert!(matches!(pointer_bytes, 4 | 8));
         let mut value = Self {
             resolution,
+            pointer_bytes,
             types: Vec::new(),
             type_ids: HashMap::new(),
             expression_types: HashMap::new(),
@@ -48,6 +58,12 @@ impl<'a> Analyzer<'a> {
             instance_symbols: HashMap::new(),
             instances: HashMap::new(),
             data_field_order: HashMap::new(),
+            parameter_defaults: HashMap::new(),
+            subscripts: HashMap::new(),
+            closure_captures: HashMap::new(),
+            module_constants: HashMap::new(),
+            constant_initializers: HashMap::new(),
+            constant_references: HashMap::new(),
             next_instance: resolution.symbols.len(),
         };
         for ty in [
@@ -66,6 +82,10 @@ impl<'a> Analyzer<'a> {
         value
     }
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "analysis orchestrates signature, type, and body passes in order"
+    )]
     pub fn analyze(mut self) -> SemanticResult {
         let (attributes, attribute_diagnostics) = attributes::validate(self.resolution);
         self.diagnostics.extend(attribute_diagnostics);
@@ -98,8 +118,26 @@ impl<'a> Analyzer<'a> {
             }
         }
         self.collect_interfaces();
+        // Register every module-level constant initializer up front so a
+        // reference from any module (including one checked earlier) resolves.
         for module in &self.resolution.modules {
-            self.module(module);
+            for item in &module.file.items {
+                if let vut_ast::Item::Statement(vut_ast::Stmt::Binding {
+                    target: vut_ast::Expr::Name(name),
+                    value,
+                    ..
+                }) = item
+                    && let Some(symbol) = module.symbols.get(&name.text).copied()
+                {
+                    self.constant_initializers.insert(symbol, value.clone());
+                }
+            }
+        }
+        // Check modules in dependency order so a module-level constant's type
+        // is known before a dependent module references it.
+        let compile_order = self.resolution.compile_order.clone();
+        for module_id in compile_order {
+            self.module(&self.resolution.modules[module_id.0]);
         }
         self.diagnostics.sort_deterministically();
         let data_fields = self.data_fields();
@@ -129,13 +167,18 @@ impl<'a> Analyzer<'a> {
         }
         SemanticResult {
             types: self.types,
+            type_aliases: self.aliases,
             expression_types: self.expression_types,
             diagnostics: self.diagnostics,
             interface_shapes: self.interface_shapes,
             interface_satisfaction: self.satisfaction,
             data_fields,
             data_field_defaults,
+            parameter_defaults: self.parameter_defaults,
+            subscripts: self.subscripts,
+            closure_captures: self.closure_captures,
             opaque_data: self.opaque_data,
+            constant_references: self.constant_references,
             function_signatures,
             builtin_functions,
             builtin_calls: self.builtin_calls,
@@ -306,13 +349,28 @@ impl<'a> Analyzer<'a> {
         data_fields: &HashMap<SymbolId, Vec<DataFieldInfo>>,
     ) {
         for (symbol, repr) in &attributes.data_repr {
+            // An opaque data type has no inspectable layout; `@repr(C)` is
+            // meaningless and would silently reclassify it.
+            if self.opaque_data.contains(symbol) {
+                self.error(
+                    codes::E8006,
+                    "invalid repr attribute",
+                    self.resolution.symbols[symbol.0].span,
+                    "`@repr(C)` is not allowed on an `opaque data` type",
+                );
+                continue;
+            }
             let Some(fields) = data_fields.get(symbol) else {
                 continue;
             };
             for field in fields {
-                if !self.ffi_safe(field.ty, true) {
+                // Managed and linear handles (including `resource[T]`) have no
+                // place in a C-layout aggregate: their destructor would be lost.
+                let unsafe_field = !self.ffi_safe(field.ty, true)
+                    || matches!(self.types[field.ty.0], Type::Resource(_));
+                if unsafe_field {
                     self.error(
-                        codes::E8004,
+                        codes::E8014,
                         "field is not FFI-safe",
                         self.resolution.symbols[symbol.0].span,
                         &format!(
@@ -340,6 +398,7 @@ impl<'a> Analyzer<'a> {
     pub(super) fn builtin(&mut self, name: &str) -> Option<TypeId> {
         Some(match name {
             "void" => self.intern(Type::Void),
+            "unit" => self.intern(Type::Unit),
             "bool" => self.intern(Type::Bool),
             "int" => self.intern(Type::Int),
             "float" => self.intern(Type::Float),
@@ -453,6 +512,10 @@ impl<'a> Analyzer<'a> {
                     let inner = self.resolve_type(module, inner);
                     self.intern(Type::Vutcon(inner))
                 }
+                ("channel", [inner]) => {
+                    let inner = self.resolve_type(module, inner);
+                    self.intern(Type::Channel(inner))
+                }
                 ("future", [inner]) => {
                     let inner = self.resolve_type(module, inner);
                     self.intern(Type::Future(inner))
@@ -473,7 +536,7 @@ impl<'a> Analyzer<'a> {
                             codes::E8004,
                             "invalid resource pointee",
                             *span,
-                            "`resource(T)` requires an `opaque data`, `@repr(C)` data, scalar, pointer, or `void` pointee",
+                            "`resource[T]` requires an `opaque data`, `@repr(C)` data, scalar, pointer, or `void` pointee",
                         );
                     }
                     self.intern(Type::Resource(inner))
@@ -492,7 +555,7 @@ impl<'a> Analyzer<'a> {
                         codes::E1001,
                         "unknown parameterized type",
                         *span,
-                        "expected `list(T)`, `map(K, V)`, `ptr(T)`, `result(T, E)`, or a generic declaration",
+                        "expected `list[T]`, `map[K, V]`, `ptr[T]`, `result[T, E]`, or a generic declaration",
                     );
                     self.intern(Type::Error)
                 }
@@ -595,10 +658,21 @@ impl<'a> Analyzer<'a> {
                 .get(&symbol)
                 .copied()
                 .unwrap_or_else(|| self.intern(Type::Error)),
+            // A module-level constant's type is recorded at its declaration
+            // name span when its module is checked.
+            SymbolKind::Binding => {
+                let span = self.resolution.symbols[symbol.0].span;
+                if let Some(ty) = self.expression_types.get(&span).copied() {
+                    ty
+                } else {
+                    self.intern(Type::Error)
+                }
+            }
             _ => self.intern(Type::Error),
         }
     }
     pub(super) fn collect_types(&mut self) {
+        self.collect_opaque_pointees();
         for module in &self.resolution.modules {
             for item in &module.file.items {
                 if let Item::TypeAlias(value) = item
@@ -613,7 +687,6 @@ impl<'a> Analyzer<'a> {
                     && let Some(symbol) = module.symbols.get(&value.name.text).copied()
                 {
                     if value.opaque {
-                        self.opaque_data.insert(symbol);
                         continue;
                     }
                     self.data_field_order.insert(
@@ -699,7 +772,7 @@ impl<'a> Analyzer<'a> {
     }
     /// Rejects enums whose variants contain themselves by value, which would
     /// have infinite size. Recursive structures must use an indirect container
-    /// such as `list(T)`.
+    /// such as `list[T]`.
     pub(super) fn detect_recursive_enums(&mut self) {
         let symbols: Vec<SymbolId> = self.enum_variants.keys().copied().collect();
         let mut adjacency: HashMap<SymbolId, Vec<SymbolId>> = HashMap::new();
@@ -731,7 +804,7 @@ impl<'a> Analyzer<'a> {
                 codes::E7105,
                 "recursive enum payload",
                 span,
-                "an enum cannot contain itself by value; use an indirect container such as `list(T)`",
+                "an enum cannot contain itself by value; use an indirect container such as `list[T]`",
             );
         }
     }
@@ -827,7 +900,9 @@ impl<'a> Analyzer<'a> {
                         "FFI v1 only supports the `C` ABI",
                     );
                 }
+                let ast_parameters = parameters;
                 let (parameters, variadic) = self.resolve_parameters(module, parameters, is_extern);
+                self.register_parameter_defaults(symbol, ast_parameters, is_extern);
                 if is_async && variadic.is_some() {
                     self.error(
                         codes::E7013,
@@ -844,6 +919,51 @@ impl<'a> Analyzer<'a> {
                 }
             }
         }
+    }
+
+    /// Validates default parameter placement and records the default expressions
+    /// for `symbol`, aligned with its resolved parameter order.
+    fn register_parameter_defaults(
+        &mut self,
+        symbol: SymbolId,
+        parameters: &[vut_ast::Parameter],
+        is_extern: bool,
+    ) {
+        let mut seen_default = false;
+        for parameter in parameters {
+            if parameter.default.is_some() {
+                seen_default = true;
+                if parameter.variadic {
+                    self.error(
+                        codes::E6015,
+                        "invalid default parameter",
+                        parameter.span,
+                        "a variadic parameter cannot have a default value",
+                    );
+                }
+                if is_extern {
+                    self.error(
+                        codes::E6015,
+                        "invalid default parameter",
+                        parameter.span,
+                        "extern parameters cannot have default values",
+                    );
+                }
+            } else if seen_default {
+                self.error(
+                    codes::E6015,
+                    "invalid default parameter",
+                    parameter.span,
+                    "required parameters must precede parameters with defaults",
+                );
+            }
+        }
+        let defaults: Vec<Option<vut_ast::Expr>> = parameters
+            .iter()
+            .filter(|parameter| !parameter.variadic)
+            .map(|parameter| parameter.default.clone())
+            .collect();
+        self.parameter_defaults.insert(symbol, defaults);
     }
 
     /// Resolves declared parameter types, enforcing variadic placement rules and

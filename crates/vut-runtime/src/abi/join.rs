@@ -1,7 +1,7 @@
-//! `list(str).join(separator)` — concatenates managed strings with a separator.
+//! `list[str].join(separator)` — concatenates managed strings with a separator.
 use super::{ManagedList, ManagedString};
 
-/// Joins a managed `list(str)` with `separator` between elements.
+/// Joins a managed `list[str]` with `separator` between elements.
 ///
 /// # Safety
 /// `list` must be null or a live managed list whose element storage holds

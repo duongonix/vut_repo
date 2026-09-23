@@ -1,7 +1,7 @@
 # Function values: callbacks, returned functions, chained calls, and variadics.
 #
-# Note: anonymous functions cannot capture enclosing bindings yet (E1013), so
-# lambdas below use only their own parameters.
+# Note: anonymous functions may capture enclosing bindings by value (see
+# specs/04 §46a).
 
 fn compute(a: int, b: int, c: fn(int, int) -> int) -> int:
   c(a, b)
@@ -13,6 +13,11 @@ fn multiply(x: int, y: int) -> int:
 fn make_incrementer() -> fn(int) -> int:
   fn(x):
     x + 1
+
+# A capturing closure: `base` is captured by value.
+fn make_adder(base: int) -> fn(int) -> int:
+  fn(x):
+    x + base
 
 fn hello(...names: str) -> void:
   for name in names:
@@ -30,6 +35,9 @@ fn main():
   increment = make_incrementer()
   result = increment(5)
   out("result = $result")
+
+  add = make_adder(100)
+  out("captured = $(add(1))")
 
   # Chained call: the result of a call may itself be called.
   chained = make_incrementer()(10)

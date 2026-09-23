@@ -274,14 +274,14 @@ Conceptual structure:
 ```text
 vpm/
 ├── math/
-│   ├── v0.1.0/
-│   ├── v0.1.1/
-│   └── v1.0.0/
+│   ├── 0.1.0/
+│   ├── 0.1.1/
+│   └── 1.0.0/
 ├── json/
-│   ├── v1.0.0/
-│   └── v1.1.0/
+│   ├── 1.0.0/
+│   └── 1.1.0/
 └── http/
-    └── v0.5.0/
+    └── 0.5.0/
 ```
 
 A package name maps to a folder in this repository.
@@ -293,15 +293,17 @@ A package name maps to a folder in this repository.
 Each package version is a subdirectory named:
 
 ```text
-v<semver>
+<semver>
 ```
+
+There is no `v` prefix.
 
 Examples:
 
 ```text
-v0.1.0
-v1.0.0
-v1.2.3
+0.1.0
+1.0.0
+1.2.3
 ```
 
 Each version directory contains a complete package.
@@ -334,15 +336,15 @@ Version selection must use semantic-version ordering.
 Given:
 
 ```text
-v0.9.0
-v0.10.0
-v1.0.0
+0.9.0
+0.10.0
+1.0.0
 ```
 
 latest is:
 
 ```text
-v1.0.0
+1.0.0
 ```
 
 Do not compare version directory names lexicographically.
@@ -356,8 +358,8 @@ Use a proven semantic-version library.
 Given:
 
 ```text
-v1.2.0
-v2.0.0-alpha.1
+1.2.0
+2.0.0-alpha.1
 ```
 
 stable `latest` resolves to:
@@ -614,19 +616,34 @@ Exact presentation may evolve.
 
 ## 33. Publishing Commands
 
-The broader VPM command model reserves workflows such as:
-
 ```text
-vpm login
-vpm publish
-vpm yank
+vpm publish                      publish to the default registry (duongonix/vpm)
+vpm publish alice/vut-packages   publish to a self-hosted registry
+vpm publish --dry-run            validate + report without submitting
 ```
 
-However, because the current registry is GitHub-folder based, authentication and publishing workflow require a dedicated specification before implementation.
+The package name comes from `[package].name`; it is never supplied again on the
+command line.
+
+Publication is a review-gated, source-only flow:
+
+```text
+validate manifest + layout + version + native build source
+→ submit a change/PR to the target registry for review
+→ trusted CI builds native artifacts per target
+→ trusted CI uploads artifacts and generates native-artifacts.toml
+```
+
+The publisher must not submit prebuilt binaries or a publisher-authored
+`native-artifacts.toml` (that file is registry/CI-controlled).
+
+Provider and authentication are abstracted (GitHub is not privileged); the
+submission credential is read from the environment and never written to the
+manifest, lockfile, or package source.
+
+`vpm login` and `vpm yank` remain reserved until their semantics are finalized.
 
 Do not invent a centralized registry server merely to implement these commands.
-
-These commands may remain unavailable until publishing semantics are finalized.
 
 ---
 
@@ -696,7 +713,7 @@ Packages should retain source identity internally.
 Example:
 
 ```text
-~/.vpm/packages/
+~/.vut/packages/
 ├── registry/
 │   └── math/
 │       └── 1.2.0/
@@ -712,7 +729,8 @@ Example:
                 └── 1.2.0/
 ```
 
-Local version directories do not need the remote `v` prefix.
+Both remote and local version directories use the bare `<semver>` name with no
+`v` prefix.
 
 ---
 
@@ -822,7 +840,7 @@ VPM Resolver
 Providers need operations conceptually similar to:
 
 ```text
-list(path)
+list[path]
 download(path)
 ```
 
@@ -909,7 +927,7 @@ VPM follows these principles:
 3. Default registry uses the GitHub-folder model.
 4. Repositories themselves are not packages.
 5. Packages live inside repository subdirectories.
-6. Versions live inside `v<semver>` directories.
+6. Versions live inside bare `<semver>` directories.
 7. Each version contains a complete package.
 8. `latest` selects the highest stable semantic version.
 9. Explicit prerelease versions are allowed.

@@ -52,15 +52,15 @@ fn prints_scalars_and_strings_directly() {
 #[test]
 fn prints_data_with_named_fields() {
     let source =
-        "data User:\n  a: int\n  name: str\n\nfn main():\n  out(User(a = 1, name = \"bob\"))\n";
+        "data User:\n  a: int\n  name: str\n\nfn main():\n  out(User(a: 1, name: \"bob\"))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(stdout, "User(a = 1, name = \"bob\")\n");
+    assert_eq!(stdout, "User(a: 1, name: \"bob\")\n");
 }
 
 #[test]
 fn prints_lists_arrays_and_nested_collections() {
-    let source = "fn main():\n  out(@(1, 2, 3))\n  out(@(@(1, 2), @(3, 4)))\n";
+    let source = "fn main():\n  out(@[1, 2, 3])\n  out(@[@[1, 2], @[3, 4]])\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "[1, 2, 3]\n[[1, 2], [3, 4]]\n");
@@ -68,7 +68,7 @@ fn prints_lists_arrays_and_nested_collections() {
 
 #[test]
 fn prints_enums_and_results() {
-    let source = "enum Color:\n  red\n  green\n\nenum Status:\n  ready\n  failed(reason: str)\n\nfn main():\n  out(Color.red)\n  out(Status.failed(reason = \"boom\"))\n  good: result(int, str) = ok(7)\n  out(good)\n  bad: result(int, str) = err(\"nope\")\n  out(bad)\n";
+    let source = "enum Color:\n  red\n  green\n\nenum Status:\n  ready\n  failed(reason: str)\n\nfn main():\n  out(Color.red)\n  out(Status.failed(reason: \"boom\"))\n  good: result[int, str] = ok(7)\n  out(good)\n  bad: result[int, str] = err(\"nope\")\n  out(bad)\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "red\nfailed(\"boom\")\nok(7)\nerr(\"nope\")\n");
@@ -76,7 +76,7 @@ fn prints_enums_and_results() {
 
 #[test]
 fn prints_bytes() {
-    let source = "fn main():\n  raw: list(u8) = @(104, 105)\n  out(bytes.from_list(raw))\n";
+    let source = "fn main():\n  raw: list[u8] = @[104, 105]\n  out(bytes.from_list(raw))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "[104, 105]\n");
@@ -92,15 +92,15 @@ fn prints_multiple_and_zero_arguments_joined_by_spaces() {
 
 #[test]
 fn interpolates_aggregates_and_expressions_in_templates() {
-    let source = "data User:\n  name: str\n\nfn main():\n  user = User(name = \"ann\")\n  out(\"user=$user\")\n  out(\"sum=$(1 + 2)\")\n  out(\"list=$(@(1, 2))\")\n";
+    let source = "data User:\n  name: str\n\nfn main():\n  user = User(name: \"ann\")\n  out(\"user=$user\")\n  out(\"sum=$(1 + 2)\")\n  out(\"list=$(@[1, 2])\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(stdout, "user=User(name = \"ann\")\nsum=3\nlist=[1, 2]\n");
+    assert_eq!(stdout, "user=User(name: \"ann\")\nsum=3\nlist=[1, 2]\n");
 }
 
 #[test]
 fn printing_nested_managed_values_does_not_leak() {
-    let source = "data User:\n  name: str\n  age: int\n\nfn main():\n  users = @(User(name = \"ann\", age = 1), User(name = \"bob\", age = 2))\n  out(users)\n  for user in users:\n    out(\"user:\", user)\n";
+    let source = "data User:\n  name: str\n  age: int\n\nfn main():\n  users = @[User(name: \"ann\", age: 1), User(name: \"bob\", age: 2)]\n  out(users)\n  for user in users:\n    out(\"user:\", user)\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,
@@ -109,6 +109,6 @@ fn printing_nested_managed_values_does_not_leak() {
     );
     assert_eq!(
         stdout,
-        "[User(name = \"ann\", age = 1), User(name = \"bob\", age = 2)]\nuser: User(name = \"ann\", age = 1)\nuser: User(name = \"bob\", age = 2)\n"
+        "[User(name: \"ann\", age: 1), User(name: \"bob\", age: 2)]\nuser: User(name: \"ann\", age: 1)\nuser: User(name: \"bob\", age: 2)\n"
     );
 }

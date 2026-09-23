@@ -1,4 +1,4 @@
-//! Compiler-known higher-order `list(T)` builtins.
+//! Compiler-known higher-order `list[T]` builtins.
 //!
 //! These operations are *builtins* (the compiler knows their signatures) but
 //! they are not native runtime functions: the MIR lowering expands them into
@@ -14,7 +14,7 @@ struct Callback {
 }
 
 impl Analyzer<'_> {
-    /// Types a higher-order `list(T)` builtin and records it for MIR lowering.
+    /// Types a higher-order `list[T]` builtin and records it for MIR lowering.
     /// Returns `None` when `name` is not one of these builtins, so ordinary
     /// builtin/method resolution can continue.
     #[expect(

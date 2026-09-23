@@ -20,7 +20,7 @@ fn sum(a: int, b: int) -> int:
 
 ## Expressions
 
-Calls and parameterized types use parentheses. Member access uses `.`, list literals use `@(...)`, and expression interpolation uses `$(...)` inside a string.
+Calls use parentheses, while parameterized types use brackets. Member access uses `.`, list literals use `@[...]`, and expression interpolation uses `$(...)` inside a string.
 
 ## Control flow
 

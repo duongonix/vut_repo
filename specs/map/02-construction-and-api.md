@@ -3,13 +3,13 @@
 Map literal syntax:
 
 ```vut
-scores = map(("alice", 10), ("bob", 20))
-empty: map(str, i32) = map()
+scores = ("alice": 10, "bob": 20)
+empty: map[str, i32] = ()
 ```
 
-Each entry is a parenthesized `(key, value)` pair. This avoids `{}` and `[]` and does not conflict with `@(...)` list literals or `array(...)`.
+Each entry is a parenthesized `(key, value)` pair. This avoids `{}` and `[]` and does not conflict with `@[...]` list literals or `[...]`.
 
-Empty `map()` requires an expected `map(K, V)` type. The compiler must not infer `dyn`.
+Empty `()` requires an expected `map[K, V]` type. The compiler must not infer `dyn`.
 
 Required methods:
 

@@ -14,7 +14,7 @@ fn main():
   else:
     out("not taken")
 
-  values = @(true, false, true)
+  values = @[true, false, true]
   count = 0
   for value in values:
     if value:

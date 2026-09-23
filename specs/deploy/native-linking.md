@@ -140,14 +140,17 @@ definition appears, correct the internal topology. No script-based merge.
 ```text
 src/
 ├── lib.rs                 NativeLinker facade + SystemLinker
-├── plan.rs                LinkPlan (objects, archives, startup, target)
+├── plan.rs                LinkPlan (objects, archives, startup, target, search paths)
 ├── error.rs               LinkError + LinkFailure classification
-├── process.rs             serialized tool execution + artifact flush
+├── process.rs             serialized tool execution + artifact flush + environment
 ├── target.rs              TargetProfile: kernel / flavor / arch / artifact names
 ├── system_libs.rs         per-target system libraries and frameworks
-├── startup.rs             vut-startup resolution and development build
+├── startup.rs             vut-startup resolution and race-safe development build
+├── resolver.rs            LinkerResolver: single source of truth for selection
+├── toolchain.rs           MSVC/Windows SDK discovery (vswhere) for linking
+├── path_lookup.rs         PATH/PATHEXT executable lookup
 ├── backend.rs             BackendKind, LinkerBackend trait, selection
-├── backend/rustc.rs       rustc backend (development/migration fallback)
+├── backend/rustc.rs       rustc backend (development fallback)
 ├── backend/system.rs      platform (link.exe / cc) and LLVM lld backends
 ├── link_shim.rs           embedded rustc entry shim (include_str!)
 └── ../startup/vut-startup.rs   product startup source (include_str!)
@@ -163,18 +166,31 @@ pub trait LinkerBackend {
 Backends:
 
 ```text
-BackendKind::Rustc   link_shim.rs compiled by rustc (default during migration)
+BackendKind::Rustc   link_shim.rs compiled by rustc (development fallback)
 BackendKind::System  link.exe (MSVC) / cc (GNU, Darwin)
 BackendKind::Lld     lld-link (MSVC) / ld.lld / ld64.lld
 ```
 
-Selection reads the `VUT_LINKER` development override (`rustc`, `system`/`cc`,
-`lld`) and defaults to `Rustc`. M-LINK.6 flips the production default and removes
-the rustc dependency.
+Resolution (M2.5.4/M2.5.6) lives in `resolver::resolve` and is **environment-
+driven**, identical for Debug, Release, and installed Vut. `cfg!(debug_assertions)`
+is never consulted. Order:
+
+```text
+VUT_LINKER override
+  -> Vut-managed/bundled lld ($VUT_HOME/bin, next to the executable)
+  -> platform toolchain discovery (vswhere link.exe + LIB/INCLUDE; cc/clang)
+  -> rustc development fallback
+  -> actionable error
+```
+
+The resolved linker carries its `search_paths` (`/LIBPATH:` on MSVC, `-L`
+elsewhere) and environment (`LIB`/`INCLUDE`), which the backend applies. A
+discovered MSVC toolchain sets `LIB`/`INCLUDE` from the Visual Studio and Windows
+SDK directories, so linking works without `vcvars`.
 
 Failures are classified as
 `ToolNotFound | MissingSdk | MissingCrt | MissingLibrary | DuplicateSymbol |
-UnsupportedTarget | Other` so a future `vut doctor` can explain them.
+UnsupportedTarget | Other` so `vut doctor` can explain them.
 
 Requirements (met):
 

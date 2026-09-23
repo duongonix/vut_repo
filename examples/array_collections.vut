@@ -1,5 +1,5 @@
 fn main():
-  values = array(1, 2, 3, 4)
+  values = [1, 2, 3, 4]
   out("length: $(values.len())")
   out("first: $(values.first())")
   out("last: $(values.last())")

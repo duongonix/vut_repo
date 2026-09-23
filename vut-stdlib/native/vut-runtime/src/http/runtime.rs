@@ -18,10 +18,10 @@ pub fn default_redirect_policy() -> Policy {
 /// Returns a client that follows a bounded number of redirects.
 #[must_use]
 pub fn build_client(policy: Policy) -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(policy)
-        .build()
-        .expect("vut native HTTP client")
+    crate::guard::or_abort(
+        reqwest::Client::builder().redirect(policy).build(),
+        "http client",
+    )
 }
 
 /// Returns the shared default client.
@@ -45,9 +45,11 @@ pub fn default_client() -> &'static reqwest::Client {
 #[must_use]
 pub fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("vut native HTTP runtime")
+        crate::guard::or_abort(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build(),
+            "http runtime",
+        )
     })
 }

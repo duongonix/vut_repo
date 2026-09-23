@@ -2,7 +2,7 @@
 //! interpolation.
 //!
 //! Vut has no reflection and no runtime type metadata. To print a value
-//! directly (`out(User(a = 1))`, `"$data"`), the compiler generates a small
+//! directly (`out(User(a: 1))`, `"$data"`), the compiler generates a small
 //! Vut function per concrete type that builds its textual representation and
 //! rewrites the call sites to use it. Everything then flows through the normal
 //! resolver/type-checker/MIR pipeline, so ownership and drops stay correct and
@@ -22,6 +22,8 @@ use vut_resolver::{ModuleInput, Resolution};
 use vut_source::{SourceId, SourceManager, Span};
 use vut_types::{SemanticResult, Type};
 
+mod type_names;
+
 /// Name of the shared nested-string formatting helper.
 const STR_HELPER: &str = "__vut_disp_str_q";
 
@@ -36,7 +38,12 @@ pub(crate) fn apply(
 ) -> bool {
     let mut changed = false;
     for module in modules.iter_mut() {
-        let mut generator = Generator::new(semantics, resolution);
+        let owner = resolution
+            .modules
+            .iter()
+            .find(|owner| owner.logical_path == module.logical_path)
+            .expect("resolved module");
+        let mut generator = Generator::new(semantics, resolution, owner);
         let rewritten;
         {
             let mut visitor = Visitor {
@@ -199,6 +206,12 @@ fn visit_expr(expr: &mut Expr, visitor: &mut Visitor<'_, '_>) {
             visit_expr(right, visitor);
         }
         Expr::Member { object, .. } => visit_expr(object, visitor),
+        Expr::Subscript { object, index, .. } => {
+            visit_expr(object, visitor);
+            if let Some(index) = index {
+                visit_expr(index, visitor);
+            }
+        }
         Expr::Call {
             callee, arguments, ..
         } => {
@@ -386,15 +399,21 @@ enum Shape {
 struct Generator<'a> {
     semantics: &'a SemanticResult,
     resolution: &'a Resolution,
+    module: &'a vut_resolver::Module,
     worklist: Vec<(String, TypeId)>,
     seen: BTreeSet<String>,
 }
 
 impl<'a> Generator<'a> {
-    fn new(semantics: &'a SemanticResult, resolution: &'a Resolution) -> Self {
+    fn new(
+        semantics: &'a SemanticResult,
+        resolution: &'a Resolution,
+        module: &'a vut_resolver::Module,
+    ) -> Self {
         Self {
             semantics,
             resolution,
+            module,
             worklist: Vec::new(),
             seen: BTreeSet::new(),
         }
@@ -499,7 +518,7 @@ impl<'a> Generator<'a> {
             .iter()
             .map(|field| {
                 let display = self.display_call(field.ty, &format!("value.{}", field.name));
-                format!("{} = $({display})", field.name)
+                format!("{}: $({display})", field.name)
             })
             .collect();
         format!("  \"{name}({})\"", pieces.join(", "))
@@ -570,7 +589,7 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// The interned `list(u8)` type used by `bytes.to_list()`.
+    /// The interned `list[u8]` type used by `bytes.to_list()`.
     fn list_u8(&self) -> Option<TypeId> {
         self.semantics
             .types
@@ -592,18 +611,19 @@ impl<'a> Generator<'a> {
             Type::Str => "str".to_owned(),
             Type::Bytes => "bytes".to_owned(),
             Type::Void => "void".to_owned(),
+            Type::Unit => "unit".to_owned(),
             Type::Dyn => "dyn".to_owned(),
             Type::Numeric(name) => name,
-            Type::List(element) => format!("list({})", self.type_syntax(element)),
+            Type::List(element) => format!("list[{}]", self.type_syntax(element)),
             Type::Array(element, length) => {
-                format!("array({}, {length})", self.type_syntax(element))
+                format!("array[{}, {length}]", self.type_syntax(element))
             }
             Type::Data(symbol) | Type::Enum(symbol) => {
-                self.resolution.symbols[symbol.0].name.clone()
+                type_names::visible(symbol, self.module, self.semantics, self.resolution)
             }
             Type::Result(ok, err) => {
                 format!(
-                    "result({}, {})",
+                    "result[{}, {}]",
                     self.type_syntax(ok),
                     self.type_syntax(err)
                 )
@@ -621,6 +641,7 @@ impl<'a> Generator<'a> {
             Type::Bytes => "bytes".to_owned(),
             Type::Dyn => "dyn".to_owned(),
             Type::Void => "void".to_owned(),
+            Type::Unit => "unit".to_owned(),
             Type::Numeric(name) => format!("num_{}", sanitize(&name)),
             Type::Optional(inner) => format!("opt_{}", self.mangle(inner)),
             Type::Result(ok, err) => format!("res_{}_{}", self.mangle(ok), self.mangle(err)),
@@ -629,6 +650,7 @@ impl<'a> Generator<'a> {
             Type::Map(key, value) => format!("map_{}_{}", self.mangle(key), self.mangle(value)),
             Type::Pointer(inner) => format!("ptr_{}", self.mangle(inner)),
             Type::Vutcon(inner) => format!("vutcon_{}", self.mangle(inner)),
+            Type::Channel(inner) => format!("channel_{}", self.mangle(inner)),
             Type::Future(inner) => format!("future_{}", self.mangle(inner)),
             Type::Resource(inner) => format!("resource_{}", self.mangle(inner)),
             Type::Data(symbol) => format!("d{}", symbol.0),

@@ -2,9 +2,6 @@
 #
 # Pure high-level API; native access is limited to platform primitives.
 #
-# v1 models `OsError` as a stable integer code so error payloads stay free of
-# managed fields; `os.message(error)` produces deterministic human-readable
-# text. The code registry is fixed and versioned with the stdlib.
 import _internal.abi
 
 @link_name("vut_rt_os_name_v1")
@@ -34,54 +31,48 @@ extern "C" fn _native_current_exe() -> bytes
 @link_name("vut_rt_os_cpu_count_v1")
 extern "C" fn _native_cpu_count() -> usize
 
-# Stable error codes shared across modules.
-type OsError = int
+enum OsErrorKind:
+  not_found
+  permission_denied
+  invalid_input
+  invalid_encoding
+  unsupported
+  io
+  other
 
-fn message(error: OsError) -> str:
-  text: str = if error == 1:
-    "not found"
-  elif error == 2:
-    "permission denied"
-  elif error == 3:
-    "already exists"
-  elif error == 4:
-    "invalid input"
-  elif error == 11:
-    "invalid data"
-  elif error == 8:
-    "unsupported operation"
-  else:
-    "native operation failed"
-  text
+data OsError:
+  kind: OsErrorKind
+  message: str
 
-fn _ok_text(text: str) -> result(str, OsError):
-  ok(text)
+fn _kind(code: int) -> OsErrorKind:
+  if code == 1:
+    return OsErrorKind.not_found
+  if code == 2:
+    return OsErrorKind.permission_denied
+  if code == 4:
+    return OsErrorKind.invalid_input
+  if code == 11:
+    return OsErrorKind.invalid_encoding
+  if code == 8:
+    return OsErrorKind.unsupported
+  if code >= 9 and code <= 13:
+    return OsErrorKind.io
+  OsErrorKind.other
 
-fn _err_text(code: OsError) -> result(str, OsError):
-  err(code)
+fn _error(raw: bytes) -> OsError:
+  OsError(kind: _kind(abi.status(raw)), message: abi.message(raw))
 
-fn _ok_flag() -> result(bool, OsError):
-  ok(true)
+fn _text(raw: bytes) -> result[str, OsError]:
+  if not abi.is_ok(raw):
+    return err(_error(raw))
+  match abi.payload(raw).to_str():
+    ok(text): ok(text)
+    err(error): err(OsError(kind: OsErrorKind.invalid_encoding, message: "invalid path encoding"))
 
-fn _err_flag(code: OsError) -> result(bool, OsError):
-  err(code)
-
-fn _text(raw: bytes) -> result(str, OsError):
-  status = abi.status(raw)
-  value: result(str, OsError) = if status != 0:
-    _err_text(status)
-  else:
-    match abi.payload(raw).to_str():
-      ok(text): _ok_text(text)
-      err(error): _err_text(11)
-  value
-
-fn _set_result(raw: bytes) -> result(bool, OsError):
-  value: result(bool, OsError) = if abi.is_ok(raw):
-    _ok_flag()
-  else:
-    _err_flag(abi.status(raw))
-  value
+fn _set_result(raw: bytes) -> result[unit, OsError]:
+  if not abi.is_ok(raw):
+    return err(_error(raw))
+  ok(unit)
 
 # Canonical platform name: `windows`, `linux`, or `macos`.
 fn name() -> str:
@@ -98,23 +89,23 @@ fn family() -> str:
   unsafe:
     _native_family()
 
-fn home_dir() -> result(str, OsError):
+fn home_dir() -> result[str, OsError]:
   unsafe:
     _text(_native_home_dir())
 
-fn temp_dir() -> result(str, OsError):
+fn temp_dir() -> result[str, OsError]:
   unsafe:
     _text(_native_temp_dir())
 
-fn current_dir() -> result(str, OsError):
+fn current_dir() -> result[str, OsError]:
   unsafe:
     _text(_native_current_dir())
 
-fn current_exe() -> result(str, OsError):
+fn current_exe() -> result[str, OsError]:
   unsafe:
     _text(_native_current_exe())
 
-fn set_current_dir(path: str) -> result(bool, OsError):
+fn set_current_dir(path: str) -> result[unit, OsError]:
   unsafe:
     _set_result(_native_set_current_dir(path))
 

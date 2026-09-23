@@ -34,21 +34,32 @@ project/
 
 ## 3. Basic Entry
 
-Conceptual format:
+Current format (`lock-version = 2`):
 
 ```toml
+lock-version = 2
+
 [[package]]
 name = "math"
 version = "1.3.2"
 source = "registry:math"
 revision = "63a9d..."
+checksum = "blake3-hex"
+dependencies = ["core 1.0.0 registry:core"]
+
+[[package.native]]
+target = "x86_64-pc-windows-msvc"
+url = "https://example.com/math/1.3.2/math.lib"
+checksum = "sha256:..."
+size = 123456
+system_libraries = ["user32"]
 ```
 
-A checksum may also be recorded:
-
-```toml
-checksum = "..."
-```
+* `checksum` is the BLAKE3 checksum of the pinned package source.
+* `[[package.native]]` entries pin resolved native artifacts per target.
+* `native` entries are omitted entirely when a package has no native source.
+* Native artifacts use a trusted, registry/CI-provided SHA-256 expectations, not
+  a self-computed value.
 
 ---
 
@@ -159,8 +170,8 @@ Conceptually:
 
 ```toml
 dependencies = [
-  "json 1.2.0",
-  "core-utils 2.0.1"
+  "json 1.2.0 registry:json",
+  "core-utils 2.0.1 github:nam/abc/core-utils"
 ]
 ```
 
@@ -197,15 +208,17 @@ An interrupted operation should not leave a partially written lockfile.
 
 ## 12. Lockfile Format Version
 
-The lockfile should include an explicit schema version.
-
-Recommended initial direction:
+The lockfile includes an explicit schema version:
 
 ```toml
-lock-version = 1
+lock-version = 2
 ```
 
 This field versions the lockfile representation, not the Vut package version.
+
+Version 2 adds per-target native artifact pinning (`[[package.native]]`).
+Version 1 lockfiles remain readable and are upgraded to version 2 on the next
+successful resolution or pinned install.
 
 ---
 
@@ -243,9 +256,23 @@ When a valid lockfile exists:
 vpm install
 ```
 
-should prefer the locked resolution.
+uses the pinned resolution:
 
-It must not query `latest` and unexpectedly upgrade dependencies.
+```text
+no version re-resolution
+no artifact re-resolution
+no silent upgrade
+```
+
+Each package is fetched at its pinned exact version and verified against the
+pinned revision and BLAKE3 checksum. Native artifacts are taken from the pinned
+`[[package.native]]` URL/SHA-256 for the requested target. If a pinned URL is
+unreachable and the artifact is not cached, install fails; it never searches for
+a replacement artifact.
+
+If the manifest requests a dependency that the lockfile does not pin, install
+fails and asks the user to run `vpm update`. Only `vpm update` (or an explicit
+add/remove resolution) rewrites the lockfile.
 
 ---
 
@@ -274,7 +301,15 @@ Do not silently accept modified source.
 
 ## 18. Missing Lockfile
 
-If no lockfile exists, VPM resolves dependencies from the manifest and creates one when appropriate.
+If the project has dependencies but no lockfile:
+
+```text
+vpm install  -> error: run `vpm update`
+```
+
+`vpm update`, `vpm add`, and `vpm remove` resolve from the manifest and create
+or rewrite the lockfile. A project with no dependencies writes an empty
+`lock-version = 2` lockfile.
 
 ---
 
@@ -291,10 +326,13 @@ Do not panic.
 1. Lockfiles are machine-managed.
 2. Lockfiles contain concrete versions.
 3. Source identity is preserved.
-4. Revision/checksum should verify remote immutability.
-5. Output is deterministic.
-6. Writes should be atomic.
-7. Lockfile format is versioned.
-8. Existing lock resolution is preferred for normal install/build.
-9. Remote mutation is an error.
-10. Lockfile corruption must never alter dependency semantics silently.
+4. Revision/checksum verify remote immutability.
+5. Native artifacts are pinned per target with a trusted SHA-256.
+6. Output is deterministic.
+7. Writes are atomic.
+8. Lockfile format is versioned (`lock-version = 2`).
+9. Normal install/build use the pinned resolution and never re-resolve.
+10. Only `update`/explicit resolution rewrites the lockfile.
+11. A dead pinned URL with a cold cache is an error, never a silent substitute.
+12. Remote mutation is an error.
+13. Lockfile corruption must never alter dependency semantics silently.

@@ -47,7 +47,7 @@ fn metadata_permissions_and_read_dir() {
         "import fs\nfn main():\n  p = \"{path}\"\n  match fs.write_str(p, \"abcde\"):\n    ok(flag): out(\"wrote\")\n    err(error): out(\"write-failed\")\n  match fs.metadata(p):\n    ok(meta): out(\"len=$(meta.len()) file=$(meta.is_file()) dir=$(meta.is_dir())\")\n    err(error): out(\"meta-failed\")\n  match fs.permissions(p):\n    ok(perm): out(\"readonly=$(perm.readonly())\")\n    err(error): out(\"perm-failed\")\n  match fs.read_dir(\"{dir}\"):\n    ok(entries):\n      out(\"entries=$(entries.len())\")\n      for entry in entries:\n        out(\"$(entry.name()) file=$(entry.is_file())\")\n    err(error): out(\"readdir-failed\")\n"
     );
     let (code, stdout, stderr) = run("fs_meta", &source);
-    assert_eq!(code, Some(0), "stderr={stderr}");
+    assert_eq!(code, Some(0), "stderr={stderr}\nstdout={stdout}");
     assert_eq!(
         stdout,
         "wrote\nlen=5 file=1 dir=0\nreadonly=0\nentries=1\nb.txt file=1\n"
@@ -60,7 +60,7 @@ fn file_satisfies_io_reader() {
     let dir = scratch("reader");
     let path = format!("{dir}/c.txt");
     let source = format!(
-        "import fs\nimport io\nimport fs at File\nfn read_via_io(p: str) -> result(str, fs.FsError):\n  file = File.open(p)?\n  outcome = io.read_to_str(file)\n  value: result(str, fs.FsError) = match outcome:\n    ok(text): ok(text)\n    err(error): err(fs.FsError(kind = fs.FsErrorKind.io, message = \"io failed\"))\n  value\nfn main():\n  p = \"{path}\"\n  ignored = fs.write_str(p, \"streamed text\")\n  match read_via_io(p):\n    ok(text): out(text)\n    err(error): out(\"read-failed\")\n"
+        "import fs\nimport io\nimport fs at File\nfn read_via_io(p: str) -> result[str, fs.FsError]:\n  file = File.open(p)?\n  outcome = io.read_to_str(file)\n  value: result[str, fs.FsError] = match outcome:\n    ok(text): ok(text)\n    err(error): err(fs.FsError(kind: fs.FsErrorKind.io, message: \"io failed\"))\n  value\nfn main():\n  p = \"{path}\"\n  ignored = fs.write_str(p, \"streamed text\")\n  match read_via_io(p):\n    ok(text): out(text)\n    err(error): out(\"read-failed\")\n"
     );
     let (code, stdout, stderr) = run("fs_reader", &source);
     assert_eq!(code, Some(0), "stderr={stderr}");

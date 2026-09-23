@@ -120,10 +120,10 @@ vpm add math@latest
 Given:
 
 ```text
-v0.9.0/
-v0.10.0/
-v1.0.0/
-v2.0.0-alpha.1/
+0.9.0/
+0.10.0/
+1.0.0/
+2.0.0-alpha.1/
 backup/
 latest/
 test/
@@ -190,7 +190,7 @@ vpm add math@1.2.0
 VPM resolves exactly:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 If that directory does not exist, resolution fails.
@@ -245,7 +245,7 @@ version: 1.2.0
 Remote package directory:
 
 ```text
-github.com/nam/abc/math/v1.2.0/
+github.com/nam/abc/math/1.2.0/
 ```
 
 ---
@@ -270,7 +270,7 @@ package name: math
 Version directory:
 
 ```text
-libs/math/v1.2.0/
+libs/math/1.2.0/
 ```
 
 ---
@@ -352,7 +352,7 @@ source structure
 For:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 manifest must contain:

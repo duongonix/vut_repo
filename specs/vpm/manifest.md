@@ -111,12 +111,18 @@ This imports as `webhttp` while preserving package identity `http`.
 
 ## 5. Package Version
 
-Manifest versions do not contain the remote-directory `v` prefix.
+Manifest versions are bare SemVer and match the version directory name.
 
 Correct:
 
 ```toml
 version = "1.2.0"
+```
+
+Version directory:
+
+```text
+1.2.0/
 ```
 
 Incorrect:
@@ -125,17 +131,41 @@ Incorrect:
 version = "v1.2.0"
 ```
 
-Remote storage may use:
+---
 
-```text
-v1.2.0/
+## 5a. Command-Line Entry Points
+
+Packages and projects declare command-line entry points with `[[bin]]`:
+
+```toml
+[[bin]]
+name = "math"
+path = "src/bin/math.vut"
 ```
 
-but the semantic version itself is:
+* `name` is the installed command name; it must be a Vut identifier.
+* `path` is relative to the package root, must live below `src/`, and must end
+  in `.vut`.
+* Bin names and paths must be unique within a manifest.
+
+A package may be library-only (with `src/mod.vut`), CLI-only (`[[bin]]` only),
+or both. There is no implicit `src/main.vut` entry. `src/lib.vut` is not an
+entry point.
+
+`vpm init` and `vpm new` scaffold a CLI package with a single `[[bin]]`.
+
+---
+
+## 5b. Library Entry Point
+
+A library package exposes `import <package>` through:
 
 ```text
-1.2.0
+src/mod.vut
 ```
+
+`src/mod.vut` is optional. When present it is the package namespace root. When
+absent the package cannot be imported and must be CLI-only.
 
 ---
 
@@ -313,6 +343,8 @@ dependency names
 dependency versions
 dependency source syntax
 duplicate package namespace
+bin names, paths, and uniqueness
+`[native] build` versus `[native] libraries` exclusivity
 unsupported fields where critical
 ```
 
@@ -332,7 +364,7 @@ expected format
 When downloading:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 its manifest must contain:
@@ -391,8 +423,8 @@ must not be silently ignored unless compatibility rules explicitly allow it.
 
 ## 16a. Native Artifacts
 
-A project that declares `extern "C"` functions may link local native static
-libraries through the `[native]` table:
+Local projects that declare `extern "C"` functions may link prebuilt native
+static libraries through the `[native]` table:
 
 ```toml
 [native]
@@ -404,8 +436,19 @@ system_libraries = ["user32"]
   project root.
 * `system_libraries` are platform system library names passed to the linker.
 
-Remote artifact download, checksum verification, and dynamic libraries are
-deferred. Their intended future manifest shape and linking semantics are
+This local form is for development only. Registry packages must not use it to
+publish arbitrary prebuilt binaries.
+
+A registry package instead publishes native *source* and points at its build
+description:
+
+```toml
+[native]
+build = "native/build.toml"
+```
+
+`build` and `libraries` are mutually exclusive. The `native/build.toml` schema
+(structured backends plus per-target overrides) and artifact resolution are
 described by:
 
 ```text
@@ -441,7 +484,7 @@ Do not invent their semantics during implementation.
 1. `vpm.toml` uses TOML.
 2. Package name and version belong under `[package]`.
 3. Versions use SemVer.
-4. Manifest versions omit the `v` directory prefix.
+4. Version directories and manifest versions use bare SemVer with no `v` prefix.
 5. Default-registry dependencies may use compact string syntax.
 6. Self-hosted dependencies use structured dependency tables.
 7. GitHub is the default self-host provider.
@@ -452,3 +495,6 @@ Do not invent their semantics during implementation.
 12. Remote manifest identity must match package path/version.
 13. VPM should preserve existing manifest formatting where practical.
 14. TOML and SemVer must use proven libraries.
+15. Command-line entry points use `[[bin]]`; the library entry is `src/mod.vut`.
+16. Registry packages declare native source with `[native] build`; local
+    projects may declare `[native] libraries`; the two are mutually exclusive.

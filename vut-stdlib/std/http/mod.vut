@@ -12,8 +12,8 @@ import time
 
 opaque data HttpClient
 
-@link_name("vut_rt_http_client_create")
-extern "C" fn _client_create(timeout_nanos: usize, redirects: usize) -> resource(HttpClient)
+@link_name("vut_rt_http_client_create_v1")
+extern "C" fn _client_create(timeout_nanos: usize, redirects: usize) -> resource[HttpClient]
 
 enum Method:
   get
@@ -56,7 +56,7 @@ fn Status.is_server_error() -> bool:
 # Headers keep every value (multi-value semantics) and match names
 # case-insensitively, as HTTP requires.
 data Headers:
-  lines: list(str) = @()
+  lines: list[str] = @[]
 
 fn _line_name(line: str) -> str:
   stop = line.find(":")
@@ -75,11 +75,11 @@ fn _line_value(line: str) -> str:
   value.trim()
 
 fn headers_parse(raw: str) -> Headers:
-  lines: list(str) = @()
+  lines: list[str] = @[]
   for line in raw.split("\n"):
     if line.trim().byte_len() > 0:
       lines.push(line)
-  Headers(lines = lines)
+  Headers(lines: lines)
 
 fn Headers.raw() -> str:
   text = ""
@@ -102,7 +102,7 @@ fn Headers.append(name: str, value: str):
 
 fn Headers.set(name: str, value: str):
   wanted = name.to_lower()
-  kept: list(str) = @()
+  kept: list[str] = @[]
   for line in self.lines:
     if _line_name(line) != wanted:
       kept.push(line)
@@ -111,7 +111,7 @@ fn Headers.set(name: str, value: str):
 
 fn Headers.remove(name: str):
   wanted = name.to_lower()
-  kept: list(str) = @()
+  kept: list[str] = @[]
   for line in self.lines:
     if _line_name(line) != wanted:
       kept.push(line)
@@ -171,10 +171,10 @@ data Response:
 fn Response.bytes() -> bytes:
   self.payload
 
-fn Response.text() -> result(str, Error):
-  value: result(str, Error) = match self.payload.to_str():
+fn Response.text() -> result[str, Error]:
+  value: result[str, Error] = match self.payload.to_str():
     ok(text): ok(text)
-    err(error): err(Error(kind = ErrorKind.body, message = "response body is not valid UTF-8"))
+    err(error): err(Error(kind: ErrorKind.body, message: "response body is not valid UTF-8"))
   value
 
 fn Response.is_success() -> bool:
@@ -188,26 +188,26 @@ fn Response.header(name: str) -> str:
 # `Request.send_stream`.
 fn Response.stream() -> Stream:
   unsafe:
-    return Stream(inner = _native_stream_chunk(self.payload))
+    return Stream(inner: _native_stream_chunk(self.payload))
 
 fn _text_or(raw: bytes, fallback: str) -> str:
   match raw.to_str():
     ok(value): value
     err(error): fallback
 
-fn _decode_ok(raw: bytes) -> result(Response, Error):
-  status = Status(code = raw.read_i32_le(4))
+fn _decode_ok(raw: bytes) -> result[Response, Error]:
+  status = Status(code: raw.read_i32_le(4))
   headers_len = raw.read_i32_le(8)
   headers_end = 12 + headers_len
   headers = headers_parse(_text_or(raw.slice(12, headers_end), ""))
-  ok(Response(status = status, headers = headers, payload = raw.slice(headers_end, raw.len())))
+  ok(Response(status: status, headers: headers, payload: raw.slice(headers_end, raw.len())))
 
-fn _decode_bad(raw: bytes, kind: int) -> result(Response, Error):
-  err(Error(kind = _kind(kind), message = _text_or(raw.slice(4, raw.len()), "http request failed")))
+fn _decode_bad(raw: bytes, kind: int) -> result[Response, Error]:
+  err(Error(kind: _kind(kind), message: _text_or(raw.slice(4, raw.len()), "http request failed")))
 
-fn _decode(raw: bytes) -> result(Response, Error):
+fn _decode(raw: bytes) -> result[Response, Error]:
   kind = raw.read_i32_le(0)
-  value: result(Response, Error) = if kind == 0:
+  value: result[Response, Error] = if kind == 0:
     _decode_ok(raw)
   else:
     _decode_bad(raw, kind)
@@ -216,8 +216,8 @@ fn _decode(raw: bytes) -> result(Response, Error):
 data Request:
   method: Method
   url: str
-  headers: Headers = Headers(lines = @())
-  query: list(str) = @()
+  headers: Headers = Headers(lines: @[])
+  query: list[str] = @[]
   payload: bytes = "".to_bytes()
   timeout_nanos: usize = 0
   redirects: usize = 0
@@ -238,12 +238,12 @@ fn Request.range(start: int, end: int):
   self.headers.set("Range", "bytes=$start-$end")
 
 fn Request.timeout(duration: time.Duration):
-  self.timeout_nanos = duration.nanos
+  self.timeout_nanos = duration.nanos.to_usize()
 
 fn Request.with_redirects(limit: usize):
   self.redirects = limit
 
-fn _query_raw(values: list(str)) -> str:
+fn _query_raw(values: list[str]) -> str:
   text = ""
   for value in values:
     text = text + value + "\n"
@@ -257,60 +257,60 @@ fn _query_raw(values: list(str)) -> str:
 opaque data HttpStream
 
 @link_name("vut_rt_http_send_v1")
-extern "C" async fn _native_send(client: ptr(HttpClient), method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> bytes
+extern "C" async fn _native_send(client: ptr[HttpClient], method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> bytes
 
 @link_name("vut_rt_http_stream_send_v1")
-extern "C" fn _native_stream_send(client: ptr(HttpClient), method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> resource(HttpStream)
+extern "C" fn _native_stream_send(client: ptr[HttpClient], method: str, url: str, headers: str, query: str, body: bytes, timeout_nanos: usize, redirects: usize) -> resource[HttpStream]
 
 @link_name("vut_rt_http_stream_read_v1")
-extern "C" async fn _native_stream_read(stream: ptr(HttpStream)) -> bytes
+extern "C" async fn _native_stream_read(stream: ptr[HttpStream]) -> bytes
 
 @link_name("vut_rt_http_stream_chunk_v1")
-extern "C" fn _native_stream_chunk(body: bytes) -> resource(HttpStream)
+extern "C" fn _native_stream_chunk(body: bytes) -> resource[HttpStream]
 
 data Stream:
-  inner: resource(HttpStream)
+  inner: resource[HttpStream]
 
 # A `Client` owns native connection-pool state. Construct it with `client(...)`.
 data Client:
-  handle: resource(HttpClient)
+  handle: resource[HttpClient]
   timeout_nanos: usize
   redirects: usize
 
 fn client(timeout: time.Duration, redirects: usize) -> Client:
   unsafe:
-    return Client(handle = _client_create(timeout.nanos, redirects), timeout_nanos = timeout.nanos, redirects = redirects)
+    return Client(handle: _client_create(timeout.nanos.to_usize(), redirects), timeout_nanos: timeout.nanos.to_usize(), redirects: redirects)
 
 fn default_client() -> Client:
   client(time.nanoseconds(0), 0)
 
 fn Client.request(method: Method, url: str) -> Request:
-  Request(method = method, url = url, timeout_nanos = self.timeout_nanos, redirects = self.redirects)
+  Request(method: method, url: url, timeout_nanos: self.timeout_nanos, redirects: self.redirects)
 
-async fn Client.execute(request: Request) -> result(Response, Error):
+async fn Client.execute(request: Request) -> result[Response, Error]:
   raw: bytes = "".to_bytes()
   unsafe:
     raw = await _native_send(self.handle, request.method.text(), request.url, request.headers.raw(), _query_raw(request.query), request.payload, request.timeout_nanos, request.redirects)
   _decode(raw)
 
-async fn Client.get(url: str) -> result(Response, Error):
+async fn Client.get(url: str) -> result[Response, Error]:
   await self.execute(self.request(Method.get, url))
 
-async fn Client.head(url: str) -> result(Response, Error):
+async fn Client.head(url: str) -> result[Response, Error]:
   await self.execute(self.request(Method.head, url))
 
-async fn Client.delete(url: str) -> result(Response, Error):
+async fn Client.delete(url: str) -> result[Response, Error]:
   await self.execute(self.request(Method.delete, url))
 
-async fn Client.options(url: str) -> result(Response, Error):
+async fn Client.options(url: str) -> result[Response, Error]:
   await self.execute(self.request(Method.options, url))
 
-async fn Client.post(url: str, body: str) -> result(Response, Error):
+async fn Client.post(url: str, body: str) -> result[Response, Error]:
   request = self.request(Method.post, url)
   request.body_text(body)
   await self.execute(request)
 
-async fn Client.post_bytes(url: str, body: bytes) -> result(Response, Error):
+async fn Client.post_bytes(url: str, body: bytes) -> result[Response, Error]:
   request = self.request(Method.post, url)
   request.body(body)
   await self.execute(request)
@@ -318,12 +318,12 @@ async fn Client.post_bytes(url: str, body: bytes) -> result(Response, Error):
 # Streams the response body of any request (bounded memory).
 fn Client.send_stream(request: Request) -> Stream:
   unsafe:
-    return Stream(inner = _native_stream_send(self.handle, request.method.text(), request.url, request.headers.raw(), _query_raw(request.query), request.payload, request.timeout_nanos, request.redirects))
+    return Stream(inner: _native_stream_send(self.handle, request.method.text(), request.url, request.headers.raw(), _query_raw(request.query), request.payload, request.timeout_nanos, request.redirects))
 
 fn Client.get_stream(url: str) -> Stream:
   self.send_stream(self.request(Method.get, url))
 
-async fn Request.send() -> result(Response, Error):
+async fn Request.send() -> result[Response, Error]:
   config = default_client()
   await config.execute(self)
 
@@ -331,76 +331,76 @@ fn Request.send_stream() -> Stream:
   config = default_client()
   config.send_stream(self)
 
-async fn get(url: str) -> result(Response, Error):
+async fn get(url: str) -> result[Response, Error]:
   config = default_client()
   await config.get(url)
 
-async fn head(url: str) -> result(Response, Error):
+async fn head(url: str) -> result[Response, Error]:
   config = default_client()
   await config.head(url)
 
-async fn delete(url: str) -> result(Response, Error):
+async fn delete(url: str) -> result[Response, Error]:
   config = default_client()
   await config.delete(url)
 
-async fn options(url: str) -> result(Response, Error):
+async fn options(url: str) -> result[Response, Error]:
   config = default_client()
   await config.options(url)
 
-async fn get_range(url: str, start: int, end: int) -> result(Response, Error):
+async fn get_range(url: str, start: int, end: int) -> result[Response, Error]:
   request = default_request(Method.get, url)
   request.range(start, end)
   config = default_client()
   await config.execute(request)
 
 fn default_request(method: Method, url: str) -> Request:
-  Request(method = method, url = url)
+  Request(method: method, url: url)
 
-async fn post(url: str, body: str) -> result(Response, Error):
+async fn post(url: str, body: str) -> result[Response, Error]:
   config = default_client()
   await config.post(url, body)
 
-async fn post_bytes(url: str, body: bytes) -> result(Response, Error):
+async fn post_bytes(url: str, body: bytes) -> result[Response, Error]:
   config = default_client()
   await config.post_bytes(url, body)
 
-async fn put(url: str, body: str) -> result(Response, Error):
+async fn put(url: str, body: str) -> result[Response, Error]:
   request = default_request(Method.put, url)
   request.body_text(body)
   config = default_client()
   await config.execute(request)
 
-async fn put_bytes(url: str, body: bytes) -> result(Response, Error):
+async fn put_bytes(url: str, body: bytes) -> result[Response, Error]:
   request = default_request(Method.put, url)
   request.body(body)
   config = default_client()
   await config.execute(request)
 
-async fn patch(url: str, body: str) -> result(Response, Error):
+async fn patch(url: str, body: str) -> result[Response, Error]:
   request = default_request(Method.patch, url)
   request.body_text(body)
   config = default_client()
   await config.execute(request)
 
-async fn patch_bytes(url: str, body: bytes) -> result(Response, Error):
+async fn patch_bytes(url: str, body: bytes) -> result[Response, Error]:
   request = default_request(Method.patch, url)
   request.body(body)
   config = default_client()
   await config.execute(request)
 
-fn _ok_chunk(payload: bytes) -> result(bytes, Error):
+fn _ok_chunk(payload: bytes) -> result[bytes, Error]:
   ok(payload)
 
-fn _eof_chunk() -> result(bytes, Error):
+fn _eof_chunk() -> result[bytes, Error]:
   ok("".to_bytes())
 
-fn _err_chunk(kind: int, message: str) -> result(bytes, Error):
-  err(Error(kind = _kind(kind), message = message))
+fn _err_chunk(kind: int, message: str) -> result[bytes, Error]:
+  err(Error(kind: _kind(kind), message: message))
 
-fn _read_decode(raw: bytes) -> result(bytes, Error):
+fn _read_decode(raw: bytes) -> result[bytes, Error]:
   kind = raw.read_i32_le(0)
   payload = raw.slice(4, raw.len())
-  value: result(bytes, Error) = if kind == 0:
+  value: result[bytes, Error] = if kind == 0:
     _ok_chunk(payload)
   elif kind == 1:
     _eof_chunk()
@@ -408,7 +408,7 @@ fn _read_decode(raw: bytes) -> result(bytes, Error):
     _err_chunk(kind, _text_or(payload, "stream read failed"))
   value
 
-async fn Stream.read() -> result(bytes, Error):
+async fn Stream.read() -> result[bytes, Error]:
   value: bytes = "".to_bytes()
   unsafe:
     value = await _native_stream_read(self.inner)
@@ -417,3 +417,4 @@ async fn Stream.read() -> result(bytes, Error):
 fn get_stream(url: str) -> Stream:
   config = default_client()
   config.get_stream(url)
+

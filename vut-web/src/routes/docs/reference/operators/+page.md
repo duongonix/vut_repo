@@ -22,7 +22,7 @@ order: 18
 
 ## Context matters
 
-`@(...)` constructs a list. `$(...)` interpolates an expression inside a template string. They are not interchangeable record constructors.
+`@[...]` constructs a list. `$(...)` interpolates an expression inside a template string. They are not interchangeable record constructors.
 
 ## Grouping and await
 

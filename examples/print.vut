@@ -14,17 +14,17 @@ enum Role:
   guest(label: str)
 
 fn main():
-  user = User(name = "ann", age = 30)
+  user = User(name: "ann", age: 30)
   out(user)
   out("welcome $user")
 
-  scores = @(10, 20, 30)
+  scores = @[10, 20, 30]
   out("scores:", scores)
 
   out(Role.admin)
-  out(Role.guest(label = "trial"))
+  out(Role.guest(label: "trial"))
 
-  checked: result(int, str) = ok(1)
+  checked: result[int, str] = ok(1)
   out(checked)
 
-  out(@(1, 2), @(3, 4))
+  out(@[1, 2], @[3, 4])

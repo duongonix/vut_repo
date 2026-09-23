@@ -207,7 +207,7 @@ Tables phải:
 Reference page cần hỗ trợ component dạng:
 
 ```text
-fn read(path: str) -> result(bytes, Error)
+fn read(path: str) -> result[bytes, Error]
 ```
 
 Sau đó:

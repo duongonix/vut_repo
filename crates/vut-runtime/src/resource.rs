@@ -1,6 +1,6 @@
 //! Owned opaque native resource handles.
 //!
-//! A `resource(T)` value is move-only with a single owner. The runtime stores a
+//! A `resource[T]` value is move-only with a single owner. The runtime stores a
 //! pointer plus the native destructor registered by the producing library; when
 //! the owning Vut value is dropped the runtime invokes the destructor exactly
 //! once. There is no reference counting: duplication is rejected by the
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn vut_rt_resource_new_v1(
 }
 
 /// Returns the native pointer wrapped by a live resource handle without
-/// consuming it. Used when a borrowed `resource(T)` crosses the ABI as `ptr(T)`.
+/// consuming it. Used when a borrowed `resource[T]` crosses the ABI as `ptr[T]`.
 ///
 /// # Safety
 /// `resource` must be null or a live handle returned by

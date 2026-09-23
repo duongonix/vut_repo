@@ -43,7 +43,7 @@ fn run(source: &str) -> (Option<i32>, String) {
 
 #[test]
 fn multi_statement_arms_and_nested_match() {
-    let source = "data Pair:\n  name: str\n  kind: int\n\nenum Kind:\n  first\n  other\n\nfn describe(pair: Pair) -> str:\n  match pair.kind:\n    0:\n      value = pair.name\n      \"first:$value\"\n    _:\n      count = pair.kind\n      \"other:$count\"\n\nfn nested(left: Kind, right: int) -> str:\n  match left:\n    first:\n      match right:\n        0: \"first-zero\"\n        _: \"first-other\"\n    other: \"other\"\n\nfn reduce(outcome: result(str, int)) -> str:\n  match outcome:\n    ok(text):\n      upper = text\n      upper\n    err(code): \"error\"\n\nfn main():\n  out(describe(Pair(name = \"a\", kind = 0)))\n  out(describe(Pair(name = \"b\", kind = 5)))\n  out(nested(Kind.first, 0))\n  out(nested(Kind.first, 9))\n  out(nested(Kind.other, 0))\n  value: result(str, int) = ok(\"done\")\n  out(reduce(value))\n";
+    let source = "data Pair:\n  name: str\n  kind: int\n\nenum Kind:\n  first\n  other\n\nfn describe(pair: Pair) -> str:\n  match pair.kind:\n    0:\n      value = pair.name\n      \"first:$value\"\n    _:\n      count = pair.kind\n      \"other:$count\"\n\nfn nested(left: Kind, right: int) -> str:\n  match left:\n    first:\n      match right:\n        0: \"first-zero\"\n        _: \"first-other\"\n    other: \"other\"\n\nfn reduce(outcome: result[str, int]) -> str:\n  match outcome:\n    ok(text):\n      upper = text\n      upper\n    err(code): \"error\"\n\nfn main():\n  out(describe(Pair(name: \"a\", kind: 0)))\n  out(describe(Pair(name: \"b\", kind: 5)))\n  out(nested(Kind.first, 0))\n  out(nested(Kind.first, 9))\n  out(nested(Kind.other, 0))\n  value: result[str, int] = ok(\"done\")\n  out(reduce(value))\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(
@@ -62,7 +62,7 @@ fn assignment_value_can_be_an_indented_block() {
 
 #[test]
 fn managed_values_in_block_arms_and_assignment_do_not_leak() {
-    let source = "data Box:\n  name: str\n\nfn pick(kind: int) -> str:\n  match kind:\n    0:\n      item = Box(name = \"hello\")\n      item.name\n    _:\n      other = Box(name = \"world\")\n      text = other.name\n      text\n\nfn build() -> str:\n  value: str =\n    first = Box(name = \"a\")\n    second = Box(name = \"b\")\n    first.name + second.name\n  value\n\nfn main():\n  out(pick(0))\n  out(pick(1))\n  out(\"build=$(build())\")\n";
+    let source = "data Box:\n  name: str\n\nfn pick(kind: int) -> str:\n  match kind:\n    0:\n      item = Box(name: \"hello\")\n      item.name\n    _:\n      other = Box(name: \"world\")\n      text = other.name\n      text\n\nfn build() -> str:\n  value: str =\n    first = Box(name: \"a\")\n    second = Box(name: \"b\")\n    first.name + second.name\n  value\n\nfn main():\n  out(pick(0))\n  out(pick(1))\n  out(\"build=$(build())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,

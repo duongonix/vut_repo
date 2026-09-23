@@ -22,8 +22,8 @@ async fn read_age() -> int:
 # An async method with the implicit receiver.
 async fn User.with_name(name: str) -> User:
   User(
-    name = name,
-    age = self.age
+    name: name,
+    age: self.age
   )
 
 # --- Async composition -----------------------------------------------------
@@ -35,11 +35,11 @@ async fn compute_total() -> int:
   first + second
 
 # Result + await: `await` waits for the computation, `?` propagates an error.
-async fn load_age() -> result(int, str):
+async fn load_age() -> result[int, str]:
   age = await read_age()
   ok(age)
 
-async fn load_name() -> result(str, str):
+async fn load_name() -> result[str, str]:
   name = await fetch_name()
   ok(name)
 
@@ -77,12 +77,12 @@ async fn main():
   out("name length: $(await load_name_len())")
 
   # await inside a list literal.
-  names: list(str) = @(await fetch_name(), greeting)
+  names: list[str] = @[await fetch_name(), greeting]
   for name in names:
     out("name: $name")
 
   # Async method call with the implicit receiver, then field access.
-  base = User(name = "Nam", age = 20)
+  base = User(name: "Nam", age: 20)
   out(base.label())
   renamed = await base.with_name("Ha")
   out(renamed.name)

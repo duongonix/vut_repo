@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import { sveltepress } from '@sveltepress/vite';
 import { markdownHighlighter } from './src/lib/server/highlight.ts';
 import { docsHeadings } from './src/lib/server/headings.ts';
+import { accessibleTables } from './src/lib/server/tables.ts';
 
 export default defineConfig({
   plugins: [
@@ -14,7 +15,7 @@ export default defineConfig({
         pageLayout: resolve('src/lib/components/docs/PageLayout.svelte').replaceAll('\\', '/'),
         vitePlugins: [],
         highlighter: markdownHighlighter,
-        rehypePlugins: [docsHeadings]
+        rehypePlugins: [docsHeadings, accessibleTables]
       },
       pagefind: { rootSelector: '[data-pagefind-body]', forceLanguage: 'en' }
     })

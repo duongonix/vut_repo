@@ -56,21 +56,28 @@ Do not create one native library per stdlib module.
 All exported runtime symbols use:
 
 ```text
-vut_rt_<module>_<operation>
+vut_rt_<module>_<operation>_vN
 ```
+
+`_vN` is the ABI revision (currently `_v1`). A symbol that changes its ABI
+contract must bump `N` or add a new symbol; existing `_vN` symbols keep their
+contract. The runtime also exports `vut_rt_abi_version_v1() -> u32` (the ABI
+revision) and the compiler checks the installed `manifest.json:abi_version`
+against it; a mismatch fails with `runtime ABI mismatch`. See
+`specs/ffi/06-native-abi-v1.md` for the ABI versioning policy.
 
 Examples:
 
 ```text
-vut_rt_fs_exists
-vut_rt_fs_read
-vut_rt_fs_write
+vut_rt_fs_exists_v1
+vut_rt_fs_read_v1
+vut_rt_fs_write_v1
 
-vut_rt_os_home_dir
+vut_rt_os_home_dir_v1
 
-vut_rt_time_now
+vut_rt_time_now_v1
 
-vut_rt_process_spawn
+vut_rt_process_spawn_v1
 ```
 
 Avoid arbitrary symbol naming.
@@ -84,14 +91,16 @@ Native functions are declared internally using stable C ABI.
 Example:
 
 ```vut
-@link_name("vut_rt_fs_exists")
+@link_name("vut_rt_fs_exists_v1")
 extern "C" fn _native_exists(
-  path: ptr(u8),
+  path: ptr[u8],
   path_len: usize
 ) -> bool
 ```
 
-The exact signature must match the native ABI contract.
+The exact signature must match the native ABI contract. `bool` maps to the target
+C ABI's C `_Bool`; the Rust export must use the matching C `_Bool` type
+(`bool` in Rust is ABI-compatible with C `_Bool` for `extern "C"`).
 
 Native declarations should normally remain under `_internal`.
 
@@ -183,6 +192,27 @@ reuse a common buffer ownership mechanism instead of inventing a different mecha
 
 ---
 
+## 8.1 Runtime Handle ABI (Vut-internal)
+
+The compiler, the stdlib, and the official runtime additionally share the
+**Runtime Handle ABI**: `str`, `bytes`, `list[T]`, and `resource[T]` cross the
+boundary as a single runtime-owned handle pointer.
+
+- Parameters are **borrowed** for the call duration; returned handles **transfer
+  ownership** to Vut.
+- The runtime provides retain/release entry points; native code must not free a
+  Vut handle with a different allocator.
+- This representation is **not** public for arbitrary third-party C. Public C
+  APIs use `ptr[u8] + usize` (see `specs/ffi/06-native-abi-v1.md`).
+
+## 8.2 Pointer width
+
+`usize`/`isize` and `ptr[T]` use the **target pointer width**. Native runtime
+signatures must use `usize`/`isize` (not a hard-coded 64-bit integer) so that
+non-64-bit targets remain correct.
+
+---
+
 ## 9. Errors
 
 Do not pass Rust error objects through C ABI.
@@ -200,7 +230,7 @@ Vut internal conversion
 ↓
 domain error
 ↓
-result(T, E)
+result[T, E]
 ```
 
 Example:

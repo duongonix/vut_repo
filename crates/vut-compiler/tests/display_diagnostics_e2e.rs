@@ -41,17 +41,17 @@ fn compile_error(source: &str) -> String {
 
 #[test]
 fn out_argument_type_error_is_reported() {
-    let message = compile_error("fn main():\n  nums = @(1, 2, 3)\n  out(nums.join(\"-\"))\n");
+    let message = compile_error("fn main():\n  nums = @[1, 2, 3]\n  out(nums.join(\"-\"))\n");
     assert!(
         message.contains("E1028"),
-        "join on list(int) must be reported, not hidden: {message}"
+        "join on list[int] must be reported, not hidden: {message}"
     );
 }
 
 #[test]
 fn interpolation_type_error_is_reported() {
     let message =
-        compile_error("fn main():\n  nums = @(1, 2, 3)\n  out(\"value=$(nums.nonexistent())\")\n");
+        compile_error("fn main():\n  nums = @[1, 2, 3]\n  out(\"value=$(nums.nonexistent())\")\n");
     assert!(
         message.contains("E2005"),
         "an unknown method in interpolation must be reported: {message}"

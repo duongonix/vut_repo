@@ -43,7 +43,7 @@ fn run(source: &str) -> (Option<i32>, String) {
 
 #[test]
 fn bytes_buffer_operations() {
-    let source = "fn main():\n  blob = bytes()\n  blob.push(104)\n  blob.push(105)\n  out(\"blob=$blob\")\n  raw: list(u8) = @(33, 33)\n  extra = bytes.from_list(raw)\n  blob.extend(extra)\n  out(\"extended=$blob\")\n  out(\"find=$(blob.find(extra))\")\n  out(\"starts=$(blob.starts_with(extra))\")\n  out(\"ends=$(blob.ends_with(extra))\")\n  blob.truncate(2)\n  out(\"truncated=$blob\")\n  blob.resize(4, 65)\n  out(\"resized=$blob\")\n";
+    let source = "fn main():\n  blob = bytes()\n  blob.push(104)\n  blob.push(105)\n  out(\"blob=$blob\")\n  raw: list[u8] = @[33, 33]\n  extra = bytes.from_list(raw)\n  blob.extend(extra)\n  out(\"extended=$blob\")\n  out(\"find=$(blob.find(extra))\")\n  out(\"starts=$(blob.starts_with(extra))\")\n  out(\"ends=$(blob.ends_with(extra))\")\n  blob.truncate(2)\n  out(\"truncated=$blob\")\n  blob.resize(4, 65)\n  out(\"resized=$blob\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(
@@ -54,7 +54,7 @@ fn bytes_buffer_operations() {
 
 #[test]
 fn bytes_hex_roundtrip_and_hex_error() {
-    let source = "fn main():\n  raw: list(u8) = @(104, 105, 65, 65)\n  blob = bytes.from_list(raw)\n  hex = blob.to_hex()\n  out(\"hex=$hex\")\n  match bytes.from_hex(hex):\n    ok(value): out(\"roundtrip=$value\")\n    err(error): out(\"error idx=$(error.index)\")\n  match bytes.from_hex(\"zz\"):\n    ok(value): out(\"bad=$value\")\n    err(error): out(\"bad idx=$(error.index)\")\n  match bytes.from_hex(\"abc\"):\n    ok(value): out(\"odd=$value\")\n    err(error): out(\"odd idx=$(error.index)\")\n";
+    let source = "fn main():\n  raw: list[u8] = @[104, 105, 65, 65]\n  blob = bytes.from_list(raw)\n  hex = blob.to_hex()\n  out(\"hex=$hex\")\n  match bytes.from_hex(hex):\n    ok(value): out(\"roundtrip=$value\")\n    err(error): out(\"error idx=$(error.index)\")\n  match bytes.from_hex(\"zz\"):\n    ok(value): out(\"bad=$value\")\n    err(error): out(\"bad idx=$(error.index)\")\n  match bytes.from_hex(\"abc\"):\n    ok(value): out(\"odd=$value\")\n    err(error): out(\"odd idx=$(error.index)\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(

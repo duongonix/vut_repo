@@ -256,7 +256,7 @@ Use longest-valid-token matching.
 Vut uses:
 
 ```text
-@(
+@[
 ```
 
 for lists. `$` is only valid inside a string literal, where it begins template
@@ -613,19 +613,19 @@ Inside parenthesized constructs such as:
 
 ```vut
 User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
 or:
 
 ```vut
-@(
+@[
   1,
   2,
   3
-)
+]
 ```
 
 newlines should not terminate expressions in the same way as top-level statement newlines.
@@ -753,6 +753,5 @@ memory corruption
 8. UTF-8 boundaries must remain correct.
 9. Lexer should run approximately O(n).
 10. Deferred syntax must not be lexically promoted without specification.
-
 
 

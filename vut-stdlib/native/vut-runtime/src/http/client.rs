@@ -2,7 +2,7 @@
 //!
 //! A shared default client (bounded redirects) is used when no explicit limit is
 //! requested; other (redirects, timeout) combinations get a cached client so
-//! connection pools are reused. `vut_rt_http_client_create` returns a resource
+//! connection pools are reused. `vut_rt_http_client_create_v1` returns a resource
 //! owning a cached client; the resource is borrowed (not moved) by requests.
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -33,7 +33,7 @@ fn build(redirects: usize, timeout_nanos: usize) -> reqwest::Client {
             u64::try_from(timeout_nanos).unwrap_or(u64::MAX),
         ));
     }
-    builder.build().expect("vut native HTTP client")
+    crate::guard::or_abort(builder.build(), "http client")
 }
 
 /// Returns a pooled client honoring the requested redirect and timeout policy.
@@ -72,7 +72,7 @@ unsafe extern "C" fn drop_client(op: *mut c_void) {
 /// # Safety
 /// Always safe to call; the returned handle must be released by the runtime.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vut_rt_http_client_create(
+pub unsafe extern "C" fn vut_rt_http_client_create_v1(
     timeout_nanos: usize,
     redirects: usize,
 ) -> *mut c_void {

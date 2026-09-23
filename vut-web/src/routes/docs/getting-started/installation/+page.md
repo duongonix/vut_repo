@@ -31,9 +31,12 @@ Display the available compiler commands:
 
 ```bash
 vut --help
+vut doctor
 ```
 
 These commands are the same on Windows, macOS, and Linux when a compatible toolchain is installed.
+
+`vut doctor` diagnoses runtime/startup objects, linker, and target prerequisites. A compiler executable alone may not be a complete native toolchain; keep its matching runtime and standard library together.
 
 <ContentTabs items={platforms} label="Toolchain platform" />
 

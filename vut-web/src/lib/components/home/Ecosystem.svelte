@@ -37,7 +37,7 @@
     { icon: Box, name: 'VPM', href: '/docs/tooling/vpm/' },
     { icon: Library, name: 'Standard Library', href: '/docs/stdlib/overview/' },
     { icon: Network, name: 'Vutcon', href: '/docs/advanced/vutcon/' },
-    { icon: Braces, name: 'Vutcom', href: '/docs/advanced/vutcom/' },
+    { icon: Braces, name: 'Receiver Functions', href: '/docs/advanced/receivers/' },
     { icon: Wrench, name: 'Developer Tooling', href: '/docs/tooling/vut-cli/' }
   ];
 </script>

@@ -13,6 +13,11 @@ pub enum CompileError {
     MissingEntry,
     InvalidEntry,
     Cache(vut_incremental::CacheError),
+    /// The installed runtime's ABI revision does not match the compiler's.
+    AbiMismatch {
+        compiler: u32,
+        runtime: u32,
+    },
 }
 impl fmt::Display for CompileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -29,6 +34,11 @@ impl fmt::Display for CompileError {
                 formatter.write_str("`main` must have no parameters and return `void` or `int`")
             }
             Self::Cache(error) => write!(formatter, "incremental cache failed: {error}"),
+            Self::AbiMismatch { compiler, runtime } => write!(
+                formatter,
+                "runtime ABI mismatch: compiler expects {compiler}, installed runtime is {runtime}; \
+                 reinstall or update Vut so the compiler and runtime match"
+            ),
         }
     }
 }

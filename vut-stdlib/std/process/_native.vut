@@ -1,0 +1,81 @@
+# Versioned native declarations; resources borrow only at extern pointer parameters.
+import _internal.count as count
+
+opaque data ChildHandle
+opaque data ReplyHandle
+opaque data PipeHandle
+
+@link_name("vut_rt_process_command_spawn_v1")
+extern "C" fn command_spawn(program: str, args: list[str], environment: list[str], removed: list[str], cwd: str, stdin: usize, stdout: usize, stderr: usize) -> resource[ChildHandle]
+
+@link_name("vut_rt_process_command_status_v1")
+extern "C" fn command_status(program: str, args: list[str], environment: list[str], removed: list[str], cwd: str, stdin: usize, stdout: usize, stderr: usize) -> resource[ReplyHandle]
+
+@link_name("vut_rt_process_command_output_v1")
+extern "C" fn command_output(program: str, args: list[str], environment: list[str], removed: list[str], cwd: str, stdin: usize, stdout: usize, stderr: usize) -> resource[ReplyHandle]
+
+@link_name("vut_rt_process_child_ok_v1")
+extern "C" fn child_ok(handle: ptr[ChildHandle]) -> usize
+
+@link_name("vut_rt_process_child_id_v1")
+extern "C" fn child_id(handle: ptr[ChildHandle]) -> u32
+
+@link_name("vut_rt_process_child_error_v1")
+extern "C" fn child_error(handle: ptr[ChildHandle]) -> bytes
+
+@link_name("vut_rt_process_child_wait_v1")
+extern "C" fn child_wait(handle: ptr[ChildHandle]) -> resource[ReplyHandle]
+
+@link_name("vut_rt_process_child_try_wait_v1")
+extern "C" fn child_try_wait(handle: ptr[ChildHandle]) -> resource[ReplyHandle]
+
+@link_name("vut_rt_process_child_kill_v1")
+extern "C" fn child_kill(handle: ptr[ChildHandle]) -> bytes
+
+@link_name("vut_rt_process_child_pipe_v1")
+extern "C" fn child_pipe(handle: ptr[ChildHandle], stream: usize) -> resource[PipeHandle]
+
+@link_name("vut_rt_process_reply_ok_v1")
+extern "C" fn reply_ok(handle: ptr[ReplyHandle]) -> usize
+
+@link_name("vut_rt_process_reply_ready_v1")
+extern "C" fn reply_ready(handle: ptr[ReplyHandle]) -> usize
+
+@link_name("vut_rt_process_reply_success_v1")
+extern "C" fn reply_success(handle: ptr[ReplyHandle]) -> usize
+
+@link_name("vut_rt_process_reply_has_code_v1")
+extern "C" fn reply_has_code(handle: ptr[ReplyHandle]) -> usize
+
+@link_name("vut_rt_process_reply_code_v1")
+extern "C" fn reply_code(handle: ptr[ReplyHandle]) -> i32
+
+@link_name("vut_rt_process_reply_stdout_v1")
+extern "C" fn reply_stdout(handle: ptr[ReplyHandle]) -> bytes
+
+@link_name("vut_rt_process_reply_stderr_v1")
+extern "C" fn reply_stderr(handle: ptr[ReplyHandle]) -> bytes
+
+@link_name("vut_rt_process_reply_error_v1")
+extern "C" fn reply_error(handle: ptr[ReplyHandle]) -> bytes
+
+@link_name("vut_rt_process_pipe_ok_v1")
+extern "C" fn pipe_ok(handle: ptr[PipeHandle]) -> usize
+
+@link_name("vut_rt_process_pipe_error_v1")
+extern "C" fn pipe_error(handle: ptr[PipeHandle]) -> bytes
+
+@link_name("vut_rt_process_pipe_read_v1")
+extern "C" fn pipe_read(handle: ptr[PipeHandle]) -> bytes
+
+@link_name("vut_rt_process_pipe_write_v2")
+extern "C" fn pipe_write(handle: ptr[PipeHandle], blob: bytes) -> resource[count.Handle]
+
+@link_name("vut_rt_process_pipe_flush_v1")
+extern "C" fn pipe_flush(handle: ptr[PipeHandle]) -> bytes
+
+@link_name("vut_rt_process_id_v1")
+extern "C" fn id() -> u32
+
+@link_name("vut_rt_process_exit_v1")
+extern "C" fn exit(code: i32)

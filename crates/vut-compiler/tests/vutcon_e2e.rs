@@ -51,7 +51,7 @@ fn spawn_and_await_scalar_results() {
 
 #[test]
 fn spawn_and_await_str_handle() {
-    let source = "fn text() -> str:\n  \"hi\"\n\nasync fn main():\n  t: vutcon(str) = vut(() => text())\n  out(\"s=$(await t)\")\n";
+    let source = "fn text() -> str:\n  \"hi\"\n\nasync fn main():\n  t: vutcon[str] = vut(() => text())\n  out(\"s=$(await t)\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "s=hi\n");
@@ -59,7 +59,7 @@ fn spawn_and_await_str_handle() {
 
 #[test]
 fn spawn_and_await_result_handle_with_propagation() {
-    let source = "fn load() -> result(int, int):\n  ok(7)\n\nasync fn get() -> result(int, int):\n  job: vutcon(result(int, int)) = vut(() => load())\n  inner = await job?\n  ok(inner)\n\nasync fn main():\n  match await get():\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
+    let source = "fn load() -> result[int, int]:\n  ok(7)\n\nasync fn get() -> result[int, int]:\n  job: vutcon[result[int, int]] = vut(() => load())\n  inner = await job?\n  ok(inner)\n\nasync fn main():\n  match await get():\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "ok=7\n");

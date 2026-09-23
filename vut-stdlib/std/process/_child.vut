@@ -1,0 +1,83 @@
+# Move-only Child and pipe owners. No destructor performs kill or wait.
+import io
+import process._native as native
+import process._reply as reply
+
+data Child:
+  _handle: resource[native.ChildHandle]
+
+data ChildStdin:
+  _handle: resource[native.PipeHandle]
+
+data ChildStdout:
+  _handle: resource[native.PipeHandle]
+
+data ChildStderr:
+  _handle: resource[native.PipeHandle]
+
+fn opened(handle: resource[native.ChildHandle]) -> result[Child, reply.ProcessError]:
+  unsafe:
+    valid = native.child_ok(handle)
+    raw = native.child_error(handle)
+    if valid == 0:
+      return err(reply.error(raw))
+    return ok(Child(_handle: handle))
+
+fn Child.id() -> u32:
+  unsafe:
+    native.child_id(self._handle)
+
+fn Child.wait() -> result[reply.ExitStatus, reply.ProcessError]:
+  unsafe:
+    reply.status(native.child_wait(self._handle))
+
+fn Child.try_wait() -> result[reply.ExitStatus?, reply.ProcessError]:
+  unsafe:
+    reply.optional_status(native.child_try_wait(self._handle))
+
+fn Child.kill() -> result[unit, reply.ProcessError]:
+  unsafe:
+    reply.completed(native.child_kill(self._handle))
+
+fn Child.stdin() -> result[ChildStdin, io.IoError]:
+  unsafe:
+    handle = native.child_pipe(self._handle, 0)
+    valid = native.pipe_ok(handle)
+    raw = native.pipe_error(handle)
+    if valid == 0:
+      return err(io.error_from_status(raw.read_i32_le(0), raw))
+    return ok(ChildStdin(_handle: handle))
+
+fn Child.stdout() -> result[ChildStdout, io.IoError]:
+  unsafe:
+    handle = native.child_pipe(self._handle, 1)
+    valid = native.pipe_ok(handle)
+    raw = native.pipe_error(handle)
+    if valid == 0:
+      return err(io.error_from_status(raw.read_i32_le(0), raw))
+    return ok(ChildStdout(_handle: handle))
+
+fn Child.stderr() -> result[ChildStderr, io.IoError]:
+  unsafe:
+    handle = native.child_pipe(self._handle, 2)
+    valid = native.pipe_ok(handle)
+    raw = native.pipe_error(handle)
+    if valid == 0:
+      return err(io.error_from_status(raw.read_i32_le(0), raw))
+    return ok(ChildStderr(_handle: handle))
+
+fn ChildStdin.write(blob: bytes) -> result[usize, io.IoError]:
+  unsafe:
+    io.size_from_native(native.pipe_write(self._handle, blob))
+
+fn ChildStdin.flush() -> result[unit, io.IoError]:
+  unsafe:
+    io.unit_from_status(native.pipe_flush(self._handle))
+
+fn ChildStdout.read() -> result[bytes, io.IoError]:
+  unsafe:
+    io.bytes_from_status(native.pipe_read(self._handle))
+
+fn ChildStderr.read() -> result[bytes, io.IoError]:
+  unsafe:
+    io.bytes_from_status(native.pipe_read(self._handle))

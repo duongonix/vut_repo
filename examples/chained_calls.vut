@@ -21,6 +21,6 @@ fn main():
   deep = lift()(9)(4)
   out("deep=$deep")
 
-  holder = Holder(op = double)
+  holder = Holder(op: double)
   field = holder.op(5)
   out("field=$field")

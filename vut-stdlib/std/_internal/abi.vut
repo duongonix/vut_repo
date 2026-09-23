@@ -23,7 +23,7 @@ fn raw_text(raw: bytes) -> str:
     ok(value): value
     err(error): ""
 
-fn fields(raw: bytes) -> list(str):
+fn fields(raw: bytes) -> list[str]:
   match payload(raw).to_str():
     ok(value): value.split("\0")
-    err(error): @()
+    err(error): @[]

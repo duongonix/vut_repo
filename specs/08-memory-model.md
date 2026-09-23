@@ -45,8 +45,8 @@ Example:
 ```vut
 fn create() -> User:
   user = User(
-    name = "Nam",
-    age = 20
+    name: "Nam",
+    age: 20
   )
 
   user
@@ -115,7 +115,7 @@ Example:
 
 ```vut
 fn process():
-  values = @(1, 2, 3)
+  values = @[1, 2, 3]
   out("done")
 ```
 
@@ -180,8 +180,8 @@ data Point:
   y: int
 
 a = Point(
-  x = 10,
-  y = 20
+  x: 10,
+  y: 20
 )
 
 b = a
@@ -246,8 +246,8 @@ Vut automatically moves values when ownership can be transferred safely.
 Example:
 
 ```vut
-fn create() -> list(int):
-  values = @(1, 2, 3)
+fn create() -> list[int]:
+  values = @[1, 2, 3]
   values
 ```
 
@@ -381,8 +381,8 @@ Examples:
 ```text
 str
 bytes
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 
 data containing managed fields
 
@@ -438,8 +438,8 @@ data Vec2:
   y: f64
 
 point = Vec2(
-  x = 10.0,
-  y = 20.0
+  x: 10.0,
+  y: 20.0
 )
 ```
 
@@ -531,8 +531,8 @@ Example:
 ```vut
 fn calculate() -> int:
   point = Point(
-    x = 10,
-    y = 20
+    x: 10,
+    y: 20
   )
 
   point.x + point.y
@@ -579,8 +579,8 @@ Example:
 
 ```vut
 point = Point(
-  x = 10,
-  y = 20
+  x: 10,
+  y: 20
 )
 
 result = point.x + point.y
@@ -600,7 +600,7 @@ without materializing `point`.
 
 # 20. List Representation
 
-`list(T)` should use an efficient native growable-buffer representation.
+`list[T]` should use an efficient native growable-buffer representation.
 
 Conceptually:
 
@@ -628,7 +628,7 @@ while its dynamic buffer may live on heap.
 For:
 
 ```text
-list(int)
+list[int]
 ```
 
 elements must be stored as statically typed integers.
@@ -654,7 +654,7 @@ Do not convert list elements to `dyn`.
 When:
 
 ```text
-list(T)
+list[T]
 ```
 
 owns its buffer and reaches the end of its lifetime:
@@ -771,7 +771,7 @@ constant time.
 
 # 27. UTF-8 Validation Error
 
-`bytes.to_str()` returns `result(str, Utf8Error)`. `Utf8Error` is a core
+`bytes.to_str()` returns `result[str, Utf8Error]`. `Utf8Error` is a core
 managed data type:
 
 ```text
@@ -789,7 +789,7 @@ invalid input.
 
 # 27. Maps
 
-`map(K, V)` should use an optimized hash-table implementation.
+`map[K, V]` should use an optimized hash-table implementation.
 
 Keys and values retain their concrete static layouts where practical.
 
@@ -809,7 +809,7 @@ Conceptually:
 
 ```vut
 fn work():
-  values = @(1, 2, 3)
+  values = @[1, 2, 3]
   out("working")
 ```
 
@@ -908,7 +908,7 @@ the receiver or of the field's containing aggregate.
 
 ## 30.2 Borrowing Native Resources
 
-A `resource(T)` is a move-only owner with exactly-once destruction. When a
+A `resource[T]` is a move-only owner with exactly-once destruction. When a
 resource is used only where a borrow is required, the compiler passes it by
 borrow without moving, retaining, or releasing it, and the owner still runs the
 destructor exactly once.
@@ -916,16 +916,16 @@ destructor exactly once.
 The borrow is internal to the compiler and has no source syntax.
 
 The only borrow context is the native ABI boundary: an argument of type
-`resource(T)` given to an `extern` parameter of type `ptr(T)` (or `ptr(void)`)
+`resource[T]` given to an `extern` parameter of type `ptr[T]` (or `ptr[void]`)
 is passed as the resource's inner native pointer, not as an owned handle:
 
 ```text
-resource(T) value/local/field  →  extern ptr(T) parameter
+resource[T] value/local/field  →  extern ptr[T] parameter
     borrow: no move, no retain, no release, no drop
 ```
 
-`ptr(T)` is the native ABI type at that boundary; it is not a language-level
-borrow form, and `resource(T) -> ptr(T)` is not an ordinary source coercion.
+`ptr[T]` is the native ABI type at that boundary; it is not a language-level
+borrow form, and `resource[T] -> ptr[T]` is not an ordinary source coercion.
 Passing a resource where ownership is expected still moves it. Borrowing works
 for resource locals and for resource fields of a local aggregate (for example
 `self.handle`).
@@ -968,8 +968,8 @@ Example:
 
 ```vut
 user = User(
-  name = "Nam",
-  age = 20
+  name: "Nam",
+  age: 20
 )
 ```
 
@@ -1222,7 +1222,7 @@ must not cause unrelated statically typed code to become dynamically represented
 Example:
 
 ```vut
-numbers: list(int)
+numbers: list[int]
 ```
 
 must remain specialized native integer storage even if another part of the program uses `dyn`.
@@ -1267,7 +1267,7 @@ Do not automatically add a separate tag byte if an existing invalid representati
 
 # 47. Result Values
 
-`result(T, E)` should be represented as an efficient tagged value once finalized.
+`result[T, E]` should be represented as an efficient tagged value once finalized.
 
 Compiler may optimize discriminant representation based on available niches.
 
@@ -1297,7 +1297,7 @@ An enum whose payloads are all trivially copyable is itself copyable and needs
 no drop glue.
 
 Recursive enum payloads by value are rejected because they have infinite size;
-recursive shapes must use an indirect container such as `list(T)`.
+recursive shapes must use an indirect container such as `list[T]`.
 
 ---
 
@@ -1532,13 +1532,13 @@ locks
 native handles
 ```
 
-Native resources are represented by the generic `resource(T)` type:
+Native resources are represented by the generic `resource[T]` type:
 
 ```text
-resource(T)
+resource[T]
 ```
 
-where `T` is an `opaque data` (or `@repr(C)`) native pointee. A `resource(T)`
+where `T` is an `opaque data` (or `@repr(C)`) native pointee. A `resource[T]`
 value is:
 
 ```text
@@ -1575,7 +1575,14 @@ duplicating a resource value is a compile error
 using a resource inside a conditional branch is a compile error
 ```
 
-Shared ownership (reference counting) is **not** the default for `resource(T)`.
+Shared ownership (reference counting) is **not** the default for `resource[T]`.
+
+For process resources, deterministic cleanup means releasing owned native
+handles, not controlling OS process lifetime. Dropping Child never implicitly
+kills or waits/reaps the process. Extracted pipe endpoints transfer to separate
+move-only owners and are closed exactly once by those owners, not again by
+Child. Explicit wait/kill state must not cause repeated wait/kill during drop.
+See `std/std.md` §9.10 for the normative process/pipe lifetime contract.
 A future explicit shared-ownership capability may be specified separately if a
 real use case requires more than one owner.
 
@@ -1712,8 +1719,8 @@ Example:
 ```vut
 fn sum_point() -> int:
   p = Point(
-    x = 10,
-    y = 20
+    x: 10,
+    y: 20
   )
 
   p.x + p.y
@@ -1765,8 +1772,8 @@ Once generics are finalized, concrete generic instantiations should generally al
 Example:
 
 ```text
-list(int)
-list(Vec2)
+list[int]
+list[Vec2]
 ```
 
 should have concrete element layouts.
@@ -1813,7 +1820,7 @@ For example:
 ```text
 int
 Vec2
-list(int)
+list[int]
 ```
 
 should not carry per-value runtime type descriptors merely because the compiler internally knows their TypeId.
@@ -2218,11 +2225,11 @@ The user should be able to write simple code:
 ```vut
 fn process():
   user = User(
-    name = "Nam",
-    age = 20
+    name: "Nam",
+    age: 20
   )
 
-  values = @(1, 2, 3)
+  values = @[1, 2, 3]
 
   out("Hello $user.name")
 ```
@@ -2312,3 +2319,29 @@ deterministic destruction
 no tracing GC
 no source-level borrow checker
 ```
+
+---
+
+# 92. Closure Capture Ownership
+
+A capturing closure owns a heap environment holding its captures
+(`specs/04` §46a). Capture follows the ordinary rules of this document.
+
+```text
+copy types are copied into the environment
+a managed/move-only value is moved into the environment at its last use
+a managed value that is still used after capture is duplicated per §37/§38
+a borrowed value (receiver or outer capture) is retained, never moved
+captured bindings are read-only in the closure
+the closure environment is released exactly once when the closure is destroyed
+managed captures are released exactly once
+```
+
+The closure environment is not an additional reference-counting regime: the
+closure value is reference-counted so that copying it retains the environment
+and destroying the last copy releases it. When the last reference is released,
+the environment's managed captures are released before the block is freed.
+Escape analysis (`§17`, `receiver/04`) may keep a non-escaping environment on
+the stack or eliminate it entirely; that is an optimization and must not change
+semantics.
+

@@ -330,7 +330,7 @@ variant(p)              single-field positional shorthand
 ok(p) / err(p)          result pattern with a sub-pattern
 p1 or p2                or-pattern (alternatives bind the same names)
 0..10 / 0..=10          integer range
-@(p1, p2) / @()         list pattern
+@[p1, p2] / @[]         list pattern
 (p)                     grouped pattern
 p if condition:         guard on an arm
 ```
@@ -478,7 +478,7 @@ The compiler determines the type of `item` from the iterable's element type.
 Collection literals may be iterated directly.
 
 ```vut
-for value in @(10, 20, 30):
+for value in @[10, 20, 30]:
   print(value)
 ```
 
@@ -507,7 +507,7 @@ for value, index in items:
 For:
 
 ```vut
-@(10, 20, 30)
+@[10, 20, 30]
 ```
 
 the logical sequence is:
@@ -722,7 +722,7 @@ fn test():
 `return` exits the current function or method.
 
 ```vut
-fn find(items: list(int), target: int) -> int:
+fn find(items: list[int], target: int) -> int:
   for value, index in items:
     if value == target:
       return index

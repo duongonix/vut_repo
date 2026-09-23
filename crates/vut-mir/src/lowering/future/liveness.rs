@@ -25,7 +25,10 @@ pub struct AwaitLive {
 fn is_suspension(instruction: &Instruction) -> bool {
     // `StartFuture` only creates the future; the actual suspension point is the
     // subsequent await (for both Vut futures and native futures).
-    matches!(instruction, Instruction::AwaitFuture { .. })
+    matches!(
+        instruction,
+        Instruction::AwaitFuture { .. } | Instruction::AwaitChannelRecv { .. }
+    )
 }
 
 fn local_uses(instruction: &Instruction, uses: &mut HashSet<usize>) {

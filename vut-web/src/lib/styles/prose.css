@@ -69,12 +69,14 @@
 .prose blockquote p {
   font-size: 14px;
 }
-.prose table {
-  display: block;
+.prose .table-scroll {
   width: 100%;
   overflow-x: auto;
-  border-collapse: collapse;
   margin-block: 24px;
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 13px;
 }
 .prose th,

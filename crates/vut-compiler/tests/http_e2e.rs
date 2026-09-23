@@ -258,7 +258,7 @@ fn http_range_request_reports_partial_status() {
 fn http_streaming_reads_the_body_in_chunks() {
     let (base, _hits) = start_server();
     let source = format!(
-        "import http\n\nfn chunk_len(outcome: result(bytes, http.Error)) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream) -> int:\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    total = total + length\n    if length == 0:\n      break\n  total\n\nasync fn main():\n  stream = http.get_stream(\"{base}/large\")\n  total = await drain(stream)\n  out(\"total=$total\")\n"
+        "import http\n\nfn chunk_len(outcome: result[bytes, http.Error]) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream) -> int:\n  total = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    total = total + length\n    if length == 0:\n      break\n  total\n\nasync fn main():\n  stream = http.get_stream(\"{base}/large\")\n  total = await drain(stream)\n  out(\"total=$total\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -269,7 +269,7 @@ fn http_streaming_reads_the_body_in_chunks() {
 fn http_stream_reads_multiple_chunks() {
     let (base, _hits) = start_server();
     let source = format!(
-        "import http\n\nfn chunk_len(outcome: result(bytes, http.Error)) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream):\n  total = 0\n  chunks = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n    chunks = chunks + 1\n  out(\"total=$total chunks=$chunks\")\n\nasync fn main():\n  stream = http.get_stream(\"{base}/chunked\")\n  await drain(stream)\n"
+        "import http\n\nfn chunk_len(outcome: result[bytes, http.Error]) -> int:\n  value: int = match outcome:\n    ok(chunk): chunk.len()\n    err(error): 0\n  value\n\nasync fn drain(stream: http.Stream):\n  total = 0\n  chunks = 0\n  for:\n    next = await stream.read()\n    length = chunk_len(next)\n    if length == 0:\n      break\n    total = total + length\n    chunks = chunks + 1\n  out(\"total=$total chunks=$chunks\")\n\nasync fn main():\n  stream = http.get_stream(\"{base}/chunked\")\n  await drain(stream)\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -291,7 +291,7 @@ fn http_method_matrix_reaches_the_server() {
 fn http_request_builder_and_client_methods() {
     let (base, _hits) = start_server();
     let source = format!(
-        "import http\nimport time\n\n{REPORT}\nasync fn main():\n  request = http.Request(method = http.Method.post, url = \"{base}/echo\")\n  request.header(\"X-Test\", \"abc\")\n  request.query(\"page\", \"2\")\n  request.body_text(\"built\")\n  request.timeout(time.seconds(5))\n  match await request.send():\n    ok(response): report(response)\n    err(error): out(\"failed\")\n  client = http.client(time.seconds(5), 5)\n  match await client.get(\"{base}/\"):\n    ok(response): out(\"client=$(response.status.code)\")\n    err(error): out(\"client-failed\")\n"
+        "import http\nimport time\n\n{REPORT}\nasync fn main():\n  request = http.Request(method: http.Method.post, url: \"{base}/echo\")\n  request.header(\"X-Test\", \"abc\")\n  request.query(\"page\", \"2\")\n  request.body_text(\"built\")\n  request.timeout(time.seconds(5))\n  match await request.send():\n    ok(response): report(response)\n    err(error): out(\"failed\")\n  client = http.client(time.seconds(5), 5)\n  match await client.get(\"{base}/\"):\n    ok(response): out(\"client=$(response.status.code)\")\n    err(error): out(\"client-failed\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");

@@ -61,10 +61,16 @@ impl Builder<'_> {
             return None;
         };
         // A named receiver is borrowed; a temporary collection is owned here
-        // and released when the loop exits.
+        // and released when the loop exits. `sort_by` mutates in place, so its
+        // receiver is made unique first (copy-on-write).
         let mut operands = Vec::new();
         let mut owned = Vec::new();
-        self.lower_builtin_value(object, &mut operands, &mut owned)?;
+        self.lower_builtin_receiver(
+            object,
+            function == BuiltinFunction::ListSortBy,
+            &mut operands,
+            &mut owned,
+        )?;
         let receiver = *operands.first()?;
         // `fold` takes `(initial, combine)` and `sort_by` takes `(compare)`;
         // every other builtin takes the callback first.
@@ -75,7 +81,14 @@ impl Builder<'_> {
             .expression_types
             .get(&arguments[callback_argument].value.span())
             .copied();
-        match function {
+        // A capturing callback owns a heap environment; release it when the
+        // generated loop exits.
+        if let Some(ty) = callback_ty
+            && self.layouts.types[ty.0].needs_drop
+        {
+            owned.push((callback, ty));
+        }
+        let result = match function {
             BuiltinFunction::ListMap => {
                 self.lower_list_map(receiver, element, callback, callback_ty, span, owned)
             }
@@ -101,10 +114,13 @@ impl Builder<'_> {
                 self.lower_list_sort_by(receiver, element, callback, callback_ty, span, owned)
             }
             _ => self.lower_list_find_index(receiver, element, callback, callback_ty, span, owned),
-        }
+        };
+        // A mutating subscript receiver (`a[0].sort_by`) writes its element back.
+        self.apply_pending_writeback();
+        result
     }
 
-    /// `items.map(transform)` — builds `list(R)` preallocated to the input
+    /// `items.map(transform)` — builds `list[R]` preallocated to the input
     /// length, pushing `transform(item)` for every element.
     fn lower_list_map(
         &mut self,
@@ -148,7 +164,7 @@ impl Builder<'_> {
         Some(result)
     }
 
-    /// `items.filter(keep)` — builds `list(T)` with the elements the predicate
+    /// `items.filter(keep)` — builds `list[T]` with the elements the predicate
     /// accepts. The pushed element is borrowed and retained by `ListPush`.
     fn lower_list_filter(
         &mut self,

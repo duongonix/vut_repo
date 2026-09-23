@@ -1,4 +1,5 @@
 //! Concrete ABI layouts for semantic types.
+mod optional;
 use std::collections::HashMap;
 
 use vut_hir::TypeId;
@@ -28,12 +29,18 @@ pub enum OwnershipKind {
     RcMap,
     /// Opaque runtime task handle; releasing cancels/destroys the Vutcon.
     RcVutcon,
+    /// Reference-counted typed channel handle (`channel[T]`).
+    RcChannel,
     /// Native async operation handle; releasing cancels/destroys it.
     Future,
     /// Owned opaque native resource handle; releasing runs the native destructor.
     Resource,
     /// Reference-counted interface/`dyn` box produced by the compiler.
     Interface,
+    /// A function value. Non-capturing values are untagged code pointers and
+    /// retain/release are no-ops; capturing values are tagged, reference-counted
+    /// closure environments.
+    RcClosure,
     Aggregate,
     OpaqueManaged,
 }
@@ -53,6 +60,8 @@ impl OwnershipKind {
             | OwnershipKind::RcBytes
             | OwnershipKind::RcList
             | OwnershipKind::RcMap
+            | OwnershipKind::RcClosure
+            | OwnershipKind::RcChannel
             | OwnershipKind::Interface => vut_memory::Duplication::Retain,
             OwnershipKind::Aggregate => {
                 if is_copy {
@@ -101,6 +110,8 @@ pub struct LayoutTable {
     pub arrays: HashMap<TypeId, (TypeId, usize)>,
     pub lists: HashMap<TypeId, TypeId>,
     pub maps: HashMap<TypeId, (TypeId, TypeId)>,
+    /// Element type of every `channel[T]`.
+    pub channels: HashMap<TypeId, TypeId>,
     pub results: HashMap<TypeId, ResultLayout>,
     /// Tagged-union layouts for enums.
     pub enums: HashMap<TypeId, EnumLayout>,
@@ -114,6 +125,9 @@ pub struct LayoutTable {
     /// reference): `data`, `result`, and arrays. These use the sret calling
     /// convention when returned from a function.
     pub aggregates: std::collections::HashSet<TypeId>,
+    /// Integer types whose comparisons and division are unsigned (`u8`..`u64`,
+    /// `usize`).
+    pub unsigned: std::collections::HashSet<TypeId>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FieldLayout {
@@ -178,9 +192,16 @@ impl LayoutTable {
                         ownership: OwnershipKind::None,
                     }
                 }
+                // Unit has no storage or ownership. The internal function ABI
+                // carries a constant token so ordinary value lowering remains
+                // distinct from void; raw C ABI does not accept unit.
+                Type::Unit => scalar(0, ValueRepr::Integer),
                 Type::Bool => scalar(1, ValueRepr::Integer),
                 Type::Numeric(name) if name == "usize" || name == "isize" => {
                     scalar(pointer_size, ValueRepr::Integer)
+                }
+                Type::Numeric(name) if name.starts_with('f') => {
+                    scalar(if name == "f32" { 4 } else { 8 }, ValueRepr::Float)
                 }
                 Type::Numeric(name) if name.ends_with('8') => scalar(1, ValueRepr::Integer),
                 Type::Numeric(name) if name.ends_with("16") => scalar(2, ValueRepr::Integer),
@@ -202,6 +223,7 @@ impl LayoutTable {
                 Type::Map(_, _) => managed(pointer_size, pointer_size, OwnershipKind::RcMap),
                 Type::Bytes => managed(pointer_size, pointer_size, OwnershipKind::RcBytes),
                 Type::Vutcon(_) => managed(pointer_size, pointer_size, OwnershipKind::RcVutcon),
+                Type::Channel(_) => managed(pointer_size, pointer_size, OwnershipKind::RcChannel),
                 Type::Future(_) => managed(pointer_size, pointer_size, OwnershipKind::Future),
                 Type::Resource(_) => managed(pointer_size, pointer_size, OwnershipKind::Resource),
                 Type::Array(_, _) | Type::Result(_, _) | Type::Enum(_) => TypeInfo {
@@ -233,6 +255,9 @@ impl LayoutTable {
                         }
                         Type::Vutcon(_) => {
                             managed(pointer_size, pointer_size, OwnershipKind::RcVutcon)
+                        }
+                        Type::Channel(_) => {
+                            managed(pointer_size, pointer_size, OwnershipKind::RcChannel)
                         }
                         Type::Future(_) => {
                             managed(pointer_size, pointer_size, OwnershipKind::Future)
@@ -295,12 +320,12 @@ impl LayoutTable {
                     size: pointer_size,
                     alignment: pointer_size,
                     is_copy: true,
-                    needs_drop: false,
-                    contains_managed: false,
+                    needs_drop: true,
+                    contains_managed: true,
                     contains_linear: false,
                     abi: AbiClass::Scalar,
                     repr: ValueRepr::Pointer,
-                    ownership: OwnershipKind::None,
+                    ownership: OwnershipKind::RcClosure,
                 },
                 Type::Range(_) => TypeInfo {
                     size: 16,
@@ -333,6 +358,15 @@ impl LayoutTable {
                 _ => None,
             })
             .collect();
+        let channels = semantics
+            .types
+            .iter()
+            .enumerate()
+            .filter_map(|(type_index, ty)| match ty {
+                Type::Channel(element) => Some((TypeId(type_index), *element)),
+                _ => None,
+            })
+            .collect();
         // Aggregate layouts (arrays, results, data) may reference other
         // aggregates. Compute them in dependency order so a nested type has a
         // final size/alignment before its parent is laid out.
@@ -340,6 +374,7 @@ impl LayoutTable {
         let mut results = HashMap::new();
         let mut enums = HashMap::new();
         let mut fields = HashMap::new();
+        let mut optionals = HashMap::new();
         let is_aggregate = |ty: &Type| {
             matches!(
                 ty,
@@ -503,6 +538,15 @@ impl LayoutTable {
                         resolved[type_index] = true;
                         pending = true;
                     }
+                    Type::Optional(inner) => {
+                        if !resolved[inner.0] {
+                            continue;
+                        }
+                        types[type_index] = optional::tagged(types[inner.0], pointer_size);
+                        optionals.insert(TypeId(type_index), *inner);
+                        resolved[type_index] = true;
+                        pending = true;
+                    }
                     Type::Data(symbol) => {
                         let Some(data_fields) = semantics.data_fields.get(symbol) else {
                             resolved[type_index] = true;
@@ -603,48 +647,6 @@ impl LayoutTable {
                 _ => {}
             }
         }
-        // Tagged optionals are `{ discriminant, payload }` blocks. Resolve them
-        // after the aggregates they may embed are laid out; repeated passes
-        // handle optionals nested inside other optionals.
-        let mut optionals: HashMap<TypeId, TypeId> = HashMap::new();
-        for _ in 0..semantics.types.len() {
-            for (type_index, ty) in semantics.types.iter().enumerate() {
-                if optionals.contains_key(&TypeId(type_index)) {
-                    continue;
-                }
-                let Type::Optional(inner) = ty else {
-                    continue;
-                };
-                if is_managed_type(&semantics.types[inner.0]) {
-                    continue;
-                }
-                if matches!(semantics.types[inner.0], Type::Optional(_))
-                    && !optionals.contains_key(inner)
-                {
-                    continue;
-                }
-                let inner_info = types[inner.0];
-                let alignment = pointer_size.max(inner_info.alignment).max(1);
-                let payload_offset = align_up(pointer_size, inner_info.alignment.max(1));
-                let size = align_up(payload_offset + inner_info.size, alignment);
-                types[type_index] = TypeInfo {
-                    size,
-                    alignment,
-                    is_copy: inner_info.is_copy,
-                    needs_drop: inner_info.needs_drop,
-                    contains_managed: inner_info.contains_managed,
-                    contains_linear: inner_info.contains_linear,
-                    abi: AbiClass::Aggregate,
-                    repr: ValueRepr::Pointer,
-                    ownership: if inner_info.needs_drop {
-                        OwnershipKind::Aggregate
-                    } else {
-                        OwnershipKind::None
-                    },
-                };
-                optionals.insert(TypeId(type_index), *inner);
-            }
-        }
         let mut aggregates: std::collections::HashSet<TypeId> = semantics
             .types
             .iter()
@@ -658,6 +660,15 @@ impl LayoutTable {
             })
             .collect();
         aggregates.extend(optionals.keys().copied());
+        let unsigned: std::collections::HashSet<TypeId> = semantics
+            .types
+            .iter()
+            .enumerate()
+            .filter_map(|(type_index, ty)| {
+                matches!(ty, Type::Numeric(name) if name.starts_with('u'))
+                    .then_some(TypeId(type_index))
+            })
+            .collect();
         Self {
             types,
             pointer_size,
@@ -665,11 +676,13 @@ impl LayoutTable {
             arrays,
             lists,
             maps,
+            channels,
             results,
             enums,
             optionals,
             callables,
             aggregates,
+            unsigned,
         }
     }
 
@@ -719,7 +732,7 @@ fn abi_class(size: usize, pointer_size: usize) -> AbiClass {
 fn scalar(size: usize, repr: ValueRepr) -> TypeInfo {
     TypeInfo {
         size,
-        alignment: size,
+        alignment: size.max(1),
         is_copy: true,
         needs_drop: false,
         contains_managed: false,

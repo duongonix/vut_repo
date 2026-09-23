@@ -64,7 +64,7 @@ fn diagnostic_codes(source: &str) -> Vec<String> {
     codes
 }
 
-const NESTED_DSL: &str = "data AppScope:\n  label: str\n\ndata ColumnScope:\n  label: str\n\nfn AppScope.Column(body: fn(ColumnScope)() -> void) -> void:\n  scope = ColumnScope(label = \"col\")\n  body.call(scope)\n\nfn ColumnScope.Button(text: str) -> void:\n  out(\"button=$text\")\n\nfn App(body: fn(AppScope)() -> void) -> void:\n  scope = AppScope(label = \"app\")\n  body.call(scope)\n\nfn main():\n  App():\n    Column():\n      Button(\"A\")\n";
+const NESTED_DSL: &str = "data AppScope:\n  label: str\n\ndata ColumnScope:\n  label: str\n\nfn AppScope.Column(body: fn(ColumnScope)() -> void) -> void:\n  scope = ColumnScope(label: \"col\")\n  body.call(scope)\n\nfn ColumnScope.Button(text: str) -> void:\n  out(\"button=$text\")\n\nfn App(body: fn(AppScope)() -> void) -> void:\n  scope = AppScope(label: \"app\")\n  body.call(scope)\n\nfn main():\n  App():\n    Column():\n      Button(\"A\")\n";
 
 #[test]
 fn nested_receiver_dsl_resolves_statically_and_runs() {
@@ -79,7 +79,7 @@ fn nested_receiver_dsl_resolves_statically_and_runs() {
 
 #[test]
 fn trailing_receiver_with_parameters_and_control_flow() {
-    let source = "data UserCardScope:\n  label: str\n\ndata User:\n  name: str\n\ndata Event:\n  clicked: bool\n\nfn UserCard(user: User, body: fn(UserCardScope)(Event, int) -> void) -> void:\n  scope = UserCardScope(label = \"card\")\n  event = Event(clicked = true)\n  body.call(scope, event, 7)\n\nfn UserCardScope.Text(text: str) -> void:\n  out(\"text=$text\")\n\nfn main():\n  user = User(name = \"ann\")\n  UserCard(user) (event, index):\n    Text(\"$index\")\n    if event.clicked:\n      Text(\"clicked\")\n    for value in @(1, 2):\n      Text(\"loop=$value\")\n";
+    let source = "data UserCardScope:\n  label: str\n\ndata User:\n  name: str\n\ndata Event:\n  clicked: bool\n\nfn UserCard(user: User, body: fn(UserCardScope)(Event, int) -> void) -> void:\n  scope = UserCardScope(label: \"card\")\n  event = Event(clicked: true)\n  body.call(scope, event, 7)\n\nfn UserCardScope.Text(text: str) -> void:\n  out(\"text=$text\")\n\nfn main():\n  user = User(name: \"ann\")\n  UserCard(user) (event, index):\n    Text(\"$index\")\n    if event.clicked:\n      Text(\"clicked\")\n    for value in @[1, 2]:\n      Text(\"loop=$value\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "text=7\ntext=clicked\ntext=loop=1\ntext=loop=2\n");
@@ -87,7 +87,7 @@ fn trailing_receiver_with_parameters_and_control_flow() {
 
 #[test]
 fn dot_call_invokes_a_trailing_receiver_function() {
-    let source = "data Scope:\n  label: str\n\nfn capture(body: fn(Scope)() -> int) -> fn(Scope)() -> int:\n  body\n\nfn main():\n  scope = Scope(label = \"s\")\n  body = capture():\n    41\n  out(\"value=$(body.call(scope))\")\n";
+    let source = "data Scope:\n  label: str\n\nfn capture(body: fn(Scope)() -> int) -> fn(Scope)() -> int:\n  body\n\nfn main():\n  scope = Scope(label: \"s\")\n  body = capture():\n    41\n  out(\"value=$(body.call(scope))\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "value=41\n");
@@ -95,7 +95,7 @@ fn dot_call_invokes_a_trailing_receiver_function() {
 
 #[test]
 fn explicit_self_refers_to_the_receiver() {
-    let source = "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  scope = Scope(label = \"hi\")\n  body.call(scope)\n\nfn main():\n  Render():\n    out(\"label=$(self.label)\")\n";
+    let source = "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  scope = Scope(label: \"hi\")\n  body.call(scope)\n\nfn main():\n  Render():\n    out(\"label=$(self.label)\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "label=hi\n");
@@ -103,7 +103,7 @@ fn explicit_self_refers_to_the_receiver() {
 
 #[test]
 fn receiver_body_without_managed_state_does_not_allocate() {
-    let source = "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  scope = Scope(label = \"x\")\n  body.call(scope)\n\nfn main():\n  Render():\n    out(\"body\")\n";
+    let source = "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  scope = Scope(label: \"x\")\n  body.call(scope)\n\nfn main():\n  Render():\n    out(\"body\")\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,
@@ -132,7 +132,7 @@ fn trailing_body_requires_a_receiver_function_parameter() {
 #[test]
 fn dot_call_with_the_wrong_receiver_is_rejected() {
     let codes = diagnostic_codes(
-        "data A:\n  x: int\n\ndata B:\n  y: int\n\nfn use(body: fn(A)() -> void) -> void:\n  out(\"u\")\n\nfn main():\n  body: fn(A)() -> void = fn():\n    out(\"hi\")\n  b = B(y = 2)\n  body.call(b)\n",
+        "data A:\n  x: int\n\ndata B:\n  y: int\n\nfn use(body: fn(A)() -> void) -> void:\n  out(\"u\")\n\nfn main():\n  body: fn(A)() -> void = fn():\n    out(\"hi\")\n  b = B(y: 2)\n  body.call(b)\n",
     );
     assert!(codes.iter().any(|code| code == "E1021"), "{codes:?}");
 }
@@ -146,9 +146,17 @@ fn unknown_implicit_receiver_method_is_reported() {
 }
 
 #[test]
-fn capturing_receiver_body_is_still_rejected() {
-    let codes = diagnostic_codes(
-        "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  out(\"r\")\n\nfn main():\n  title = \"x\"\n  Render():\n    out(title)\n",
-    );
-    assert!(codes.iter().any(|code| code == "E1013"), "{codes:?}");
+fn receiver_body_captures_an_enclosing_managed_value() {
+    let source = "data Scope:\n  label: str\n\nfn Render(body: fn(Scope)() -> void) -> void:\n  body.call(Scope(label: \"s\"))\n\nfn main():\n  title = \"x\"\n  Render():\n    out(title)\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "x\n");
+}
+
+#[test]
+fn receiver_body_captures_self() {
+    let source = "data Counter:\n  value: int\n\nfn Counter.label() -> fn() -> int:\n  fn():\n    self.value\n\nfn main():\n  c = Counter(value: 7)\n  get = c.label()\n  out(\"$(get())\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "7\n");
 }

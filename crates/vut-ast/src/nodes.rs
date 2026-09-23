@@ -34,6 +34,8 @@ pub struct Parameter {
     pub ty: TypeExpr,
     /// `...name: T`: accepts zero or more arguments of type `T`.
     pub variadic: bool,
+    /// `name: T = value`: a trailing parameter that callers may omit.
+    pub default: Option<Expr>,
     pub span: Span,
 }
 /// A declared generic type parameter: `T` or `T: Comparable`.
@@ -118,7 +120,7 @@ pub struct ExternFunction {
     pub abi: String,
     pub abi_span: Span,
     /// `extern "C" async fn`: calling it starts a native async operation and
-    /// yields a `future(T)`.
+    /// yields a `future[T]`.
     pub is_async: bool,
     pub name: Name,
     pub type_parameters: Vec<TypeParameter>,
@@ -352,6 +354,21 @@ pub enum Expr {
         arguments: Vec<Argument>,
         span: Span,
     },
+    /// A postfix bracket access whose reading is decided from symbol/type
+    /// information, not syntax: `object[types]` is a generic application and
+    /// `object[index]` is a collection access. Most inputs provide only one
+    /// reading; `foo[bar]` provides both and is resolved by the resolver and
+    /// checker.
+    Subscript {
+        object: Box<Expr>,
+        /// The type-argument reading, present when the bracket content parses as
+        /// a comma-separated type list.
+        types: Option<Vec<TypeExpr>>,
+        /// The value reading, present when the bracket content parses as an
+        /// expression.
+        index: Option<Box<Expr>>,
+        span: Span,
+    },
     Lambda {
         receiver: LambdaReceiver,
         parameters: Vec<LambdaParameter>,
@@ -461,7 +478,7 @@ pub enum MatchPattern {
         inclusive: bool,
         span: Span,
     },
-    /// `@(a, b, rest..)` / `@()`
+    /// `@[a, b, rest..]` / `@[]`
     List {
         items: Vec<MatchPattern>,
         rest: Option<Name>,
@@ -564,6 +581,7 @@ impl Expr {
             | Self::Binary { span, .. }
             | Self::Member { span, .. }
             | Self::Call { span, .. }
+            | Self::Subscript { span, .. }
             | Self::Lambda { span, .. }
             | Self::ResultOk { span, .. }
             | Self::ResultErr { span, .. }

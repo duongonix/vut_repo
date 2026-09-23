@@ -39,7 +39,7 @@ Possible domains include:
 The compiler provides:
 
 - composition domains
-- `vutcom(D)`
+- `vutcom[D]`
 - composition syntax
 - domain type safety
 - child composition
@@ -78,8 +78,8 @@ These introduce distinct composition domains.
 Their corresponding types are:
 
 ```vut
-vutcom(UI)
-vutcom(Build)
+vutcom[UI]
+vutcom[Build]
 ```
 
 These are different types.
@@ -87,18 +87,18 @@ These are different types.
 Example:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   ...
 
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   ...
 ```
 
 Therefore:
 
 ```text
-Home()    : vutcom(UI)
-Release() : vutcom(Build)
+Home()    : vutcom[UI]
+Release() : vutcom[Build]
 ```
 
 There is no implicit mixing between domains.
@@ -107,12 +107,12 @@ There is no implicit mixing between domains.
 
 ## 3. Opaque Composition Value
 
-`vutcom(D)` is an opaque composition value belonging to domain `D`.
+`vutcom[D]` is an opaque composition value belonging to domain `D`.
 
 Example:
 
 ```vut
-page: vutcom(UI) = Home()
+page: vutcom[UI] = Home()
 ```
 
 Users must NOT depend on an internal representation such as:
@@ -129,8 +129,8 @@ The language specification MUST NOT define Vutcom as:
 Node
 Tree
 Virtual DOM
-list(Node)
-map(str, dyn)
+list[Node]
+map[str, dyn]
 ```
 
 The compiler/runtime is free to internally use:
@@ -164,9 +164,9 @@ view
 Canonical form:
 
 ```vut
-fn UserCard(user: User) -> vutcom(UI):
+fn UserCard(user: User) -> vutcom[UI]:
   Card():
-    Text(value = user.name)
+    Text(value: user.name)
 ```
 
 The return type identifies the function as producing a composition.
@@ -195,9 +195,9 @@ UI is only one possible application.
 UI:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
-    Text(value = "Hello")
+    Text(value: "Hello")
 
 ui.run(Home())
 ```
@@ -205,7 +205,7 @@ ui.run(Home())
 Build:
 
 ```vut
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   Pipeline():
     Compile()
     Test()
@@ -217,9 +217,9 @@ build.execute(Release())
 Routing:
 
 ```vut
-fn Routes() -> vutcom(Route):
-  Route(path = "/")
-  Route(path = "/users")
+fn Routes() -> vutcom[Route]:
+  Route(path: "/")
+  Route(path: "/users")
 
 server.serve(Routes())
 ```
@@ -249,14 +249,14 @@ A Vutcom consumer is an ordinary typed library function.
 Conceptually:
 
 ```vut
-fn run(root: vutcom(UI)):
+fn run(root: vutcom[UI]):
   ...
 ```
 
 or:
 
 ```vut
-fn execute(root: vutcom(Build)):
+fn execute(root: vutcom[Build]):
   ...
 ```
 
@@ -290,10 +290,10 @@ Composition domains are statically checked.
 Given:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   ...
 
-fn Release() -> vutcom(Build):
+fn Release() -> vutcom[Build]:
   ...
 ```
 
@@ -313,8 +313,8 @@ ui.run(Release())
 Expected diagnostic:
 
 ```text
-expected `vutcom(UI)`
-found `vutcom(Build)`
+expected `vutcom[UI]`
+found `vutcom[Build]`
 ```
 
 Domain identity must be represented by the type system.
@@ -330,13 +330,13 @@ Implicit cross-domain composition is forbidden.
 A:
 
 ```text
-vutcom(UI)
+vutcom[UI]
 ```
 
 cannot automatically become:
 
 ```text
-vutcom(Route)
+vutcom[Route]
 ```
 
 If a library intentionally accepts another composition domain, it must declare that explicitly through an ordinary typed parameter.
@@ -345,15 +345,15 @@ Example:
 
 ```vut
 Route(
-  path = "/",
-  page = Home()
+  path: "/",
+  page: Home()
 )
 ```
 
 may be valid if `Route` explicitly accepts:
 
 ```vut
-page: vutcom(UI)
+page: vutcom[UI]
 ```
 
 This is ordinary typed composition passing, not implicit domain conversion.
@@ -375,7 +375,7 @@ The compiler should be free to:
 
 - inline composition functions
 - specialize generic composition
-- eliminate intermediate `vutcom(D)` values
+- eliminate intermediate `vutcom[D]` values
 - constant-fold static arguments
 - eliminate dead composition
 - use escape analysis
@@ -401,7 +401,7 @@ Vutcom core owns:
 
 ```text
 composition domains
-vutcom(D)
+vutcom[D]
 composition blocks
 children
 domain checking

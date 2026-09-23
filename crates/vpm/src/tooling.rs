@@ -142,21 +142,15 @@ pub fn dependency_tree(root: &Path) -> Result<String, Box<dyn std::error::Error>
 
 fn versions(source: &PackageSource) -> Result<Vec<Version>, Box<dyn std::error::Error>> {
     let provider = crate::resolver::Providers::new()?;
-    let mut values = provider
-        .list_versions(source)?
-        .into_iter()
-        .filter_map(|value| Version::parse(value.trim_start_matches('v')).ok())
-        .collect::<Vec<_>>();
-    values.sort();
-    values.dedup();
-    Ok(values)
+    Ok(crate::version::parse_versions(
+        &provider.list_versions(source)?,
+    ))
 }
 pub fn package_info(spec: &str) -> Result<String, Box<dyn std::error::Error>> {
     let source = PackageSource::parse(spec)?;
     let available = versions(&source)?;
-    let latest = available
-        .last()
-        .map_or_else(|| "none".into(), ToString::to_string);
+    let latest = crate::version::latest_stable(&available)
+        .map_or_else(|| "none".into(), |version| version.to_string());
     Ok(format!(
         "name: {}\nsource: {}\nlatest: {}\nversions: {}\n",
         source.name(),
@@ -171,9 +165,8 @@ pub fn package_info(spec: &str) -> Result<String, Box<dyn std::error::Error>> {
 }
 pub fn search(query: &str) -> Result<String, Box<dyn std::error::Error>> {
     let source = PackageSource::parse(query)?;
-    let latest = versions(&source)?
-        .last()
-        .map_or_else(|| "none".into(), ToString::to_string);
+    let latest = crate::version::latest_stable(&versions(&source)?)
+        .map_or_else(|| "none".into(), |version| version.to_string());
     Ok(format!(
         "Package\tLatest\tSource\n{}\t{}\t{}\n",
         source.name(),
@@ -200,9 +193,8 @@ pub fn outdated(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
                 (source, version)
             }
         };
-        let latest = versions(&source)?
-            .last()
-            .map_or_else(|| current.clone(), ToString::to_string);
+        let latest = crate::version::latest_stable(&versions(&source)?)
+            .map_or_else(|| current.clone(), |version| version.to_string());
         writeln!(output, "{name}\t{current}\t{latest}")?;
     }
     Ok(output)
@@ -222,7 +214,7 @@ mod tests {
     fn fmt_lint_docs_tree_and_clean_are_deterministic_and_safe() {
         let root = project("workflow");
         std::fs::write(
-            root.join("src/main.vut"),
+            root.join("src/bin/workflow.vut"),
             "### Entry\nfn main():\n    unused=1\n",
         )
         .unwrap();
@@ -241,7 +233,7 @@ mod tests {
                 .starts_with("workflow 0.1.0")
         );
         clean(&root).unwrap();
-        assert!(root.join("src/main.vut").is_file());
+        assert!(root.join("src/bin/workflow.vut").is_file());
         assert!(root.join("vpm.toml").is_file());
         assert!(root.join("vpm.lock").is_file());
         std::fs::remove_dir_all(root).unwrap();

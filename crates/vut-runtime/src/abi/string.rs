@@ -307,6 +307,11 @@ pub extern "C" fn vut_rt_format_i64_v1(value: i64) -> *mut ManagedString {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn vut_rt_format_u64_v1(value: u64) -> *mut ManagedString {
+    ManagedString::allocate(crate::VutString::from(value.to_string()))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn vut_rt_format_f64_v1(value: f64) -> *mut ManagedString {
     ManagedString::allocate(crate::VutString::from(value.to_string()))
 }
@@ -318,10 +323,13 @@ pub unsafe extern "C" fn vut_rt_string_from_utf8_v1(
     bytes: *const u8,
     len: usize,
 ) -> *mut ManagedString {
-    if bytes.is_null() && len != 0 {
+    if bytes.is_null() {
+        if len == 0 {
+            return ManagedString::allocate(crate::VutString::from(""));
+        }
         return std::ptr::null_mut();
     }
-    // SAFETY: the compiler emits a static allocation containing at least `len` bytes.
+    // SAFETY: `bytes` is non-null and the caller guarantees `len` readable bytes.
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
     match std::str::from_utf8(bytes) {
         Ok(value) => ManagedString::allocate(crate::VutString::from(value)),

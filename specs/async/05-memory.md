@@ -79,8 +79,8 @@ Examples of managed values that may cross a suspension:
 ```text
 str
 bytes
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 data containing managed fields
 interface values
 dyn

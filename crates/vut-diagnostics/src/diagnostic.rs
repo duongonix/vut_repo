@@ -61,7 +61,9 @@ pub mod codes {
     pub const E1024: DiagnosticCode = DiagnosticCode("E1024");
     pub const E1025: DiagnosticCode = DiagnosticCode("E1025");
     pub const E1026: DiagnosticCode = DiagnosticCode("E1026");
+    pub const E1027: DiagnosticCode = DiagnosticCode("E1027");
     pub const E1028: DiagnosticCode = DiagnosticCode("E1028");
+    pub const E1029: DiagnosticCode = DiagnosticCode("E1029");
     pub const E1104: DiagnosticCode = DiagnosticCode("E1104");
     pub const E2004: DiagnosticCode = DiagnosticCode("E2004");
     pub const E2005: DiagnosticCode = DiagnosticCode("E2005");
@@ -104,6 +106,7 @@ pub mod codes {
     pub const E6012: DiagnosticCode = DiagnosticCode("E6012");
     pub const E6013: DiagnosticCode = DiagnosticCode("E6013");
     pub const E6014: DiagnosticCode = DiagnosticCode("E6014");
+    pub const E6015: DiagnosticCode = DiagnosticCode("E6015");
     pub const E6020: DiagnosticCode = DiagnosticCode("E6020");
     pub const E6021: DiagnosticCode = DiagnosticCode("E6021");
     pub const E6022: DiagnosticCode = DiagnosticCode("E6022");
@@ -134,6 +137,8 @@ pub mod codes {
     pub const E8010: DiagnosticCode = DiagnosticCode("E8010");
     pub const E8011: DiagnosticCode = DiagnosticCode("E8011");
     pub const E8012: DiagnosticCode = DiagnosticCode("E8012");
+    pub const E8013: DiagnosticCode = DiagnosticCode("E8013");
+    pub const E8014: DiagnosticCode = DiagnosticCode("E8014");
     pub const W2001: DiagnosticCode = DiagnosticCode("W2001");
     pub const W5004: DiagnosticCode = DiagnosticCode("W5004");
     pub const W6002: DiagnosticCode = DiagnosticCode("W6002");
@@ -306,6 +311,11 @@ impl DiagnosticSink {
     #[must_use]
     pub fn as_slice(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+    /// Discards diagnostics recorded after `len`, used to roll back a
+    /// speculative parse attempt.
+    pub fn truncate(&mut self, len: usize) {
+        self.diagnostics.truncate(len);
     }
     #[must_use]
     pub fn has_errors(&self) -> bool {

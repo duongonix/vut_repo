@@ -271,7 +271,7 @@ Các construct sau không cần phiên bản DSL riêng:
 - `for`;
 - `match`;
 - block expressions;
-- `result(T,E)`;
+- `result[T,E]`;
 - `?`;
 - ordinary anonymous functions.
 

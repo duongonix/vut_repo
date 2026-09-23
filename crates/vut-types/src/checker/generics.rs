@@ -12,6 +12,7 @@ impl Analyzer<'_> {
             .iter()
             .filter(|symbol| {
                 symbol.module == module
+                    && symbol.span.source() == decl_span.source()
                     && matches!(symbol.kind, vut_resolver::SymbolKind::TypeParameter)
                     && decl_span.start() <= symbol.span.start()
                     && symbol.span.end() <= decl_span.end()
@@ -430,7 +431,8 @@ impl Analyzer<'_> {
                 );
             }
         }
-        if used.len() != signature.parameters.len() {
+        let required = self.required_parameters(symbol, signature.parameters.len());
+        if (0..required).any(|index| !used.contains(&index)) {
             self.error(
                 codes::E6002,
                 "invalid argument count",
@@ -466,6 +468,108 @@ impl Analyzer<'_> {
         });
         self.record_substitution(symbol, &arguments_types, &map);
         self.substitute_type(signature.result, &map)
+    }
+
+    /// Type-checks a call whose type arguments are written explicitly
+    /// (`parse[int](x)`, `convert[str, int](x)`). The specialization is recorded
+    /// exactly like an inferred generic call, so MIR's monomorphization is
+    /// shared rather than duplicated.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit generic checking threads module, symbol, parameters, type arguments, call arguments, span, and context"
+    )]
+    pub(super) fn explicit_generic_function_call(
+        &mut self,
+        module: &Module,
+        symbol: SymbolId,
+        parameters: &[SymbolId],
+        type_arguments: &[TypeId],
+        arguments: &[vut_ast::Argument],
+        span: Span,
+        context: &mut Context,
+    ) -> TypeId {
+        let Some(signature) = self.signatures.get(&symbol).cloned() else {
+            self.error(
+                codes::E2005,
+                "unknown callable",
+                span,
+                "function, method, or constructor was not found",
+            );
+            return self.intern(Type::Error);
+        };
+        let map: HashMap<SymbolId, TypeId> = parameters
+            .iter()
+            .copied()
+            .zip(type_arguments.iter().copied())
+            .collect();
+        let mut used = HashSet::new();
+        for (index, argument) in arguments.iter().enumerate() {
+            let parameter = if let Some(name) = &argument.name {
+                signature
+                    .parameters
+                    .iter()
+                    .position(|(candidate, _)| candidate == &name.text)
+            } else {
+                Some(index)
+            };
+            let Some(index) = parameter.filter(|index| *index < signature.parameters.len()) else {
+                self.error(
+                    codes::E6003,
+                    "invalid argument",
+                    argument.span,
+                    "unknown argument name or position",
+                );
+                continue;
+            };
+            if !used.insert(index) {
+                self.error(
+                    codes::E6004,
+                    "duplicate argument",
+                    argument.span,
+                    "parameter supplied more than once",
+                );
+                continue;
+            }
+            let formal = self.substitute_type(signature.parameters[index].1, &map);
+            let actual = self.expr(module, &argument.value, context, Some(formal));
+            self.compatible(
+                actual,
+                formal,
+                argument.span,
+                codes::E1003,
+                "argument type mismatch",
+            );
+        }
+        let required = self.required_parameters(symbol, signature.parameters.len());
+        if (0..required).any(|index| !used.contains(&index)) {
+            self.error(
+                codes::E6002,
+                "invalid argument count",
+                span,
+                "not all required parameters were supplied",
+            );
+        }
+        let awaited = context.await_span == Some(span);
+        if awaited {
+            context.await_span = None;
+        }
+        self.generic_function_calls.push(GenericCall {
+            call_span: span,
+            template: symbol,
+            arguments: type_arguments.to_vec(),
+        });
+        self.record_substitution(symbol, type_arguments, &map);
+        let result = self.substitute_type(signature.result, &map);
+        if self.async_externs.contains(&symbol) {
+            return self.intern(Type::Future(result));
+        }
+        if self.async_symbols.contains(&symbol) {
+            self.async_calls.insert(span);
+            if !awaited {
+                self.async_misuse(context, span);
+            }
+        }
+        result
     }
 
     /// Records the full `TypeId` substitution for one specialization.
@@ -676,9 +780,13 @@ impl Analyzer<'_> {
                 target_module: None,
                 receiver: None,
                 is_static: false,
+                generic: template_symbol.generic,
             },
         );
         self.instances.insert((template, arguments.to_vec()), id);
+        if let Some(defaults) = self.parameter_defaults.get(&template).cloned() {
+            self.parameter_defaults.insert(id, defaults);
+        }
         let parameters = self
             .generic_params
             .get(&template)
@@ -688,6 +796,24 @@ impl Analyzer<'_> {
             .into_iter()
             .zip(arguments.iter().copied())
             .collect();
+        // A generic function specialization needs its own substituted signature
+        // so call sites can resolve named arguments and coerce them to the
+        // concrete parameter types.
+        if let Some(signature) = self.signatures.get(&template).cloned() {
+            let substituted = signature
+                .parameters
+                .iter()
+                .map(|(name, ty)| (name.clone(), self.substitute_type(*ty, &map)))
+                .collect();
+            let result = self.substitute_type(signature.result, &map);
+            self.signatures.insert(
+                id,
+                Signature {
+                    parameters: substituted,
+                    result,
+                },
+            );
+        }
         if let Some(fields) = self.fields.get(&template).cloned() {
             let substituted = fields
                 .into_iter()

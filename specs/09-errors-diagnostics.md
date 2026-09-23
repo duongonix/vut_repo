@@ -208,8 +208,8 @@ Example:
 
 ```text
 6 | user = User(
-7 |   name = "Ha",
-8 |   age = "20"
+7 |   name: "Ha",
+8 |   age: "20"
   |         ^^^^ expected `int`, found `str`
 9 | )
 ```
@@ -612,7 +612,7 @@ Example:
 error[E4102]: `Dog` does not satisfy interface `Animal`
   --> src/main.vut:10:6
    |
-10 | play(Dog(name = "Milo"))
+10 | play(Dog(name: "Milo"))
    |      ^^^^^^^^^^^^^^^^^^ `Dog` cannot be used as `Animal`
    |
    = missing method:

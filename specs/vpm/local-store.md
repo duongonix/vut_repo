@@ -7,7 +7,7 @@ VPM stores downloaded packages globally rather than copying dependencies into ev
 Default conceptual root:
 
 ```text
-~/.vpm/
+~/.vut/
 ```
 
 ---
@@ -17,15 +17,22 @@ Default conceptual root:
 Canonical direction:
 
 ```text
-~/.vpm/
+~/.vut/
 ├── packages/
 ├── cache/
 │   ├── downloads/
 │   ├── registry/
-│   └── build/
+│   ├── build/
+│   └── exec/          # ad-hoc `vpm exec` builds
 ├── bin/
+│   └── installs.toml  # registry of globally installed CLI packages
 └── config.toml
 ```
+
+`~/.vut/bin` holds globally installed CLI package commands. `installs.toml`
+records which package owns each command so `vpm install`/`vpm uninstall` can
+detect collisions and clean up deterministically. The official global root is
+always `~/.vut` (`VUT_HOME` override); there is no `~/.vpm`.
 
 ---
 
@@ -34,7 +41,7 @@ Canonical direction:
 Packages are source-aware.
 
 ```text
-~/.vpm/packages/
+~/.vut/packages/
 ├── registry/
 │   └── math/
 │       ├── 0.1.1/
@@ -55,12 +62,12 @@ Packages are source-aware.
 
 ---
 
-## 4. No `v` Prefix Locally
+## 4. Version Directory Naming
 
 Remote:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 Local:
@@ -69,7 +76,8 @@ Local:
 math/1.2.0/
 ```
 
-The local version directory does not require the `v` prefix.
+Both remote and local version directories use the bare semantic version with no
+`v` prefix.
 
 ---
 
@@ -78,7 +86,7 @@ The local version directory does not require the `v` prefix.
 Remote:
 
 ```text
-nam/abc/libs/math/v1.2.0
+nam/abc/libs/math/1.2.0
 ```
 
 must preserve enough source identity locally to avoid collision.
@@ -86,7 +94,7 @@ must preserve enough source identity locally to avoid collision.
 Conceptual:
 
 ```text
-~/.vpm/packages/github/nam/abc/libs/math/1.2.0/
+~/.vut/packages/github/nam/abc/libs/math/1.2.0/
 ```
 
 ---
@@ -101,7 +109,7 @@ Example:
 1.2.0/
 ├── vpm.toml
 ├── src/
-│   ├── lib.vut
+│   ├── mod.vut
 │   └── ...
 ├── README.md
 └── LICENSE
@@ -261,7 +269,7 @@ VPM may remove/redownload it when safe, otherwise report a clear error.
 2. Store is source-aware.
 3. Packages contain source code.
 4. No `.vutlib`.
-5. Local version directories omit `v`.
+5. Version directories use bare `<semver>` with no `v` prefix.
 6. Store contents are VPM-managed.
 7. Partial installs must never become valid packages.
 8. Concurrent installs must be safe.

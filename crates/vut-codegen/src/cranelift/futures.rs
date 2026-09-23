@@ -41,13 +41,27 @@ pub(super) fn define_future_thunks(
         };
         let symbol_index = u32::try_from(mir.symbol.0)
             .map_err(|_| CodegenError::Backend("too many symbols for backend namespace".into()))?;
+        // A capturing callable owns its environment through the spawned task.
+        let captures = program.closure_layouts.contains_key(&mir.symbol);
         if !mir.is_async {
-            define_sync_task_thunk(module, mir, &program.layouts, declarations, resume_id)?;
-            define_noop_drop(module, symbol_index, drop_id)?;
+            define_sync_task_thunk(
+                module,
+                mir,
+                &program.layouts,
+                captures,
+                declarations,
+                resume_id,
+            )?;
+            define_sync_drop(module, symbol_index, drop_id, captures)?;
             continue;
         }
         let Some(layout) = program.frames.get(&mir.symbol) else {
             continue;
+        };
+        let env_offset = if captures {
+            layout.parameters.first().map(|slot| slot.offset)
+        } else {
+            None
         };
         // A poll body is its own `(frame, out) -> i32` resume entry, so it needs
         // no resume thunk.
@@ -62,7 +76,7 @@ pub(super) fn define_future_thunks(
                 resume_id,
             )?;
         }
-        define_drop_thunk(module, mir, layout, symbol_index, drop_id)?;
+        define_drop_thunk(module, mir, layout, env_offset, symbol_index, drop_id)?;
     }
     Ok(())
 }
@@ -73,6 +87,7 @@ fn define_sync_task_thunk(
     module: &mut ObjectModule,
     mir: &vut_mir::Function,
     layouts: &vut_mir::LayoutTable,
+    captures: bool,
     declarations: &HashMap<vut_mir::SymbolId, (FuncId, Signature)>,
     thunk_id: FuncId,
 ) -> Result<(), CodegenError> {
@@ -90,17 +105,23 @@ fn define_sync_task_thunk(
     builder.append_block_params_for_function_params(block);
     builder.switch_to_block(block);
     builder.seal_block(block);
+    let op = builder.block_params(block)[0];
     let out = builder.block_params(block)[1];
     let (body_id, _) = declarations[&mir.symbol];
     let body_ref = module.declare_func_in_func(body_id, builder.func);
     let aggregate = mir.return_type.filter(|ty| layouts.is_aggregate(*ty));
-    let call = if aggregate.is_some() {
-        // Aggregate returns take a caller-provided destination (sret); the task
-        // buffer is exactly that destination.
-        builder.ins().call(body_ref, &[out])
-    } else {
-        builder.ins().call(body_ref, &[])
-    };
+    // A capturing closure body takes its environment (the closure block's
+    // capture region) as a hidden leading parameter after the sret destination.
+    let mut args = Vec::new();
+    if aggregate.is_some() {
+        args.push(out);
+    }
+    if captures {
+        let base = builder.ins().band_imm_u(op, i64::MAX);
+        let environment = builder.ins().iadd_imm_u(base, 32_i64);
+        args.push(environment);
+    }
+    let call = builder.ins().call(body_ref, &args);
     if aggregate.is_none()
         && let Some(ty) = mir.return_type
         && layouts.types[ty.0].repr != vut_mir::ValueRepr::Void
@@ -118,11 +139,13 @@ fn define_sync_task_thunk(
     Ok(())
 }
 
-/// Defines the no-op drop thunk for a sync task (it owns no frame).
-fn define_noop_drop(
+/// Defines the task drop thunk for a sync callable. It releases the captured
+/// environment when the callable captures, then returns.
+fn define_sync_drop(
     module: &mut ObjectModule,
     symbol_index: u32,
     drop_id: FuncId,
+    captures: bool,
 ) -> Result<(), CodegenError> {
     let mut signature = Signature::new(c_call_conv(module));
     signature.params.push(AbiParam::new(types::I64));
@@ -136,6 +159,17 @@ fn define_noop_drop(
     builder.append_block_params_for_function_params(block);
     builder.switch_to_block(block);
     builder.seal_block(block);
+    if captures {
+        let op = builder.block_params(block)[0];
+        let release = runtime_function(
+            module,
+            vut_runtime::abi::CLOSURE_RELEASE,
+            &[types::I64],
+            &[],
+        )?;
+        let release_ref = module.declare_func_in_func(release, builder.func);
+        builder.ins().call(release_ref, &[op]);
+    }
     builder.ins().return_(&[]);
     builder.finalize(module.target_config());
     module
@@ -206,12 +240,13 @@ fn define_resume_thunk(
     Ok(())
 }
 
-/// Defines the drop thunk: release the in-flight child (if any) and then the
-/// frame exactly once.
+/// Defines the drop thunk: release the in-flight child (if any), release the
+/// captured environment (if any), and then free the frame exactly once.
 fn define_drop_thunk(
     module: &mut ObjectModule,
     mir: &vut_mir::Function,
     layout: &vut_mir::FrameLayout,
+    env_offset: Option<usize>,
     symbol_index: u32,
     drop_id: FuncId,
 ) -> Result<(), CodegenError> {
@@ -248,6 +283,27 @@ fn define_drop_thunk(
         builder.ins().call(drop_child_ref, &[child]);
         builder.ins().jump(done_block, &[]);
         builder.switch_to_block(done_block);
+    }
+    if let Some(offset) = env_offset {
+        // The frame holds the closure's environment (`base + 32`). Recover the
+        // tagged closure and release the task's reference so the captures are
+        // dropped exactly once.
+        let environment = builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            frame,
+            require_i32(offset)?,
+        );
+        let base = builder.ins().iadd_imm_u(environment, -32_i64);
+        let tagged = builder.ins().bor_imm_u(base, i64::MIN);
+        let release = runtime_function(
+            module,
+            vut_runtime::abi::CLOSURE_RELEASE,
+            &[types::I64],
+            &[],
+        )?;
+        let release_ref = module.declare_func_in_func(release, builder.func);
+        builder.ins().call(release_ref, &[tagged]);
     }
     let free = runtime_function(
         module,
@@ -431,6 +487,24 @@ pub(super) fn define_entry_shim(
         .functions
         .iter()
         .find(|function| function.symbol == entry);
+    // Runtime ABI safety net: the linked runtime must report the compiler's ABI
+    // revision. The compile-time manifest check is the primary diagnostic; this
+    // traps immediately if an incompatible runtime is linked (and requires the
+    // symbol to exist at link time).
+    {
+        let version = runtime_function(module, vut_runtime::abi::ABI_VERSION, &[], &[types::I64])?;
+        let version = module.declare_func_in_func(version, builder.func);
+        let called = builder.ins().call(version, &[]);
+        let reported = builder.inst_results(called)[0];
+        let matches = builder.ins().icmp_imm_u(
+            IntCC::Equal,
+            reported,
+            i64::from(super::RUNTIME_ABI_VERSION),
+        );
+        builder
+            .ins()
+            .trapz(matches, cranelift_codegen::ir::TrapCode::unwrap_user(3));
+    }
     let frame_layout = program.frames.get(&entry);
     let is_poll = mir.is_some_and(|function| function.is_poll);
     let exit = if is_poll {

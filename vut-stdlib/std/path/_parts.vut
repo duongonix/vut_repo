@@ -1,0 +1,62 @@
+# Platform lexical prefix/component parsing, shared by all path operations.
+import os
+
+data Parsed:
+  prefix: str = ""
+  rooted: bool = false
+  verbatim: bool = false
+  values: list[str] = @[]
+
+fn windows() -> bool:
+  os.name() == "windows"
+
+fn separator() -> str:
+  if windows():
+    return "\\"
+  "/"
+
+fn parse(value: str) -> Parsed:
+  result = Parsed()
+  text = value
+  if windows():
+    text = text.replace("/", "\\")
+    if text.starts_with("\\\\"):
+      fields: list[str] = @[]
+      for field in text.split("\\"):
+        if not field.is_empty():
+          fields.push(field)
+      if fields.len() >= 2:
+        result.verbatim = fields.at(0) == "?" or fields.at(0) == "."
+        count = 2
+        if result.verbatim and fields.at(1) == "UNC" and fields.len() >= 4:
+          count = 4
+        result.prefix = "\\\\"
+        index = 0
+        for index < count:
+          if index > 0:
+            result.prefix = result.prefix + "\\"
+          result.prefix = result.prefix + fields.at(index)
+          index = index + 1
+        result.rooted = true
+        for field, index in fields:
+          if index >= count:
+            result.values.push(field)
+        return result
+    if text.find(":") == 1 and "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(text.substring(0, 1)):
+      result.prefix = text.substring(0, 2)
+      text = text.substring(2, text.byte_len())
+  result.rooted = text.starts_with(separator())
+  for field in text.split(separator()):
+    if not field.is_empty():
+      result.values.push(field)
+  result
+
+fn render(parsed: Parsed) -> str:
+  value = parsed.prefix
+  if parsed.rooted:
+    value = value + separator()
+  for part, index in parsed.values:
+    if index > 0:
+      value = value + separator()
+    value = value + part
+  value

@@ -1,5 +1,9 @@
 # Vut Feature Status
 
+M1.3 Standard Library remains **Partial**. See the
+[handoff checkpoint](m1-3-checkpoint.md) for verified changes, confirmed numeric
+and Child lifetime semantics, and remaining execution steps.
+
 ## 1. Purpose
 
 This file tracks implementation status for Vut features.
@@ -100,7 +104,9 @@ Feature has been explicitly rejected from the language/toolchain.
 | INDENT                          | Complete    |    02 |
 | DEDENT                          | Complete    |    02 |
 | Parentheses                     | Complete    |    02 |
-| `@(...)` list literals          | Complete    |    02 |
+| Brackets for generics/indexing  | Complete    | current |
+| `[...]` array literals          | Complete    | current |
+| `@[...]` list literals          | Complete    |    02 |
 | Range `..`                      | Complete    |    02 |
 | Inclusive range `..=`           | Complete    |    02 |
 | Relative-import dots            | Complete    |    02 |
@@ -136,7 +142,14 @@ Feature has been explicitly rejected from the language/toolchain.
 | Named arguments          | Complete    |    03 |
 | Method calls             | Complete    |    03 |
 | Field access             | Complete    |    03 |
-| List literals            | Complete    |    03 |
+| Generic/type `[...]` application | Complete | current |
+| Explicit generic calls (`parse[int](x)`) | Complete | current |
+| Array `[...]` literals   | Complete    | current |
+| List `@[...]` literals   | Complete    | current |
+| Map `(...)` literals     | Complete    | current |
+| Collection indexing      | Complete    | current |
+| Indexed assignment       | Complete    | current |
+| Default parameters       | Complete    | current |
 | Range expressions        | Complete    |    03 |
 | Template-string AST      | Complete    |    03 |
 | Parser recovery          | Complete    |    03 |
@@ -232,7 +245,7 @@ constant binding) is blocked on const-depth semantics in `specs/08`.
 | ---------------------------------- | ----------- | ------: |
 | Attribute syntax `@name`           | Complete    | current |
 | Attribute arguments                | Complete    | current |
-| List literal `@(...)` compatibility | Complete   | current |
+| List literal `@[...]` compatibility | Complete   | current |
 | AST attribute representation       | Complete    | current |
 | HIR/semantic attribute metadata    | Complete    | current |
 | Built-in attribute registry        | Complete    | current |
@@ -314,19 +327,19 @@ constant binding) is blocked on const-depth semantics in `specs/08`.
 
 | Feature                      | Status      | Phase |
 | ---------------------------- | ----------- | ----: |
-| `list(T)` type               | Complete    |    07 |
+| `list[T]` type               | Complete    |    07 |
 | Homogeneous list enforcement | Complete    |    07 |
-| Explicit `list(dyn)`         | Complete    |    07 |
+| Explicit `list[dyn]`         | Complete    |    07 |
 | Empty-list contextual typing | Complete    |    07 |
-| `@(...)` list literal        | Complete    |    09 |
-| `map(K, V)` type             | Complete    |    07 |
-| `map((K, V), ...)` literal   | Complete    | current |
+| `@[...]` list literal        | Complete    |    09 |
+| `map[K, V]` type             | Complete    |    07 |
+| `map[(K, V), ...]` literal   | Complete    | current |
 | Map runtime                  | Complete    |    14 |
 | List runtime utility API     | Complete    |    14 |
 | Compiler-managed list ABI    | Complete    | current |
 | Native list element layouts  | Complete    | current |
-| `array(T, N)` type           | Complete    |  current |
-| `array(...)` literal         | Complete    |  current |
+| `[T, N]` type           | Complete    |  current |
+| `[...]` literal         | Complete    |  current |
 | Inline native array layout   | Complete    |  current |
 | Array len/at/set/fill        | Complete    |  current |
 | Array first/last             | Complete    |  current |
@@ -353,7 +366,7 @@ constant binding) is blocked on const-depth semantics in `specs/08`.
 | `.any()` / `.all()` (compiler-lowered, short-circuit) | Complete | current |
 | `.find_index()` (compiler-lowered, short-circuit) | Complete | current |
 | `.sort_by()` (compiler-lowered, stable) | Complete | current |
-| `.join()` (`list(str)`, native runtime) | Complete | current |
+| `.join()` (`list[str]`, native runtime) | Complete | current |
 | `.at()`                      | Complete    | current |
 | `.set()`                     | Complete    | current |
 | `.slice()`                   | Complete    | current |
@@ -406,10 +419,16 @@ constant binding) is blocked on const-depth semantics in `specs/08`.
 | Implicit final-expression return | Complete    |    08 |
 | Explicit early `return`          | Complete    |    08 |
 | Named arguments                  | Complete    |    08 |
+| Default parameters               | Complete    | current |
 | Recursion                        | Complete    |    08 |
 | General overloading              | Deferred    |     — |
 | Non-capturing lambdas            | Complete    |     — |
-| Capturing closures               | Deferred    |     — |
+| Capturing closures               | Complete    |  M2.1 |
+
+Capturing closures support copy-type, managed, move-only, and receiver (`self`)
+captures with by-value semantics: a managed value moves into the environment at
+its last use or is retained when still used afterwards. See
+[m2-1-closure-capture](m2-1-closure-capture.md).
 
 ## Receiver Functions
 
@@ -429,11 +448,11 @@ not a DSL or Vutcom subsystem (`specs/vutcom/` is superseded by `specs/receiver/
 | Nested receiver scopes                              | Complete    |     — |
 | Receiver diagnostics (`E1020`–`E1026`)              | Complete    |     — |
 | Non-escaping zero-heap receiver closures            | Complete    |     — |
-| Capturing receiver closures                         | Deferred    |     — |
+| Capturing receiver closures                         | Complete    |  M2.1 |
 
-Receiver functions are non-capturing for now; a receiver body that references an
-enclosing local still reports `E1013`. Capturing closures use the generic closure
-escape/ownership rules when implemented, with no receiver-specific box.
+Receiver functions may capture enclosing bindings; receiver and captures are
+distinct, with no receiver-specific box. Capturing closures use the generic
+closure escape/ownership rules.
 
 ---
 
@@ -489,7 +508,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Interface cycle detection            | Complete    |    11 |
 | Interface-to-interface compatibility | Complete    |    11 |
 | Satisfaction cache                   | Complete    |    11 |
-| `list(Interface)`                    | Complete    |    11 |
+| `list[Interface]`                    | Complete    |    11 |
 | `impl`                               | Removed     |     — |
 | `implements`                         | Removed     |     — |
 | Class inheritance                    | Removed     |     — |
@@ -746,7 +765,7 @@ escape/ownership rules when implemented, with no receiver-specific box.
 | Source-only packages                  | Complete    |    18 |
 | `.vutlib`                             | Removed     |     — |
 | Package version folders               | Complete    |    18 |
-| `v<semver>` resolution                | Complete    |    18 |
+| `<semver>` resolution (no `v` prefix) | Complete    |    18 |
 | Default registry provider             | Complete    |    18 |
 | GitHub provider                       | Complete    |    18 |
 | GitLab provider                       | Complete    |    18 |
@@ -935,6 +954,63 @@ invalidation.
 | Feature                          | Status   |
 | -------------------------------- | -------- |
 | Async/await (single-thread)      | Complete |
+| Vutcon M:N worker scheduler      | Complete |
+| Typed `channel[T]` (runtime)     | Complete |
+| Typed `channel[T]` (compiler)    | Complete (core; `for` iteration pending) |
+| `vut(...)` closure capture       | Complete |
+| M2.4 Optimizer & Performance     | Complete (core; perf regression gate deferred) |
+| M2.4.2 MIR verifier + safe passes | Complete |
+| M2.4.3 Ownership / Drop / RC opts | Complete |
+| M2.4.4 Escape analysis / copy elision | Complete (core; stack allocation deferred) |
+| M2.4.5 Bounds-check / collection opts | Complete |
+| M2.4.6 Async / closure / Vutcon / Channel opts | Complete (core; frame compaction deferred) |
+| M2.4.7 Backend / release pipeline | Complete (core; target-CPU and size mode deferred) |
+| M2.4.8 Differential + regression gate | Complete (differential in CI; perf gate manual) |
+| M2.4 Release optimizer safety    | Complete (DCE side-effect bug fixed in M2.4.2) |
+| M2.5 Native/FFI & package hardening | In Progress |
+| M2.5.1 Native ABI v1 spec          | Complete (spec) |
+| M2.5.2 FFI type/layout/ownership correctness | Complete |
+| M2.5.3 Native resource & error hardening | Complete (core; env review deferred) |
+| M2.5.4 Cross-platform native linking | Complete |
+| M2.5.5 VPM native artifacts/packages | Complete |
+| M2.5.5.1 Package model + `src/mod.vut` + `[[bin]]` | Complete |
+| M2.5.5.2 Command semantics + CLI surface | Complete |
+| M2.5.5.3 Registry/source abstraction + `<semver>` layout | Complete |
+| M2.5.5.4 Deterministic lockfile v2 | Complete |
+| M2.5.5.5 Self-hosted registry + identity/conflict | Complete |
+| M2.5.5.6 Global CLI install/uninstall/exec | Complete |
+| M2.5.5.7 Native source/build metadata | Complete |
+| M2.5.5.8 `native-artifacts.toml` + trusted SHA-256 + cache | Complete |
+| M2.5.5.9 Transitive native propagation + `LinkPlan` | Complete |
+| M2.5.5.10 Publish workflow | Complete |
+| M2.5.5.11 Tests/CI/docs | Complete |
+| M2.5.6 Toolchain discovery & installer integration | Complete (core; SDK auto-provision deferred) |
+| M2.5.7 ABI versioning + compatibility | Complete |
+| M2.5.8 Cross-platform production gate | Planned |
+| M2.6 Advanced optimization & performance finalization | Complete |
+| M2.6.1 Benchmark & measurement infrastructure | Complete |
+| M2.6.2 MIR analysis framework + pass manager + verifier | Complete |
+| M2.6.3 SCCP + MIR CSE / value propagation | Complete |
+| M2.6.4 DCE/ADCE + dead store + store-to-load forwarding | Complete |
+| M2.6.5 Loop canonicalization + LICM + bounds II | Complete (LICM + bounds II; IV/strength-reduce deferred) |
+| M2.6.6 Escape analysis | Complete (analysis; consumed by later phases) |
+| M2.6.7 SROA + stack allocation | Complete (SROA for non-escaping copyable aggregates; stack promotion deferred) |
+| M2.6.8 Ownership / RC / COW optimization II | Complete (RC across unconditional-jump chains) |
+| M2.6.9 Allocation & buffer optimization | Complete (constant string folding; runtime string builder deferred) |
+| M2.6.10 Call graph + advanced inlining | Complete (call graph + tiny pure scalar expression inlining; cost-model/aggressive inlining deferred) |
+| M2.6.11 Devirtualization + interface specialization | Complete (analysis; rewrite deferred pending interface-data op) |
+| M2.6.12 Whole-program optimization | Complete (reachability analysis; removal deferred pending entry-root API) |
+| M2.6.13 Closure optimization | Complete (devirtualize known non-capturing indirect calls) |
+| M2.6.14 Vutcon / async optimization II | Complete (dead scalar spills + overwritten frame states; frame compaction deferred) |
+| M2.6.15 Target CPU / feature + codegen settings (opt-in native) | Complete |
+| M2.6.16 SIMD enablement + vectorization feasibility | Complete (enablement + feasibility report; no auto-vectorizer) |
+| M2.6.17 PGO feasibility + minimal PGO | Complete (feasibility + design report; no PGO implementation) |
+| M2.6.18 Performance certification gate | Complete |
+| `bool` across Native ABI v1       | Complete (M2.5.2; target C `_Bool` ABI) |
+| Runtime Handle ABI documented     | Complete (M2.5.1; `specs/ffi/06-native-abi-v1.md`) |
+| Work stealing (per-worker queues)| Complete |
+| Blocking pool offload (fs)       | Complete |
+| Task panic isolation             | Complete |
 | Full concurrency                 | Deferred |
 | Thread-sharing model             | Deferred |
 | Full generic declaration syntax  | Complete |
@@ -944,7 +1020,7 @@ invalidation.
 | Extension methods (same module)  | Complete |
 | General overloading              | Deferred |
 | Non-capturing lambdas            | Complete |
-| Capturing closures               | Deferred |
+| Capturing closures               | Complete |
 | Reflection                       | Deferred |
 | Explicit reference syntax        | Deferred |
 | Source-level borrow checker      | Deferred |
@@ -952,7 +1028,7 @@ invalidation.
 | `dyn` value boxing/ownership/transport/display | Complete |
 | `dyn` runtime type test / downcast / dispatch  | Deferred (no normative syntax) |
 | Cross-module extension methods   | Deferred |
-| FFI v1: `extern "C"`, `ptr(T)`, `@repr(C)`, `@link_name`, `unsafe:` | Complete |
+| FFI v1: `extern "C"`, `ptr[T]`, `@repr(C)`, `@link_name`, `unsafe:` | Complete |
 | FFI callbacks (non-capturing Vut functions/lambdas) | Complete |
 | Native static-library linking (`[native]`, CLI, LinkPlan) | Complete |
 | `opaque data` native handles       | Complete |
@@ -975,6 +1051,12 @@ invalidation.
 | JIT                | Deferred |
 | VM backend         | Deferred |
 | LSP                | In Progress |
+| LSP project analysis foundation (module graph, overlays, project/dependency/stdlib roots, target config) | Complete |
+| LSP diagnostics parity (compiler codes/details, related locations, project-wide publishing, document versions) | Complete |
+| LSP shared semantic query layer | Complete |
+| LSP cross-file definitions/references and document/workspace symbols | Complete |
+| LSP semantic hover, scope/member completion and signature help | Complete |
+| LSP safe resolver-backed cross-file rename | Complete |
 | Debugger           | Deferred |
 | Package publishing | Deferred |
 | VPM authentication | Deferred |
@@ -1047,14 +1129,14 @@ fn main():
   name = input("Your name: ")
 
   user = User(
-    name = name,
-    age = 20
+    name: name,
+    age: 20
   )
 
   print("Welcome ")
   out("$user.name")
 
-  values = @(10, 20, 30)
+  values = @[10, 20, 30]
 
   for value, index in values:
     out("$index -> $value")

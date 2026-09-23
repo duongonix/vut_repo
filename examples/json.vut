@@ -1,7 +1,7 @@
 # JSON parsing, dynamic access, and serialization.
 #
 # `json.parse` yields a typed `json.Value`; accessors are checked (no silent
-# coercion) and return `result(_, json.Error)`. Object key order is not
+# coercion) and return `result[_, json.Error]`. Object key order is not
 # significant and serialization does not promise a specific order.
 import json
 import json at Value, EncodeOptions
@@ -39,7 +39,7 @@ fn show_value(value: Value):
   out("compact: $(json.stringify(value))")
   out("pretty:")
   out(json.stringify_pretty(value))
-  options = EncodeOptions(pretty = true, indent = 2)
+  options = EncodeOptions(pretty: true, indent: 2)
   out("options: $(json.stringify_with(value, options))")
 
 fn show(source: str):

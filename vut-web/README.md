@@ -79,11 +79,18 @@ Keep their text/data in Markdown. For tabbed content, pass a data array declared
 in the Markdown script to `ContentTabs`; do not embed Svelte snippet blocks
 directly in Markdown. `Tabs` supplies keyboard behavior and unique ARIA IDs.
 
-The source of truth is `../specs/`, especially `../specs/vut-web/`. Documentation
-distinguishes specified behavior from distributed-toolchain availability. The
-stdlib release reference, publishing workflow, and optional narrowing details
-remain explicitly marked where the source specifications do not establish a
-verified release API.
+Read `../specs/`, `../examples/`, `../crates/`, and the public
+`../vut-stdlib/std/` modules before changing language claims. Current syntax
+takes precedence over explicitly superseded or stale prose, with the user's
+approval. Record reconciliations in the Source compatibility reference page.
+The docs describe this checkout, not a guarantee about every distributed release.
+Only files within `vut-web/` are changed by this website task.
+
+The parent repository currently ignores `/vut-web`. Existing tracked files still
+appear in diffs, but newly added guides/tests do not appear in ordinary Git status.
+They exist on disk. Review and explicitly include intended source files before
+committing; do not force-add generated build, dependency, or test-output folders.
+This task does not change the parent `.gitignore`.
 
 ## Tests
 

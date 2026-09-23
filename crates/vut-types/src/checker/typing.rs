@@ -23,11 +23,29 @@ impl Analyzer<'_> {
         )
     }
 
+    /// Number of leading parameters a call must supply: every parameter up to
+    /// the first one with a default value.
+    pub(super) fn required_parameters(&self, symbol: SymbolId, total: usize) -> usize {
+        self.parameter_defaults
+            .get(&symbol)
+            .map_or(total, |defaults| {
+                defaults
+                    .iter()
+                    .take_while(|default| default.is_none())
+                    .count()
+            })
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "argument checking threads the callable, arguments, required arity, span, context, and ABI borrow rule"
+    )]
     pub(super) fn arguments(
         &mut self,
         module: &Module,
         signature: &Signature,
         arguments: &[vut_ast::Argument],
+        required: usize,
         span: Span,
         context: &mut Context,
         borrow_resources: bool,
@@ -73,7 +91,7 @@ impl Analyzer<'_> {
             let formal = signature.parameters[index].1;
             let actual = self.expr(module, &arg.value, context, Some(formal));
             // A native (`extern`) parameter of pointer type borrows a
-            // `resource(T)` argument at the ABI boundary: the owner is not
+            // `resource[T]` argument at the ABI boundary: the owner is not
             // moved, retained, or released. This is an ABI borrow, not a
             // general language coercion.
             if borrow_resources && arg.name.is_none() && self.resource_abi_borrow(formal, actual) {
@@ -87,7 +105,7 @@ impl Analyzer<'_> {
                 "argument type mismatch",
             );
         }
-        if used.len() != signature.parameters.len() {
+        if (0..required).any(|index| !used.contains(&index)) {
             self.error(
                 codes::E6002,
                 "invalid argument count",
@@ -97,8 +115,8 @@ impl Analyzer<'_> {
         }
     }
 
-    /// Whether `actual` (`resource(T)`) may be borrowed by `formal` (`ptr(T)`)
-    /// at an `extern` boundary. `ptr(void)` accepts any resource.
+    /// Whether `actual` (`resource[T]`) may be borrowed by `formal` (`ptr[T]`)
+    /// at an `extern` boundary. `ptr[void]` accepts any resource.
     fn resource_abi_borrow(&self, formal: TypeId, actual: TypeId) -> bool {
         let Type::Pointer(pointer) = self.types[formal.0] else {
             return false;
@@ -124,7 +142,7 @@ impl Analyzer<'_> {
                     codes::E6003,
                     "data fields must be named",
                     arg.span,
-                    "use `field = value`",
+                    "use `field: value`",
                 );
                 continue;
             };
@@ -272,12 +290,16 @@ impl Analyzer<'_> {
                 "i16" => value <= i16::MAX as u128,
                 "i32" => value <= i32::MAX as u128,
                 "i64" => value <= i64::MAX as u128,
+                "isize" => value < (1_u128 << (self.pointer_bytes * 8 - 1)),
                 "u8" => value <= u128::from(u8::MAX),
                 "u16" => value <= u128::from(u16::MAX),
                 "u32" => value <= u128::from(u32::MAX),
                 "u64" => value <= u128::from(u64::MAX),
+                "usize" => value < (1_u128 << (self.pointer_bytes * 8)),
                 _ => true,
             },
+            // `int` is a 64-bit signed integer; bound its literals too.
+            Type::Int => value <= i64::MAX as u128,
             _ => true,
         }
     }
@@ -288,12 +310,33 @@ impl Analyzer<'_> {
             _ => false,
         }
     }
+    pub(super) fn negative_integer_fits(&self, text: &str, id: TypeId) -> bool {
+        let Ok(magnitude) = text.replace('_', "").parse::<u128>() else {
+            return false;
+        };
+        let bits = match &self.types[id.0] {
+            Type::Int => 64,
+            Type::Numeric(name) => match name.as_str() {
+                "i8" => 8,
+                "i16" => 16,
+                "i32" => 32,
+                "i64" => 64,
+                "isize" => self.pointer_bytes * 8,
+                _ => return self.integer_fits(text, id),
+            },
+            _ => return false,
+        };
+        magnitude <= (1_u128 << (bits - 1))
+    }
     pub(super) fn is_float(&self, id: TypeId) -> bool {
         match &self.types[id.0] {
             Type::Float => true,
             Type::Numeric(name) => name.starts_with('f'),
             _ => false,
         }
+    }
+    pub(super) fn is_unsigned(&self, id: TypeId) -> bool {
+        matches!(&self.types[id.0], Type::Numeric(name) if name.starts_with('u'))
     }
     pub(super) fn ffi_error(&mut self, title: &str, span: Span, message: &str, ty: TypeId) {
         let mut diagnostic = Diagnostic::error(codes::E8004, title, span, message);
@@ -319,7 +362,7 @@ impl Analyzer<'_> {
         None
     }
     /// FFI boundary safety: like [`Self::ffi_safe`] but rejects by-value
-    /// `data` values. FFI v1 passes aggregate data through `ptr(T)` only.
+    /// `data` values. FFI v1 passes aggregate data through `ptr[T]` only.
     pub(super) fn ffi_boundary_safe(&self, id: TypeId, allow_void: bool) -> bool {
         match &self.types[id.0] {
             // Aggregates stay pointer-only in FFI v1.
@@ -338,11 +381,16 @@ impl Analyzer<'_> {
     pub(super) fn ffi_safe(&self, id: TypeId, allow_void: bool) -> bool {
         match &self.types[id.0] {
             Type::Void => allow_void,
-            Type::Numeric(_) | Type::Resource(_) => true,
+            // `bool` maps to the target C ABI's C `_Bool`.
+            Type::Numeric(_) | Type::Resource(_) | Type::Bool => true,
             Type::Pointer(inner) => match self.types[inner.0] {
-                Type::Void | Type::Numeric(_) | Type::Pointer(_) | Type::FunctionPointer { .. } => {
-                    true
-                }
+                // A pointer to a managed handle is not a meaningful C type.
+                Type::Resource(_) => false,
+                Type::Void
+                | Type::Numeric(_)
+                | Type::Bool
+                | Type::Pointer(_)
+                | Type::FunctionPointer { .. } => true,
                 Type::Data(symbol) => {
                     self.opaque_data.contains(&symbol)
                         || self.attributes.data_repr.contains_key(&symbol)
@@ -403,6 +451,7 @@ impl Analyzer<'_> {
                 let parameters = parameters.clone();
                 let result = *result;
                 abi == "C"
+                    && !self.is_capturing_closure(symbol)
                     && self
                         .signatures
                         .get(&symbol)
@@ -424,6 +473,16 @@ impl Analyzer<'_> {
             }
             _ => false,
         }
+    }
+
+    /// Returns `true` when `symbol` is a lambda that captures enclosing bindings.
+    fn is_capturing_closure(&self, symbol: SymbolId) -> bool {
+        self.resolution
+            .lambda_symbols
+            .iter()
+            .find(|(_, candidate)| **candidate == symbol)
+            .and_then(|(span, _)| self.closure_captures.get(span))
+            .is_some_and(|captures| !captures.is_empty())
     }
 
     /// Returns the receiver, parameter types, and result of a callable type, or
@@ -638,6 +697,23 @@ impl Analyzer<'_> {
         code: vut_diagnostics::DiagnosticCode,
         title: &str,
     ) {
+        // A capturing closure is a tagged heap pointer, not a function address,
+        // so it must never be passed as an `extern "C"` callback.
+        let capturing = match (&self.types[actual.0], &self.types[expected.0]) {
+            (Type::Function(symbol), Type::FunctionPointer { .. }) => {
+                self.is_capturing_closure(*symbol)
+            }
+            _ => false,
+        };
+        if capturing {
+            self.diagnostics.push(Diagnostic::error(
+                codes::E8013,
+                "capturing closure cannot cross the FFI boundary",
+                span,
+                "an `extern \"C\"` callback must be a non-capturing function or lambda",
+            ));
+            return;
+        }
         if !self.is_compatible(actual, expected) {
             // Null/optional misuse has dedicated diagnostics (`specs/22`):
             // `null` where a non-optional `T` is required is `E1006`; using a

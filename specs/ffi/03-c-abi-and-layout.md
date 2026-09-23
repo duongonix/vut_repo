@@ -9,6 +9,9 @@ FFI v1 chỉ support:
 C ABI
 ```
 
+Xem `specs/ffi/06-native-abi-v1.md` cho normative Public Native ABI v1 và
+Vut-internal Runtime Handle ABI.
+
 Compiler phải sử dụng calling convention tương ứng target.
 
 Không hardcode ABI chỉ cho một OS.
@@ -51,12 +54,15 @@ Không map dựa vào C `int`, `long` một cách mơ hồ.
 
 Native wrappers nên dùng `<stdint.h>` equivalents.
 
+`bool` dùng target C ABI representation và calling convention của C `_Bool`
+(không hard-code 1 byte). `int`/`float` không dùng trong FFI.
+
 ---
 
 ## 4. Pointer layout
 
 ```text
-ptr(T)
+ptr[T]
 ```
 
 có native pointer size/alignment của target.
@@ -136,10 +142,10 @@ Compiler phải reject:
 ```vut
 @repr(C)
 data Bad:
-  values: list(i32)
+  values: list[i32]
 ```
 
-nếu `list(i32)` chưa có C ABI representation.
+nếu `list[i32]` chưa có C ABI representation.
 
 Tương tự:
 
@@ -161,7 +167,7 @@ Example:
 ```vut
 @repr(transparent)
 data Handle:
-  raw: ptr(void)
+  raw: ptr[void]
 ```
 
 Requirements:

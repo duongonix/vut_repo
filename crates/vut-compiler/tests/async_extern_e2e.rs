@@ -203,7 +203,7 @@ fn spills_a_value_crossing_a_native_suspension() {
 
 #[test]
 fn suspends_inside_an_iterable_literal_loop_and_resumes() {
-    let source = "extern \"C\" async fn native_async_delayed() -> i32\n\nasync fn total_of() -> i32:\n  total: i32 = 0\n  for value in @(1, 2, 3):\n    delta: i32 = 0\n    unsafe:\n      delta = await native_async_delayed()\n    total = total + delta\n  total\n\nasync fn main():\n  unsafe:\n    out(\"loop=$(await total_of())\")\n";
+    let source = "extern \"C\" async fn native_async_delayed() -> i32\n\nasync fn total_of() -> i32:\n  total: i32 = 0\n  for value in @[1, 2, 3]:\n    delta: i32 = 0\n    unsafe:\n      delta = await native_async_delayed()\n    total = total + delta\n  total\n\nasync fn main():\n  unsafe:\n    out(\"loop=$(await total_of())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "loop=21\n");

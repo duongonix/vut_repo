@@ -1,7 +1,6 @@
 use crate::{Dependency, Manifest, PackageSource};
 use semver::Version;
 use std::{
-    fmt::Write as _,
     io,
     path::{Path, PathBuf},
 };
@@ -20,6 +19,20 @@ pub struct InstallReport {
     pub installed: usize,
     pub total: usize,
     pub up_to_date: bool,
+}
+
+pub type AnalysisSourceRoot = (PathBuf, Vec<String>);
+
+/// Returns the project and installed dependency source roots without performing
+/// network access or mutating package state.
+pub fn analysis_source_roots(
+    root: &Path,
+) -> Result<Vec<AnalysisSourceRoot>, Box<dyn std::error::Error>> {
+    let manifest = Manifest::read(root)?;
+    if manifest.dependencies.is_empty() {
+        return Ok(vec![(root.join("src"), Vec::new())]);
+    }
+    crate::lockfile::source_roots(root, &crate::store::Store::global()?)
 }
 
 pub fn new(root: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -49,18 +62,18 @@ pub(crate) fn init_named(root: &Path, name: &str) -> Result<(), Box<dyn std::err
             return Err(format!("refusing to overwrite `{file}`").into());
         }
     }
-    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("src/bin"))?;
     std::fs::create_dir_all(root.join("tests"))?;
     atomic_write(
         &root.join("vpm.toml"),
-        &format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\n"),
+        &format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[[bin]]\nname = \"{name}\"\npath = \"src/bin/{name}.vut\"\n"
+        ),
     )?;
-    atomic_write(&root.join("vpm.lock"), "lock-version = 1\npackage = []\n")?;
-    if !root.join("src/main.vut").exists() {
-        atomic_write(
-            &root.join("src/main.vut"),
-            "fn main():\n  out(\"Hello from Vut\")\n",
-        )?;
+    atomic_write(&root.join("vpm.lock"), "lock-version = 2\n")?;
+    let entry = root.join("src/bin").join(format!("{name}.vut"));
+    if !entry.exists() {
+        atomic_write(&entry, "fn main():\n  out(\"Hello from Vut\")\n")?;
     }
     if !root.join(".gitignore").exists() {
         atomic_write(&root.join(".gitignore"), "/build/\n/.vpm/\n")?;
@@ -102,7 +115,11 @@ pub fn add(root: &Path, spec: &str) -> Result<AddReport, Box<dyn std::error::Err
         doc["dependencies"][name] = value(root_package.version.to_string());
     }
     atomic_write(&path, &doc.to_string())?;
-    write_lock_graph(root, &graph)?;
+    let target = CompilerConfig::default().target;
+    crate::lockfile::write(
+        root,
+        &crate::lockfile::Lockfile::from_graph(&graph, &target)?,
+    )?;
     Ok(AddReport {
         import_name: name.to_owned(),
         version: root_package.version.to_string(),
@@ -123,32 +140,46 @@ pub fn remove(root: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>>
     update(root).map(|_| ())
 }
 pub fn install(root: &Path) -> Result<InstallReport, Box<dyn std::error::Error>> {
+    install_with_native(root).map(|(report, _)| report)
+}
+
+fn install_with_native(
+    root: &Path,
+) -> Result<(InstallReport, crate::native_plan::NativePlan), Box<dyn std::error::Error>> {
     let manifest = Manifest::read(root)?;
-    ensure_layout(root)?;
     if manifest.dependencies.is_empty() {
-        write_lock_graph(root, &crate::ResolvedGraph::default())?;
-        return Ok(InstallReport {
-            installed: 0,
-            total: 0,
-            up_to_date: true,
-        });
+        if crate::lockfile::read(root)?.is_none() {
+            crate::lockfile::write(root, &crate::lockfile::Lockfile::empty())?;
+        }
+        return Ok((
+            InstallReport {
+                installed: 0,
+                total: 0,
+                up_to_date: true,
+            },
+            crate::native_plan::NativePlan::default(),
+        ));
     }
     let store = crate::store::Store::global()?;
-    if crate::lockfile::all_installed(root, &store, &manifest)? {
-        return Ok(InstallReport {
-            installed: 0,
-            total: manifest.dependencies.len(),
-            up_to_date: true,
-        });
+    let Some(lock) = crate::lockfile::read(root)? else {
+        return Err("vpm.lock is missing; run `vpm update` to resolve dependencies".into());
+    };
+    if !crate::lockfile::covers_manifest(&lock, &manifest) {
+        return Err("vpm.lock is out of date with vpm.toml; run `vpm update`".into());
     }
-    let graph = resolve_manifest(&manifest)?;
-    let installed = store.install(&graph)?;
-    write_lock_graph(root, &graph)?;
-    Ok(InstallReport {
-        installed,
-        total: graph.packages.len(),
-        up_to_date: installed == 0,
-    })
+    let total = lock.package.len();
+    let target = CompilerConfig::default().target;
+    let providers = crate::resolver::Providers::new()?;
+    let (installed, native) =
+        crate::lockfile::install_pinned(root, &store, &lock, &providers, &target)?;
+    Ok((
+        InstallReport {
+            installed,
+            total,
+            up_to_date: installed == 0,
+        },
+        native,
+    ))
 }
 pub fn update(root: &Path) -> Result<InstallReport, Box<dyn std::error::Error>> {
     let manifest = Manifest::read(root)?;
@@ -158,7 +189,11 @@ pub fn update(root: &Path) -> Result<InstallReport, Box<dyn std::error::Error>> 
     } else {
         crate::store::Store::global()?.install(&graph)?
     };
-    write_lock_graph(root, &graph)?;
+    let target = CompilerConfig::default().target;
+    crate::lockfile::write(
+        root,
+        &crate::lockfile::Lockfile::from_graph(&graph, &target)?,
+    )?;
     Ok(InstallReport {
         installed,
         total: graph.packages.len(),
@@ -182,7 +217,7 @@ pub fn check(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(manifest.package.name)
 }
 pub fn build(root: &Path, release: bool) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    install(root)?;
+    let (_, native) = install_with_native(root)?;
     let store = crate::store::Store::global()?;
     let roots = crate::lockfile::source_roots(root, &store)?;
     let mode = if release {
@@ -209,6 +244,7 @@ pub fn build(root: &Path, release: bool) -> Result<PathBuf, Box<dyn std::error::
     config
         .system_libraries
         .clone_from(&manifest.native.system_libraries);
+    native.merge_into(&mut config);
     let output = root
         .join("build")
         .join(if release { "release" } else { "debug" })
@@ -219,74 +255,51 @@ pub fn build(root: &Path, release: bool) -> Result<PathBuf, Box<dyn std::error::
     CompilerSession::new(config).emit_executable_from_roots(&roots, &output)?;
     Ok(output)
 }
+
 fn resolve_manifest(
     manifest: &Manifest,
 ) -> Result<crate::ResolvedGraph, Box<dyn std::error::Error>> {
     let requests = manifest
         .dependencies
         .iter()
-        .map(|(name, dependency)| match dependency {
-            Dependency::Registry(version) => Ok((
-                PackageSource::Registry { name: name.clone() },
-                Some(version.clone()),
-            )),
-            Dependency::Hosted { source, version } => {
-                Ok((PackageSource::parse(source)?, Some(version.clone())))
-            }
-            Dependency::Detailed {
-                package,
-                source,
-                version,
-            } => {
-                let source = source.as_ref().map_or_else(
-                    || {
-                        Ok(PackageSource::Registry {
-                            name: package.clone().unwrap_or_else(|| name.clone()),
-                        })
-                    },
-                    |source| PackageSource::parse(source),
-                )?;
-                Ok((source, Some(version.clone())))
-            }
+        .map(|(name, dependency)| {
+            dependency_source(name, dependency).map(|(source, version)| (source, Some(version)))
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
     let providers = crate::resolver::Providers::new()?;
     Ok(crate::Resolver::new(&providers).resolve(&requests)?)
 }
-fn write_lock_graph(
-    root: &Path,
-    graph: &crate::ResolvedGraph,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut text = format!("lock-version = {}\n", crate::lockfile::LOCKFILE_VERSION);
-    for package in graph.packages.values() {
-        write!(
-            text,
-            "\n[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"{}\"\nrevision = \"{}\"\nchecksum = \"{}\"\n",
-            package.id.name,
-            package.id.version,
-            package.id.source,
-            package.revision,
-            package.checksum
-        )?;
-        if !package.dependencies.is_empty() {
-            let dependencies = package
-                .dependencies
-                .iter()
-                .map(|id| format!("\"{} {} {}\"", id.name, id.version, id.source))
-                .collect::<Vec<_>>()
-                .join(", ");
-            writeln!(text, "dependencies = [{dependencies}]")?;
+
+/// Resolves one manifest dependency to its concrete source and exact version.
+pub(crate) fn dependency_source(
+    name: &str,
+    dependency: &Dependency,
+) -> Result<(PackageSource, String), Box<dyn std::error::Error>> {
+    let (source, version) = match dependency {
+        Dependency::Registry(version) => (
+            PackageSource::Registry {
+                name: name.to_owned(),
+            },
+            version.clone(),
+        ),
+        Dependency::Hosted { source, version } => (PackageSource::parse(source)?, version.clone()),
+        Dependency::Detailed {
+            package,
+            source,
+            version,
+        } => {
+            let source = match source {
+                Some(source) => PackageSource::parse(source)?,
+                None => PackageSource::Registry {
+                    name: package.clone().unwrap_or_else(|| name.to_owned()),
+                },
+            };
+            (source, version.clone())
         }
-    }
-    atomic_write(&root.join("vpm.lock"), &text)?;
-    Ok(())
+    };
+    Ok((source, version))
 }
-fn ensure_layout(root: &Path) -> io::Result<()> {
-    for name in ["packages", "downloads", "build"] {
-        std::fs::create_dir_all(root.join(".vpm").join(name))?;
-    }
-    Ok(())
-}
+
 pub(crate) fn runtime_library(_root: &Path) -> Option<PathBuf> {
     vut_paths::runtime_library(&CompilerConfig::default().target)
 }
@@ -322,6 +335,21 @@ mod tests {
         assert!(Manifest::read(&root).unwrap().dependencies.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn init_scaffolds_a_bin_package() {
+        let root = temp("scaffold");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        init_named(&root, "demo").unwrap();
+        let manifest = Manifest::read(&root).unwrap();
+        assert_eq!(manifest.bin.len(), 1);
+        assert_eq!(manifest.bin[0].name, "demo");
+        assert_eq!(manifest.bin[0].path, "src/bin/demo.vut");
+        assert!(root.join("src/bin/demo.vut").is_file());
+        assert!(!root.join("src/main.vut").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn init_refuses_overwrite() {
         let root = temp("overwrite");

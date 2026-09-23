@@ -100,7 +100,15 @@ impl Resolver {
                 .iter()
                 .filter_map(declaration)
                 .collect();
-            for (name, kind, span) in declarations {
+            for (name, kind, span, generic) in declarations {
+                if name == "unit" {
+                    self.diagnostics.push(Diagnostic::error(
+                        codes::E2002,
+                        "reserved unit literal",
+                        span,
+                        "`unit` denotes the single unit value and cannot be redeclared",
+                    ));
+                }
                 if let Some(previous) = self.modules[module_index].symbols.get(&name).copied() {
                     if kind == SymbolKind::Binding
                         && self.symbols[previous.0].kind == SymbolKind::Binding
@@ -126,6 +134,7 @@ impl Resolver {
                     span,
                     !name.starts_with('_'),
                 );
+                self.symbols[id.0].generic = generic;
                 self.modules[module_index].symbols.insert(name, id);
             }
         }
@@ -218,6 +227,7 @@ impl Resolver {
                 );
                 self.symbols[symbol.0].receiver = Some(receiver);
                 self.symbols[symbol.0].is_static = method.is_static;
+                self.symbols[symbol.0].generic = !method.type_parameters.is_empty();
                 self.modules[module_index].methods.insert(key, symbol);
                 let trailing = self.last_parameter_receiver(module_index, &method.parameters);
                 self.trailing_receivers.insert(symbol, trailing);
@@ -462,6 +472,7 @@ impl Resolver {
             target_module: None,
             receiver: None,
             is_static: false,
+            generic: false,
         });
         id
     }
@@ -527,34 +538,48 @@ impl Resolver {
     }
 }
 
-fn declaration(item: &Item) -> Option<(String, SymbolKind, Span)> {
+fn declaration(item: &Item) -> Option<(String, SymbolKind, Span, bool)> {
     Some(match item {
         Item::Function(value) => (
             value.name.text.clone(),
             SymbolKind::Function,
             value.name.span,
+            !value.type_parameters.is_empty(),
         ),
         Item::ExternFunction(value) => (
             value.name.text.clone(),
             SymbolKind::Function,
             value.name.span,
+            !value.type_parameters.is_empty(),
         ),
-        Item::Data(value) => (value.name.text.clone(), SymbolKind::Data, value.name.span),
+        Item::Data(value) => (
+            value.name.text.clone(),
+            SymbolKind::Data,
+            value.name.span,
+            !value.type_parameters.is_empty(),
+        ),
         Item::Interface(value) => (
             value.name.text.clone(),
             SymbolKind::Interface,
             value.name.span,
+            !value.type_parameters.is_empty(),
         ),
-        Item::Enum(value) => (value.name.text.clone(), SymbolKind::Enum, value.name.span),
+        Item::Enum(value) => (
+            value.name.text.clone(),
+            SymbolKind::Enum,
+            value.name.span,
+            !value.type_parameters.is_empty(),
+        ),
         Item::TypeAlias(value) => (
             value.name.text.clone(),
             SymbolKind::TypeAlias,
             value.name.span,
+            false,
         ),
         Item::Statement(vut_ast::Stmt::Binding {
             target: Expr::Name(name),
             ..
-        }) => (name.text.clone(), SymbolKind::Binding, name.span),
+        }) => (name.text.clone(), SymbolKind::Binding, name.span, false),
         _ => return None,
     })
 }

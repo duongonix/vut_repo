@@ -1,7 +1,7 @@
 # Vut Collections & Method Surface
 
-Source of truth for the built-in methods of `str`, `bytes`, `list(T)`,
-`array(T,N)`, `map(K,V)`, numerics, `bool`, and `result(T,E)`. Phase A adds the
+Source of truth for the built-in methods of `str`, `bytes`, `list[T]`,
+`[T,N]`, `map[K,V]`, numerics, `bool`, and `result[T,E]`. Phase A adds the
 methods marked **[A]**; methods marked later are planned and not yet available.
 
 ## Builtin implementation tiers
@@ -21,9 +21,9 @@ function. Collection builtins come in two tiers:
    No runtime callback ABI exists for them; semantics live before the backend.
    Examples: `map`, `filter`, `fold`, `any`, `all`, `find_index`, `sort_by`.
 
-Higher-order builtins take non-capturing function values (named functions or
-lambdas that only use their own parameters). They are builtins, not standard
-library functions: no `import collections` is ever required.
+Higher-order builtins take function values (named functions or capturing and
+non-capturing lambdas). They are builtins, not standard library functions: no
+`import collections` is ever required.
 
 ## Ordering contract (`list.sort()` / `array.sort()`)
 
@@ -67,13 +67,13 @@ indexing:
 A trap abort does not run destructors: it terminates the process immediately
 (no unwinding across the ABI), so no double-free or partial release can occur.
 
-## `list(T)`
+## `list[T]`
 
 `len`, `is_empty`, `capacity`, `reserve`, `push`, `at`, `set`, `insert`,
 `remove`, `clear`, `slice`, `contains`,
 **[A]** `pop`, `first`, `last`, `index_of`, `extend`, `reverse`, `sort`,
 `truncate`, `swap`, `shrink_to_fit`,
-`join` (`list(str)` only),
+`join` (`list[str]` only),
 `map`, `filter`, `fold`, `any`, `all`, `find_index`, `sort_by`.
 
 ### Native runtime methods
@@ -81,18 +81,20 @@ A trap abort does not run destructors: it terminates the process immediately
 - `pop() -> T` removes and returns the last element; on an empty list it is the
   established bounds behavior (zeroed element).
 - `index_of(value: T) -> int` returns the first matching index or `-1`.
-- `extend(other: list(T))` appends every element of `other`.
-- `join(separator: str) -> str` — only available on `list(str)`. Joining any
+- `extend(other: list[T])` appends every element of `other`.
+- `join(separator: str) -> str` — only available on `list[str]`. Joining any
   other element type is a compile error (`E1028`); map the elements to `str`
   first. An empty list joins to `""`; there is no trailing separator.
 
 ### Compiler-lowered higher-order methods
 
-Callbacks are non-capturing function values. Each method lowers to a loop; the
-callback is invoked through the normal Vut call mechanism (no runtime ABI).
+Callbacks are function values (named functions or capturing and non-capturing
+lambdas). Each method lowers to a loop; the callback is invoked through the
+normal Vut call mechanism (no runtime ABI). A capturing callback's environment
+is threaded through the generated loop.
 
 ```text
-map(fn(T) -> R) -> list(R)          filter(fn(T) -> bool) -> list(T)
+map[fn(T) -> R] -> list[R]          filter(fn(T) -> bool) -> list[T]
 fold(U, fn(U, T) -> U) -> U         any(fn(T) -> bool) -> bool
 all(fn(T) -> bool) -> bool          find_index(fn(T) -> bool) -> int
 sort_by(fn(T, T) -> int) -> void
@@ -111,11 +113,11 @@ sort_by(fn(T, T) -> int) -> void
 - `map` / `filter` / `fold` / `any` / `all` / `find_index` / `sort_by` work on
   any element type, including managed types (`str`, `bytes`, nested `data`).
 
-## `map(K,V)`
+## `map[K,V]`
 
 `len`, `is_empty`, `capacity`, `reserve`, `get`, `set`, `contains_key`,
-`remove`, `clear`, **[A]** `keys() -> list(K)` (all key types), `values() ->
-list(V)`, `get_or(key, default: V) -> V`.
+`remove`, `clear`, **[A]** `keys() -> list[K]` (all key types), `values() ->
+list[V]`, `get_or(key, default: V) -> V`.
 
 `get`/`remove` report absence through the optional model
 (`specs/optional/00-overview.md`): a missing key yields `null` and does not
@@ -123,13 +125,13 @@ trap; `get_or` is the non-failing fallback. Key iteration order is
 unspecified. `keys()` rebuilds string keys as handles and returns other keys in
 their key layout; `values()` retains managed values into the returned list.
 
-## `array(T,N)`
+## `[T,N]`
 
-`len`, `at`, `set`, `first`, `last`, `fill`, **[A]** `to_list() -> list(T)`,
+`len`, `at`, `set`, `first`, `last`, `fill`, **[A]** `to_list() -> list[T]`,
 `contains(v) -> bool`, `reverse()`, `sort()` (orderable elements; same Vut
 ordering contract as `list.sort`).
 
-`array.to_list` builds a new `list(T)`; the array and the list are independent
+`array.to_list` builds a new `list[T]`; the array and the list are independent
 (`to_list` copies/retains elements). `contains` compares element bytes, matching
 `list.contains` (managed elements compare by identity). Array indexing traps on
 out-of-range, as before. `array` has no higher-order methods; convert with
@@ -139,11 +141,11 @@ out-of-range, as before. `array` has no higher-order methods; convert with
 
 `len`, `is_empty`, `capacity`, `reserve`, `at`, `set`, `first`, `last`,
 `slice`, `byte_at`, `clear`, `to_list`, `to_str`, plus `bytes()` and
-`bytes.from_list(list(u8))`,
+`bytes.from_list(list[u8])`,
 **[A]** `push(u8)`, `extend(bytes)`, `truncate(n)`, `resize(n, u8)`,
 `find(needle: bytes) -> int`, `starts_with`/`ends_with(bytes) -> bool`,
 `compare(bytes) -> int`, `to_hex() -> str`,
-`bytes.from_hex(text: str) -> result(bytes, HexError)`, and the explicit-endian
+`bytes.from_hex(text: str) -> result[bytes, HexError]`, and the explicit-endian
 family `read_{u16,i16,u32,i32,u64,i64}_{le,be}(offset)` /
 `write_{u16,i16,u32,i32,u64,i64}_{le,be}(offset, value)`.
 
@@ -183,6 +185,8 @@ family `read_{u16,i16,u32,i32,u64,i64}_{le,be}(offset)` /
 **[A]** `abs()`, `min(other)`, `max(other)`, `clamp(low, high)` for `int` and
 `float`; `int.pow(exponent: int) -> int`, `float.pow(exponent: float) -> float`;
 `float.floor()`, `ceil()`, `round()`, `trunc()`, `sqrt()`,
+`float.fma(multiplier, addend) -> float` (fused multiply-add),
+`float.copysign(sign) -> float` (copy sign),
 `to_int() -> int` (NaN → 0, saturating), `is_nan() -> bool`,
 `is_finite() -> bool`.
 
@@ -194,7 +198,7 @@ family `read_{u16,i16,u32,i32,u64,i64}_{le,be}(offset)` /
 
 **[A]** `to_str() -> str` (`"true"` / `"false"`).
 
-## `result(T,E)`
+## `result[T,E]`
 
 **[A]** `is_ok() -> bool`, `is_err() -> bool`, `unwrap_or(default: T) -> T`.
 `unwrap_or` returns the `ok` payload, or `default` when the result is `err`.

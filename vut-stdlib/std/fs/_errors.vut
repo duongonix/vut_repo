@@ -1,0 +1,43 @@
+import _internal.abi
+
+enum FsErrorKind:
+  not_found
+  permission_denied
+  already_exists
+  invalid_input
+  not_a_directory
+  is_a_directory
+  directory_not_empty
+  unsupported
+  io
+  unknown
+
+data FsError:
+  kind: FsErrorKind
+  message: str
+
+fn kind_from_status(code: int) -> FsErrorKind:
+  kind: FsErrorKind = if code == 1:
+    FsErrorKind.not_found
+  elif code == 2:
+    FsErrorKind.permission_denied
+  elif code == 3:
+    FsErrorKind.already_exists
+  elif code == 4:
+    FsErrorKind.invalid_input
+  elif code == 5:
+    FsErrorKind.not_a_directory
+  elif code == 6:
+    FsErrorKind.is_a_directory
+  elif code == 7:
+    FsErrorKind.directory_not_empty
+  elif code == 8:
+    FsErrorKind.unsupported
+  elif code == 9 or code == 10 or code == 11 or code == 12 or code == 13:
+    FsErrorKind.io
+  else:
+    FsErrorKind.unknown
+  kind
+
+fn from_status(code: int, raw: bytes) -> FsError:
+  FsError(kind: kind_from_status(code), message: abi.message(raw))

@@ -14,7 +14,7 @@ use super::super::{Function, Instruction, Terminator, ValueId};
     clippy::match_same_arms,
     reason = "exhaustive MIR instruction scanner; arms differ only in value names"
 )]
-pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
+pub(crate) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
     match instruction {
         Instruction::ConstNull { value, .. }
         | Instruction::ConstInt { value, .. }
@@ -27,6 +27,8 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::Borrow { value, .. }
         | Instruction::Move { value, .. }
         | Instruction::Allocate { value, .. }
+        | Instruction::LoadRaw { value, .. }
+        | Instruction::MakeUnique { value, .. }
         | Instruction::Binary { value, .. }
         | Instruction::Unary { value, .. }
         | Instruction::ConstructEnum { value, .. }
@@ -41,6 +43,7 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::ResourceDeref { value, .. }
         | Instruction::AwaitFuture { value, .. }
         | Instruction::MakeFunction { value, .. }
+        | Instruction::MakeClosure { value, .. }
         | Instruction::Field { value, .. }
         | Instruction::CopyAggregate { value, .. }
         | Instruction::Construct { value, .. }
@@ -50,7 +53,22 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::ConstructInterface { value, .. }
         | Instruction::OptionalWrap { value, .. }
         | Instruction::OptionalUnwrap { value, .. }
-        | Instruction::OptionalIsPresent { value, .. } => out.push(*value),
+        | Instruction::OptionalIsPresent { value, .. }
+        | Instruction::OptionalFromValue { value, .. } => out.push(*value),
+        Instruction::AwaitChannelRecv { value, present, .. } => {
+            out.push(*value);
+            out.push(*present);
+        }
+        Instruction::PollChannelRecv {
+            value,
+            present,
+            ready,
+            ..
+        } => {
+            out.push(*value);
+            out.push(*present);
+            out.push(*ready);
+        }
         Instruction::IteratorInit { iterator, .. } => out.push(*iterator),
         Instruction::IteratorNext {
             has_value,
@@ -76,6 +94,7 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
         }
         Instruction::ReloadValue { value, .. } => out.push(*value),
         Instruction::Store { .. }
+        | Instruction::StoreRaw { .. }
         | Instruction::Drop(_)
         | Instruction::Retain { .. }
         | Instruction::Release { .. }
@@ -89,9 +108,10 @@ pub(super) fn defined(instruction: &Instruction, out: &mut Vec<ValueId>) {
 /// Values read by an instruction.
 #[expect(
     clippy::match_same_arms,
+    clippy::too_many_lines,
     reason = "exhaustive MIR instruction scanner; arms differ only in value names"
 )]
-fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
+pub(crate) fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
     match instruction {
         Instruction::FormatValue { operand, .. } | Instruction::Unary { operand, .. } => {
             out.push(*operand);
@@ -99,6 +119,12 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
         Instruction::OptionalWrap { operand, .. }
         | Instruction::OptionalUnwrap { operand, .. }
         | Instruction::OptionalIsPresent { operand, .. } => out.push(*operand),
+        Instruction::OptionalFromValue {
+            present, payload, ..
+        } => {
+            out.push(*present);
+            out.push(*payload);
+        }
         Instruction::ConcatString { left, right, .. } => {
             out.push(*left);
             out.push(*right);
@@ -132,10 +158,18 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
         Instruction::AwaitFuture { handle, .. } => {
             out.push(*handle);
         }
+        Instruction::AwaitChannelRecv { handle, .. } => {
+            out.push(*handle);
+        }
         Instruction::Call { arguments, .. }
         | Instruction::StartFuture { arguments, .. }
-        | Instruction::RuntimeCall { arguments, .. }
-        | Instruction::InterfaceCall { arguments, .. } => out.extend(arguments.iter().copied()),
+        | Instruction::RuntimeCall { arguments, .. } => out.extend(arguments.iter().copied()),
+        Instruction::InterfaceCall {
+            callee, arguments, ..
+        } => {
+            out.push(*callee);
+            out.extend(arguments.iter().copied());
+        }
         Instruction::CallIndirect {
             callee, arguments, ..
         } => {
@@ -143,6 +177,13 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
             out.extend(arguments.iter().copied());
         }
         Instruction::Field { base, .. } => out.push(*base),
+        Instruction::LoadRaw { pointer, .. } => out.push(*pointer),
+        Instruction::MakeUnique { operand, .. } => out.push(*operand),
+        Instruction::StoreRaw { pointer, value, .. } => {
+            out.push(*pointer);
+            out.push(*value);
+        }
+        Instruction::MakeClosure { captures, .. } => out.extend(captures.iter().copied()),
         Instruction::CopyAggregate { source, .. } => out.push(*source),
         Instruction::Construct { fields, .. } => {
             out.extend(fields.iter().map(|(_, value)| *value));
@@ -175,6 +216,7 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
         | Instruction::BorrowField { .. }
         | Instruction::SetFrameState { .. }
         | Instruction::PollFuture { .. }
+        | Instruction::PollChannelRecv { .. }
         | Instruction::ReloadValue { .. }
         | Instruction::MakeFunction { .. } => {}
     }
@@ -187,7 +229,7 @@ fn used(instruction: &Instruction, out: &mut Vec<ValueId>) {
     clippy::too_many_lines,
     reason = "exhaustive MIR instruction scanner; arms differ only in value names"
 )]
-pub(super) fn for_each_operand_mut(
+pub(crate) fn for_each_operand_mut(
     instruction: &mut Instruction,
     visit: &mut impl FnMut(&mut ValueId),
 ) {
@@ -198,6 +240,12 @@ pub(super) fn for_each_operand_mut(
         Instruction::OptionalWrap { operand, .. }
         | Instruction::OptionalUnwrap { operand, .. }
         | Instruction::OptionalIsPresent { operand, .. } => visit(operand),
+        Instruction::OptionalFromValue {
+            present, payload, ..
+        } => {
+            visit(present);
+            visit(payload);
+        }
         Instruction::ConcatString { left, right, .. } => {
             visit(left);
             visit(right);
@@ -238,10 +286,20 @@ pub(super) fn for_each_operand_mut(
         Instruction::AwaitFuture { handle, .. } => {
             visit(handle);
         }
+        Instruction::AwaitChannelRecv { handle, .. } => {
+            visit(handle);
+        }
         Instruction::Call { arguments, .. }
         | Instruction::StartFuture { arguments, .. }
-        | Instruction::RuntimeCall { arguments, .. }
-        | Instruction::InterfaceCall { arguments, .. } => {
+        | Instruction::RuntimeCall { arguments, .. } => {
+            for argument in arguments.iter_mut() {
+                visit(argument);
+            }
+        }
+        Instruction::InterfaceCall {
+            callee, arguments, ..
+        } => {
+            visit(callee);
             for argument in arguments.iter_mut() {
                 visit(argument);
             }
@@ -255,6 +313,17 @@ pub(super) fn for_each_operand_mut(
             }
         }
         Instruction::Field { base, .. } => visit(base),
+        Instruction::LoadRaw { pointer, .. } => visit(pointer),
+        Instruction::MakeUnique { operand, .. } => visit(operand),
+        Instruction::StoreRaw { pointer, value, .. } => {
+            visit(pointer);
+            visit(value);
+        }
+        Instruction::MakeClosure { captures, .. } => {
+            for capture in captures.iter_mut() {
+                visit(capture);
+            }
+        }
         Instruction::CopyAggregate { source, .. } => visit(source),
         Instruction::Construct { fields, .. } => {
             for (_, value) in fields.iter_mut() {
@@ -291,6 +360,7 @@ pub(super) fn for_each_operand_mut(
         | Instruction::BorrowField { .. }
         | Instruction::SetFrameState { .. }
         | Instruction::PollFuture { .. }
+        | Instruction::PollChannelRecv { .. }
         | Instruction::ReloadValue { .. }
         | Instruction::MakeFunction { .. } => {}
     }
@@ -402,7 +472,10 @@ pub fn live_across(function: &Function) -> HashMap<(usize, usize), Vec<ValueId>>
             live.extend(uses);
         }
         for (index, instruction) in block.instructions.iter().enumerate() {
-            if matches!(instruction, Instruction::AwaitFuture { .. }) {
+            if matches!(
+                instruction,
+                Instruction::AwaitFuture { .. } | Instruction::AwaitChannelRecv { .. }
+            ) {
                 // The await's own result is produced on resume, so it is not a
                 // value that needs to survive the suspension.
                 let mut own = Vec::new();

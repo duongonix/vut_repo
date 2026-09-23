@@ -68,12 +68,12 @@ fn resolves_qualified_type_references_across_modules() {
     fs::create_dir_all(root.join("src/service")).expect("create source tree");
     fs::write(
         root.join("src/service.vut"),
-        "data Client:\n  name: str\n\nfn make() -> Client:\n  Client(name = \"x\")\n",
+        "data Client:\n  name: str\n\nfn make() -> Client:\n  Client(name: \"x\")\n",
     )
     .expect("write service");
     fs::write(
         root.join("src/service/status.vut"),
-        "data Status:\n  code: int\n\nfn ok() -> Status:\n  Status(code = 200)\n",
+        "data Status:\n  code: int\n\nfn ok() -> Status:\n  Status(code: 200)\n",
     )
     .expect("write status");
     fs::write(
@@ -109,7 +109,7 @@ fn qualified_type_reference_to_private_symbol_is_rejected() {
     .expect("write service");
     fs::write(
         root.join("src/main.vut"),
-        "import service\n\nfn accepts(value: service._Hidden) -> int:\n  1\n\nfn main() -> int:\n  accepts(service._Hidden(value = 1))\n",
+        "import service\n\nfn accepts(value: service._Hidden) -> int:\n  1\n\nfn main() -> int:\n  accepts(service._Hidden(value: 1))\n",
     )
     .expect("write main");
 
@@ -137,7 +137,7 @@ fn local_namespace_conflicts_with_dependency_namespace() {
     fs::create_dir_all(root.join("dep/src")).expect("create dependency tree");
     fs::write(root.join("src/service.vut"), "fn local() -> int:\n  1\n").expect("write local");
     fs::write(root.join("src/main.vut"), "import service\n").expect("write main");
-    fs::write(root.join("dep/src/lib.vut"), "fn remote() -> int:\n  2\n").expect("write dep");
+    fs::write(root.join("dep/src/mod.vut"), "fn remote() -> int:\n  2\n").expect("write dep");
 
     let checked = CompilerSession::new(CompilerConfig::default())
         .check_source_roots(&[
@@ -169,7 +169,7 @@ fn dependency_alias_avoids_local_namespace_conflict() {
         "import service\nimport webservice\n",
     )
     .expect("write main");
-    fs::write(root.join("dep/src/lib.vut"), "fn remote() -> int:\n  2\n").expect("write dep");
+    fs::write(root.join("dep/src/mod.vut"), "fn remote() -> int:\n  2\n").expect("write dep");
 
     let checked = CompilerSession::new(CompilerConfig::default())
         .check_source_roots(&[

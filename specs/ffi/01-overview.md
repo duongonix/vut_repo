@@ -186,8 +186,8 @@ opaque data NativeEngine
 FFI:
 
 ```vut
-extern "C" fn engine_create() -> ptr(NativeEngine)
-extern "C" fn engine_destroy(engine: ptr(NativeEngine))
+extern "C" fn engine_create() -> ptr[NativeEngine]
+extern "C" fn engine_destroy(engine: ptr[NativeEngine])
 ```
 
 Không expose internal layout.
@@ -201,7 +201,7 @@ FFI không tự suy đoán ownership.
 Ví dụ:
 
 ```vut
-extern "C" fn engine_create() -> ptr(NativeEngine)
+extern "C" fn engine_create() -> ptr[NativeEngine]
 ```
 
 Compiler không tự biết pointer này phải free như thế nào.
@@ -218,23 +218,26 @@ Nếu API native trả memory cần giải phóng, raw FFI wrapper phải expose
 
 ## 10. Managed Vut types
 
-Các type sau không được truyền trực tiếp qua C ABI trong FFI v1:
+Public Native ABI v1 (arbitrary third-party C) không truyền trực tiếp managed
+types:
 
 ```text
-str
-bytes
-list(T)
-map(K, V)
+map[K, V]
 dyn
-result(T, E)
+result[T, E]
 T?
 interface values
-managed data
+by-value data
 ```
 
-trừ khi type đó sau này có explicit stable ABI representation được spec bổ sung.
-
 Raw FFI phải dùng ABI-safe types.
+
+Ngoại lệ có kiểm soát: `str`, `bytes`, `list[T]`, và `resource[T]` đi qua
+**Vut-internal Runtime Handle ABI** (compiler/stdlib/official runtime) như một
+runtime-owned handle pointer. Đây **không** phải public ABI cho third-party C;
+C-facing API dùng `ptr[u8] + usize`. Xem `specs/ffi/06-native-abi-v1.md`.
+
+`bool` là FFI-safe trong v1 (target C `_Bool`).
 
 ---
 

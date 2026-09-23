@@ -75,9 +75,9 @@ typed encode
 
 data
 enum khi representation được định nghĩa
-list(T)
-array(T, N)
-map(str, T)
+list[T]
+[T, N]
+map[str, T]
 optional T?
 result-based errors
 
@@ -282,14 +282,14 @@ Ví dụ:
 ```vut id="88tzmc"
 import json
 
-fn main() -> result(null, json.Error):
+fn main() -> result[unit, json.Error]:
   value = json.parse("""
     {"name":"Vut","version":1}
   """)?
 
   out(value.to_str())
 
-  ok(null)
+  ok(unit)
 ```
 
 Nếu overload không được Vut hỗ trợ sạch, cung cấp explicit API:
@@ -518,7 +518,7 @@ Nếu stringify dynamic `json.Value` không có failure path sau khi value hợp
 Typed serialization có thể trả:
 
 ```vut id="l6vm1h"
-result(str, json.Error)
+result[str, json.Error]
 ```
 
 nếu conversion có thể thất bại.
@@ -547,8 +547,8 @@ Có thể hỗ trợ options:
 
 ```vut id="xx3ir9"
 options = json.EncodeOptions(
-  pretty = true,
-  indent = 2
+  pretty: true,
+  indent: 2
 )
 ```
 
@@ -593,8 +593,8 @@ data User:
   age: int
 
 user = User(
-  name = "Nam",
-  age = 20
+  name: "Nam",
+  age: 20
 )
 
 text = json.encode(user)?
@@ -615,32 +615,32 @@ Typed encode phải dựa trên Vut type metadata/static type information, khôn
 Typed JSON phải hỗ trợ:
 
 ```vut id="jaf5hu"
-list(User)
-map(str, User)
-array(int, 4)
+list[User]
+map[str, User]
+array[int, 4]
 ```
 
 Ví dụ:
 
 ```vut id="5f57v4"
-users: list(User) = json.decode(source)?
+users: list[User] = json.decode(source)?
 ```
 
 JSON array:
 
 ```text id="51yvko"
-→ list(T)
+→ list[T]
 ```
 
-khi target là `list(T)`.
+khi target là `list[T]`.
 
 JSON object:
 
 ```text id="md95s7"
-→ map(str, T)
+→ map[str, T]
 ```
 
-khi target là `map(str, T)`.
+khi target là `map[str, T]`.
 
 ---
 
@@ -649,7 +649,7 @@ khi target là `map(str, T)`.
 Decode vào:
 
 ```vut id="cd2k97"
-array(T, N)
+[T, N]
 ```
 
 phải yêu cầu JSON array có đúng `N` phần tử.
@@ -657,7 +657,7 @@ phải yêu cầu JSON array có đúng `N` phần tử.
 Ví dụ:
 
 ```vut id="m6fb8a"
-position: array(float, 3) = json.decode("[1,2,3]")?
+position: array[float, 3] = json.decode("[1,2,3]")?
 ```
 
 Nếu JSON có:
@@ -779,7 +779,7 @@ Có thể cung cấp:
 
 ```vut id="h5flcc"
 json.DecodeOptions(
-  deny_unknown_fields = false
+  deny_unknown_fields: false
 )
 ```
 
@@ -866,9 +866,9 @@ Không tự phát minh representation trong JSON layer.
 
 ---
 
-# 28. `result(T, E)`
+# 28. `result[T, E]`
 
-`result(T, E)` chủ yếu là error-handling abstraction, không nên tự động serialize như application data trong MVP.
+`result[T, E]` chủ yếu là error-handling abstraction, không nên tự động serialize như application data trong MVP.
 
 Không mặc định biến:
 
@@ -1143,10 +1143,10 @@ không thuộc compiler core.
 Khi Generic của Vut hoàn thiện, preferred conceptual API:
 
 ```vut id="7pqjgc"
-fn decode(T)(source: str) -> result(T, Error):
+fn decode[T](source: str) -> result[T, Error]:
   ...
 
-fn encode(T)(value: T) -> result(str, Error):
+fn encode[T](value: T) -> result[str, Error]:
   ...
 ```
 
@@ -1158,15 +1158,14 @@ user: User = json.decode(source)?
 text = json.encode(user)?
 ```
 
-Nếu type inference không đủ:
+Nếu type inference không đủ, dùng explicit generic call:
 
 ```vut id="dlthxa"
-user = json.decode(User, source)?
+user = json.decode[User](source)?
 ```
 
-có thể được dùng tạm thời nếu phù hợp với language architecture.
-
-Không invent explicit generic call syntax trái với generic specs.
+Explicit generic call syntax được finalize trong `04-functions-methods.md` §47 và
+`21-grammar.md` §59.
 
 ---
 
@@ -1186,14 +1185,14 @@ data User:
   name: str
   age: int
 
-async fn main() -> result(null, AppError):
+async fn main() -> result[unit, AppError]:
   response = await http.get("https://api.example.com/user")?
 
   user: User = json.decode(response.text()?)?
 
   out(user.name)
 
-  ok(null)
+  ok(unit)
 ```
 
 Hai module phải composable nhưng độc lập.
@@ -1325,9 +1324,9 @@ array access
 typed data encode
 typed data decode
 nested data
-list(T)
-map(str, T)
-array(T, N)
+list[T]
+map[str, T]
+[T, N]
 optional
 default fields
 missing fields
@@ -1387,7 +1386,7 @@ Chỉ có một canonical API cho mỗi operation.
 ```vut id="y2vszx"
 import json
 
-fn main() -> result(null, json.Error):
+fn main() -> result[unit, json.Error]:
   value = json.parse("""
     {
       "name": "Vut",
@@ -1400,7 +1399,7 @@ fn main() -> result(null, json.Error):
 
   out("Language: $name")
 
-  ok(null)
+  ok(unit)
 ```
 
 ---
@@ -1415,7 +1414,7 @@ data User:
   age: int
   active: bool
 
-fn main() -> result(null, json.Error):
+fn main() -> result[unit, json.Error]:
   source = """
     {
       "name": "Nam",
@@ -1432,7 +1431,7 @@ fn main() -> result(null, json.Error):
 
   out(encoded)
 
-  ok(null)
+  ok(unit)
 ```
 
 ---
@@ -1447,14 +1446,14 @@ data User:
   name: str
   age: int
 
-async fn main() -> result(null, AppError):
+async fn main() -> result[unit, AppError]:
   response = await http.get("https://api.example.com/user")?
 
   user: User = json.decode(response.text()?)?
 
   out(user.name)
 
-  ok(null)
+  ok(unit)
 ```
 
 ---

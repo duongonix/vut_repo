@@ -15,20 +15,22 @@ order: 10
 | `int`                     | Default general-purpose integer.                                       |
 | `f32`, `f64`, `float`     | Floating-point values; `float` is the default.                         |
 | `str`                     | Unicode text.                                                          |
-| `bytes`                   | Managed binary buffer with `u8` elements; not an alias for `list(u8)`. |
+| `bytes`                   | Managed binary buffer with `u8` elements; not an alias for `list[u8]`. |
 | `void`                    | No returned value.                                                     |
 | `dyn`                     | Explicit dynamic value; never silently inferred.                       |
 
 ## Type application
 
-Parameterized types use parentheses, not angle brackets.
+Parameterized types use square brackets, not parentheses or angle brackets.
 
 ```vut
-numbers: list(int) = @(1, 2, 3)
+numbers: list[int] = @[1, 2, 3]
 nickname: str? = null
 ```
 
-Other documented forms include `map(K, V)`, `result(T, E)`, `ptr(T)`, `vutcon(T)`, and `vutcom(D)`. Each has its own construction and ownership rules.
+Other forms include `map[K, V]`, `result[T, E]`, `ptr[T]`, `resource[T]`, `future[T]`, `vutcon[T]`, and `channel[T]`. Fixed arrays use `[T, N]`. Each has its own construction and ownership rules. `vutcom[D]` belongs to a superseded design, not the current type surface.
+
+`usize` and `isize` are pointer-width integer types. `unit` is the no-payload value/type used by APIs such as `result[unit, Error]`; `void` is used for functions without a useful return value. Function types use `fn(Args) -> Return`; receiver function types use `fn(Receiver)(Args) -> Return`.
 
 ## Explicit conversions
 

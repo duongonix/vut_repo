@@ -63,10 +63,10 @@ fn compile_pass_async_functions_methods_await_and_result() {
 fn User.label() -> str:\n  \"$(self.name) ($(self.age))\"\n\
 async fn fetch_name() -> str:\n  \"Nam\"\n\
 async fn read_age() -> int:\n  20\n\
-async fn User.with_name(name: str) -> User:\n  User(name = name, age = self.age)\n\
-async fn load_name() -> result(str, str):\n  name = await fetch_name()\n  ok(name)\n\
+async fn User.with_name(name: str) -> User:\n  User(name: name, age: self.age)\n\
+async fn load_name() -> result[str, str]:\n  name = await fetch_name()\n  ok(name)\n\
 async fn compute() -> int:\n  first = await read_age()\n  second = await read_age()\n  first + second\n\
-async fn main():\n  total = await compute()\n  loaded = await load_name()\n  match loaded:\n    ok(text): out(\"$text\")\n    err(message): out(message)\n  base = User(name = \"Nam\", age = 20)\n  out(base.label())\n  renamed = await base.with_name(\"Ha\")\n  out(renamed.name)\n  out(\"$total\")\n",
+async fn main():\n  total = await compute()\n  loaded = await load_name()\n  match loaded:\n    ok(text): out(\"$text\")\n    err(message): out(message)\n  base = User(name: \"Nam\", age: 20)\n  out(base.label())\n  renamed = await base.with_name(\"Ha\")\n  out(renamed.name)\n  out(\"$total\")\n",
     );
     assert!(
         main_source_codes(&checked).is_empty(),

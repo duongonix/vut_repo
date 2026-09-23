@@ -51,12 +51,12 @@ Avoid unnecessary abbreviations.
 
 ## 3. Failure
 
-Expected runtime failures must use `result(T, E)`.
+Expected runtime failures must use `result[T, E]`.
 
 Example:
 
 ```vut
-fs.read(path) -> result(bytes, FsError)
+fs.read(path) -> result[bytes, FsError]
 ```
 
 Do not represent normal errors using:
@@ -129,7 +129,7 @@ Stdlib Result APIs must work naturally with Vut's `?` operator.
 Example:
 
 ```vut
-fn load() -> result(bytes, FsError):
+fn load() -> result[bytes, FsError]:
   data = fs.read("config.bin")?
   ok(data)
 ```
@@ -147,8 +147,8 @@ Users should not need to manually free:
 ```text
 str
 bytes
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 stdlib data
 ```
 
@@ -167,9 +167,9 @@ Examples include:
 ```text
 str
 bytes
-list(T)
-map(K, V)
-result(T, E)
+list[T]
+map[K, V]
+result[T, E]
 ```
 
 Use appropriate raw representations at native boundaries.

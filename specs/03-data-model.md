@@ -43,8 +43,8 @@ A `data` value is constructed using the type name.
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -58,8 +58,8 @@ An explicit annotation is unnecessary:
 
 ```vut
 user: User = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -81,8 +81,8 @@ Valid:
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -90,7 +90,7 @@ Invalid:
 
 ```vut
 user = User(
-  name = "Ha"
+  name: "Ha"
 )
 ```
 
@@ -119,7 +119,7 @@ Override:
 
 ```vut
 counter = Counter(
-  value = 100
+  value: 100
 )
 ```
 
@@ -239,10 +239,10 @@ Construction:
 
 ```vut
 player = Player(
-  name = "Ha",
-  position = Position(
-    x = 10.0,
-    y = 20.0
+  name: "Ha",
+  position: Position(
+    x: 10.0,
+    y: 20.0
   )
 )
 ```
@@ -304,22 +304,22 @@ data Point:
 
 ## 15. Lists
 
-List literals use `@()`.
+List literals use `@[]`.
 
 ```vut
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 List types use:
 
 ```text
-list(T)
+list[T]
 ```
 
 Example:
 
 ```vut
-numbers: list(int) = @(1, 2, 3)
+numbers: list[int] = @[1, 2, 3]
 ```
 
 List elements must be compatible with the list element type.
@@ -334,16 +334,16 @@ Lists may contain named data values.
 data User:
   name: str
 
-users = @(
-  User(name = "Ha"),
-  User(name = "Nam")
-)
+users = @[
+  User(name: "Ha"),
+  User(name: "Nam")
+]
 ```
 
 The inferred type is conceptually:
 
 ```text
-list(User)
+list[User]
 ```
 
 ---
@@ -362,7 +362,7 @@ interface Animal:
 Different concrete values may coexist in:
 
 ```text
-list(Animal)
+list[Animal]
 ```
 
 provided every value satisfies `Animal`.
@@ -376,16 +376,16 @@ This is the preferred mechanism for heterogeneous collections based on shared be
 When arbitrary unrelated values are intentionally required:
 
 ```vut
-values: list(dyn) = @(
+values: list[dyn] = @[
   10,
   "hello",
   true
-)
+]
 ```
 
 `dyn` must be explicit.
 
-The compiler must not infer `list(dyn)` merely because incompatible elements were supplied.
+The compiler must not infer `list[dyn]` merely because incompatible elements were supplied.
 
 ---
 
@@ -394,13 +394,13 @@ The compiler must not infer `list(dyn)` merely because incompatible elements wer
 An empty list may require explicit type context.
 
 ```vut
-users: list(User) = @()
+users: list[User] = @[]
 ```
 
 Without contextual information:
 
 ```vut
-items = @()
+items = @[]
 ```
 
 the compiler must not arbitrarily invent an element type.
@@ -433,17 +433,17 @@ shape = Shape.point
 A payload variant is constructed with named arguments:
 
 ```vut
-shape = Shape.circle(radius = 2.0)
+shape = Shape.circle(radius: 2.0)
 ```
 
-`Shape.circle(radius = 2.0)` constructs the `circle` variant with `radius`
+`Shape.circle(radius: 2.0)` constructs the `circle` variant with `radius`
 bound. The compiler validates field count, field names, and field types.
 
 Qualification (`Shape.variant`) is required for construction and remains
 consistent across parser, formatter, and module specifications.
 
 Enum payload types may not contain the enum by value; a recursive shape must use
-an indirect container such as `list(T)`. Direct recursion is a compile error.
+an indirect container such as `list[T]`. Direct recursion is a compile error.
 
 ---
 
@@ -493,8 +493,8 @@ match event:
 
 A single-field variant may use the positional shorthand `key(c)`.
 
-Generic enums such as `Option(T)` are not available until generic declaration
-syntax is finalized; concrete payload types are fully supported.
+Generic enums such as `Option[T]` use the canonical generic declaration and
+application syntax; concrete payload types are fully supported.
 
 Each variant value is a tagged union: a tag plus the payload of the active
 variant. Only the active payload owns managed data and is destroyed.
@@ -508,8 +508,8 @@ Error and optional-value abstractions should eventually be represented using str
 Examples conceptually include:
 
 ```text
-result(T, E)
-optional(T)
+result[T, E]
+T?
 ```
 
 Optional shorthand:
@@ -527,13 +527,13 @@ Exact standard-library representation is defined separately.
 Vut is intended to provide a typed map collection:
 
 ```text
-map(K, V)
+map[K, V]
 ```
 
 Example type:
 
 ```vut
-scores: map(str, int)
+scores: map[str, int]
 ```
 
 The final map literal and construction API are not yet locked.
@@ -578,8 +578,8 @@ ALL-CAPS bindings are constants.
 
 ```vut
 DEFAULT_USER = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -617,9 +617,9 @@ Invalid:
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20,
-  unknown = true
+  name: "Ha",
+  age: 20,
+  unknown: true
 )
 ```
 
@@ -639,9 +639,9 @@ Invalid:
 
 ```vut
 user = User(
-  name = "Ha",
-  name = "Nam",
-  age = 20
+  name: "Ha",
+  name: "Nam",
+  age: 20
 )
 ```
 

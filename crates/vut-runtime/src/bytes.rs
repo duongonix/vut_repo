@@ -1,7 +1,7 @@
 //! Core managed `bytes` buffer: a contiguous, growable, reference-counted
 //! sequence of `u8` values.
 //!
-//! `bytes` is a first-class core type distinct from `str` and `list(u8)`. The
+//! `bytes` is a first-class core type distinct from `str` and `list[u8]`. The
 //! buffer is always contiguous and never boxes individual bytes. Storage is
 //! shared through an atomic reference count; the language layer copies on
 //! assignment so observable values remain independent.
@@ -85,6 +85,30 @@ pub unsafe extern "C" fn vut_rt_bytes_release_v1(value: *mut ManagedBytes) {
         LIVE_BYTES.fetch_sub(1, Ordering::Relaxed);
         drop(unsafe { Box::from_raw(value) });
     }
+}
+
+/// Returns a `bytes` buffer whose storage is unique to the caller.
+///
+/// If the buffer is already uniquely referenced it is returned unchanged (the
+/// fast path). Otherwise the bytes are copied, one reference to the shared
+/// original is released, and the copy is returned.
+///
+/// # Safety
+/// `value` must be null or a live managed-bytes handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vut_rt_bytes_make_unique_v1(
+    value: *mut ManagedBytes,
+) -> *mut ManagedBytes {
+    if value.is_null() {
+        return value;
+    }
+    let source = unsafe { &*value };
+    if source.references.load(Ordering::Acquire) == 1 {
+        return value;
+    }
+    let copy = ManagedBytes::allocate(source.value.clone());
+    unsafe { vut_rt_bytes_release_v1(value) };
+    copy
 }
 
 #[unsafe(no_mangle)]

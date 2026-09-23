@@ -190,6 +190,54 @@ pub unsafe extern "C" fn vut_rt_list_release_v1(list: *mut ManagedList) {
     }
 }
 
+/// Returns a list whose storage is unique to the caller.
+///
+/// If the list is already uniquely referenced it is returned unchanged (the
+/// fast path). Otherwise a deep copy is made with every element retained, one
+/// reference to the shared original is released, and the copy is returned. This
+/// preserves value semantics when a mutating operation follows a copy.
+///
+/// # Safety
+/// `list` must be null or a live managed-list handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vut_rt_list_make_unique_v1(list: *mut ManagedList) -> *mut ManagedList {
+    if list.is_null() {
+        return list;
+    }
+    let source = unsafe { &*list };
+    if source.references.load(Ordering::Acquire) == 1 {
+        return list;
+    }
+    let copy = unsafe {
+        ManagedList::allocate(
+            source.element_size,
+            source.element_align,
+            source
+                .element_retain
+                .map_or(std::ptr::null(), |retain| retain as *const ()),
+            source
+                .element_release
+                .map_or(std::ptr::null(), |release| release as *const ()),
+            source.len,
+        )
+    };
+    if copy.is_null() {
+        return list;
+    }
+    for index in 0..source.len {
+        unsafe {
+            let destination = (*copy).slot(index);
+            std::ptr::copy_nonoverlapping(source.slot(index), destination, source.element_size);
+            (*copy).retain_element(destination);
+            (*copy).len += 1;
+        }
+    }
+    // The caller's binding is replaced by the copy, so the shared original
+    // loses exactly one reference.
+    unsafe { vut_rt_list_release_v1(list) };
+    copy
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `list` must be null or a live managed-list handle.
@@ -261,6 +309,25 @@ pub unsafe extern "C" fn vut_rt_list_push_v1(list: *mut ManagedList, value: *con
         list_ref.retain_element(slot);
     }
     list_ref.len += 1;
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `list` must be live, `index` must be strictly less than `list.len()`, and
+/// `out` must point to writable storage for one element. The optimizer only
+/// emits this when it has proven the index is in bounds.
+pub unsafe extern "C" fn vut_rt_list_at_unchecked_v1(
+    list: *const ManagedList,
+    index: usize,
+    out: *mut u8,
+) -> u8 {
+    if out.is_null() || list.is_null() {
+        return 0;
+    }
+    let list_ref = unsafe { &*list };
+    unsafe { std::ptr::copy_nonoverlapping(list_ref.slot(index), out, list_ref.element_size) };
+    unsafe { list_ref.retain_element(out) };
+    1
 }
 
 #[unsafe(no_mangle)]
@@ -432,11 +499,12 @@ pub unsafe extern "C" fn vut_rt_list_slice_v1(
         return std::ptr::null_mut();
     }
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            source.slot(start),
-            (*copy).data,
-            (end - start).saturating_mul(source.element_size),
-        );
+        // A zero-length copy through a possibly-null data pointer is UB, so the
+        // copy is skipped when there is nothing to move.
+        let byte_count = (end - start).saturating_mul(source.element_size);
+        if byte_count > 0 {
+            std::ptr::copy_nonoverlapping(source.slot(start), (*copy).data, byte_count);
+        }
         (*copy).len = end - start;
         for index in 0..(*copy).len {
             (*copy).retain_element((*copy).slot(index));
@@ -484,7 +552,7 @@ pub unsafe extern "C" fn vut_rt_bytes_to_list_v1(value: *const ManagedBytes) -> 
 
 #[unsafe(no_mangle)]
 /// # Safety
-/// `list` must be null or a live `list(u8)` handle.
+/// `list` must be null or a live `list[u8]` handle.
 pub unsafe extern "C" fn vut_rt_bytes_from_list_v1(list: *const ManagedList) -> *mut ManagedBytes {
     if list.is_null() {
         return ManagedBytes::allocate(Vec::new());
@@ -493,7 +561,13 @@ pub unsafe extern "C" fn vut_rt_bytes_from_list_v1(list: *const ManagedList) -> 
     if list.element_size != 1 {
         return std::ptr::null_mut();
     }
-    ManagedBytes::allocate(unsafe { std::slice::from_raw_parts(list.data, list.len) }.to_vec())
+    let bytes = if list.len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: a non-empty list has a non-null data pointer with `len` bytes.
+        unsafe { std::slice::from_raw_parts(list.data, list.len) }.to_vec()
+    };
+    ManagedBytes::allocate(bytes)
 }
 
 /// Element comparison kind passed to [`vut_rt_list_sort_v1`].

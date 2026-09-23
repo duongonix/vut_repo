@@ -23,7 +23,7 @@ tagged-union layout, construction, projection, and drop
 Out of scope:
 
 ```text
-generic enums such as Option(T)
+generic enums such as Option[T]
 recursive enum payloads by value
 list/slice patterns (reserved)
 optional-value patterns
@@ -58,7 +58,7 @@ allows the positional shorthand. A bare identifier is a binding unless the
 scrutinee enum has a variant of that name. `or` alternatives must bind identical
 names. List patterns are parsed but rejected (`E7112`) until their memory
 semantics are implemented. Recursive enum payloads by value are rejected
-(`E7105`); recursive shapes use an indirect container such as `list(T)`.
+(`E7105`); recursive shapes use an indirect container such as `list[T]`.
 
 ## Known Limitations
 

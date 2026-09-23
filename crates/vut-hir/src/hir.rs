@@ -30,6 +30,10 @@ pub struct HirModule {
     pub declarations: Vec<HirDeclaration>,
 }
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "declarations are owned once per module; boxing would add indirection"
+)]
 pub enum HirDeclaration {
     Function(HirFunction),
     Data(HirData),
@@ -44,6 +48,11 @@ pub struct HirFunction {
     pub receiver: Option<SymbolId>,
     pub implicit_self: Option<HirId>,
     pub is_async: bool,
+    /// `true` for a lifted lambda body. Closure bodies receive a hidden leading
+    /// environment parameter and load their captures from it.
+    pub is_closure: bool,
+    /// Enclosing bindings captured by a closure body, in first-use order.
+    pub captures: Vec<HirCapture>,
     pub type_parameters: Vec<HirTypeParameter>,
     pub parameters: Vec<HirParameter>,
     pub return_type: Option<TypeExpr>,
@@ -53,6 +62,11 @@ pub struct HirFunction {
     pub external_name: Option<String>,
     pub attributes: Vec<Attribute>,
     pub span: Span,
+}
+#[derive(Clone, Debug)]
+pub struct HirCapture {
+    pub name: String,
+    pub symbol: SymbolId,
 }
 #[derive(Clone, Debug)]
 pub struct HirParameter {
@@ -128,6 +142,8 @@ pub fn lower(resolution: &Resolution) -> HirProgram {
                         receiver: None,
                         implicit_self: None,
                         is_async: value.is_async,
+                        is_closure: false,
+                        captures: Vec::new(),
                         type_parameters: lower_type_parameters(&value.type_parameters),
                         parameters: lower_parameters(&value.parameters, &mut hir_index),
                         return_type: value.return_type.clone(),
@@ -149,6 +165,8 @@ pub fn lower(resolution: &Resolution) -> HirProgram {
                         receiver: None,
                         implicit_self: None,
                         is_async: value.is_async,
+                        is_closure: false,
+                        captures: Vec::new(),
                         type_parameters: lower_type_parameters(&value.type_parameters),
                         parameters: lower_parameters(&value.parameters, &mut hir_index),
                         return_type: value.return_type.clone(),
@@ -180,6 +198,8 @@ pub fn lower(resolution: &Resolution) -> HirProgram {
                         },
                         implicit_self: if value.is_static { None } else { Some(self_id) },
                         is_async: value.is_async,
+                        is_closure: false,
+                        captures: Vec::new(),
                         type_parameters: lower_type_parameters(&value.type_parameters),
                         parameters: lower_parameters(&value.parameters, &mut hir_index),
                         return_type: value.return_type.clone(),
@@ -260,6 +280,15 @@ pub fn lower(resolution: &Resolution) -> HirProgram {
                 receiver: lambda.receiver,
                 implicit_self,
                 is_async: lambda.is_async,
+                is_closure: true,
+                captures: lambda
+                    .captures
+                    .iter()
+                    .map(|capture| HirCapture {
+                        name: capture.name.clone(),
+                        symbol: capture.symbol,
+                    })
+                    .collect(),
                 type_parameters: Vec::new(),
                 parameters: lower_lambda_parameters(&lambda.parameters, &mut hir_index),
                 return_type: None,

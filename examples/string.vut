@@ -48,8 +48,8 @@ fn main():
   out("char_at(1):", scalar.char_at(1))
   out("char_at(99):", scalar.char_at(99))
 
-  unit = "ab"
-  out("repeat:", unit.repeat(3))
+  repeated_piece = "ab"
+  out("repeat:", repeated_piece.repeat(3))
 
   single = "7"
   out("pad_left:", single.pad_left(3, "0"))

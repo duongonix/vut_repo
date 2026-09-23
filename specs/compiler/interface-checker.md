@@ -214,7 +214,7 @@ Composition remains useful for declaring intentional grouped requirements.
 For:
 
 ```text
-list(Animal)
+list[Animal]
 ```
 
 concrete values of different types may be accepted if each satisfies `Animal`.
@@ -333,7 +333,7 @@ duplicate compatible requirement
 conflicting requirement
 cycle
 interface-to-interface
-list(interface)
+list[interface]
 cache correctness
 ```
 

@@ -54,6 +54,16 @@ pub(super) fn manage_value(
             let reference = module.declare_func_in_func(target, builder.func);
             builder.ins().call(reference, &[value]);
         }
+        OwnershipKind::RcChannel => {
+            let name = if retain {
+                vut_runtime::abi::CHANNEL_RETAIN
+            } else {
+                vut_runtime::abi::CHANNEL_RELEASE
+            };
+            let target = runtime_function(module, name, &[types::I64], &[])?;
+            let reference = module.declare_func_in_func(target, builder.func);
+            builder.ins().call(reference, &[value]);
+        }
         OwnershipKind::RcString => {
             let name = if retain {
                 vut_runtime::abi::RETAIN_STRING
@@ -106,6 +116,16 @@ pub(super) fn manage_value(
                 vut_runtime::abi::INTERFACE_RETAIN
             } else {
                 vut_runtime::abi::INTERFACE_RELEASE
+            };
+            let target = runtime_function(module, name, &[types::I64], &[])?;
+            let reference = module.declare_func_in_func(target, builder.func);
+            builder.ins().call(reference, &[value]);
+        }
+        OwnershipKind::RcClosure => {
+            let name = if retain {
+                vut_runtime::abi::CLOSURE_RETAIN
+            } else {
+                vut_runtime::abi::CLOSURE_RELEASE
             };
             let target = runtime_function(module, name, &[types::I64], &[])?;
             let reference = module.declare_func_in_func(target, builder.func);
@@ -390,9 +410,12 @@ pub(super) fn store_temp_value(
     value: cranelift_codegen::ir::Value,
 ) -> Result<cranelift_codegen::ir::Value, CodegenError> {
     let address = stack_slot_for_type(builder, layouts, ty)?;
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), value, address, 0);
+    if layouts.types[ty.0].size != 0 {
+        let value = coerce_integer(builder, value, machine_type(layouts, ty));
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), value, address, 0);
+    }
     Ok(address)
 }
 
@@ -423,7 +446,9 @@ pub(super) fn element_value(
     ty: vut_hir::TypeId,
     address: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    if layouts.is_aggregate(ty) {
+    if layouts.types[ty.0].size == 0 {
+        builder.ins().iconst(types::I64, 0)
+    } else if layouts.is_aggregate(ty) {
         address
     } else {
         builder.ins().load(
@@ -463,7 +488,7 @@ pub(super) fn optional_from_presence(
             .map_err(|_| CodegenError::Backend("optional payload offset exceeds limit".into()))?;
         let destination = builder.ins().iadd_imm_u(slot, delta);
         copy_aggregate(builder, layouts, inner, payload, destination)?;
-    } else {
+    } else if layouts.types[inner.0].size != 0 {
         let loaded = element_value(builder, layouts, inner, payload);
         let index = i32::try_from(offset)
             .map_err(|_| CodegenError::Backend("optional payload offset exceeds limit".into()))?;

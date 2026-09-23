@@ -16,7 +16,17 @@ impl Analyzer<'_> {
         expected: Option<TypeId>,
     ) -> TypeId {
         let ty = match expr {
+            Expr::Name(name) if name.text == "unit" => self.intern(Type::Unit),
             Expr::Name(name) => {
+                // Record the initializer of a module-level constant reference so
+                // MIR can inline it. Shadowing locals take precedence in MIR.
+                if let Some(initializer) = self.module_constants.get(&name.text).cloned() {
+                    self.constant_references.insert(name.span, initializer);
+                } else if let Some(symbol) = self.reference_symbols.get(&name.span).copied()
+                    && let Some(initializer) = self.constant_initializers.get(&symbol).cloned()
+                {
+                    self.constant_references.insert(name.span, initializer);
+                }
                 let ty = context
                     .lookup(&name.text)
                     .or_else(|| {
@@ -113,7 +123,7 @@ impl Analyzer<'_> {
                             codes::E1004,
                             "cannot infer empty list type",
                             *span,
-                            "add an explicit `list(T)` annotation",
+                            "add an explicit `list[T]` annotation",
                         );
                         self.intern(Type::Error)
                     }
@@ -132,7 +142,7 @@ impl Analyzer<'_> {
                         let found = self.expr(module, value, context, contextual);
                         if let Some(element) = contextual {
                             // A contextual element type may accept heterogeneous
-                            // concrete elements (`list(dyn)`, `list(interface)`).
+                            // concrete elements (`list[dyn]`, `list[interface]`).
                             self.compatible(
                                 found,
                                 element,
@@ -212,7 +222,7 @@ impl Analyzer<'_> {
                             codes::E1004,
                             "cannot infer empty map type",
                             *span,
-                            "add an explicit `map(K, V)` annotation",
+                            "add an explicit `map[K, V]` annotation",
                         );
                         self.intern(Type::Error)
                     }
@@ -281,13 +291,74 @@ impl Analyzer<'_> {
                     self.intern(Type::Map(key, contextual.map_or(first_value, |v| v.1)))
                 }
             }
+            Expr::Subscript {
+                object,
+                types: _,
+                index,
+                span,
+            } => {
+                if self.subscript_kind(module, object) == SubscriptKind::Generic {
+                    self.subscripts.insert(*span, SubscriptKind::Generic);
+                    self.error(
+                        codes::E2004,
+                        "generic application requires a call",
+                        *span,
+                        "use the specialized function or constructor with `(...)`",
+                    );
+                    self.intern(Type::Error)
+                } else {
+                    self.subscripts.insert(*span, SubscriptKind::Index);
+                    if let Some(index) = index.as_deref() {
+                        self.check_index(module, object, index, *span, context)
+                    } else {
+                        self.error(
+                            codes::E2004,
+                            "value is not indexable",
+                            *span,
+                            "the subscript target is not generic and the content is not a value",
+                        );
+                        self.intern(Type::Error)
+                    }
+                }
+            }
             Expr::Unary { op, value, span } => {
-                let inner = self.expr(module, value, context, None);
+                // Unary +/- propagates the expected numeric type so numeric
+                // literals adapt (`x: i64 = -20`).
+                let inner_expected = expected.filter(|id| self.is_numeric(*id));
+                let inner = if *op == UnaryOp::Negate
+                    && let Expr::Integer {
+                        text,
+                        span: literal_span,
+                    } = value.as_ref()
+                {
+                    let ty = inner_expected.unwrap_or_else(|| self.intern(Type::Int));
+                    if !self.negative_integer_fits(text, ty) {
+                        self.error(
+                            codes::E1008,
+                            "integer literal out of range",
+                            *span,
+                            "negative literal does not fit its contextual numeric type",
+                        );
+                    }
+                    self.expression_types.insert(*literal_span, ty);
+                    ty
+                } else {
+                    self.expr(module, value, context, inner_expected)
+                };
                 match op {
                     UnaryOp::Not => {
                         let bool_ty = self.intern(Type::Bool);
                         self.compatible(inner, bool_ty, *span, codes::E1009, "`not` requires bool");
                         self.intern(Type::Bool)
+                    }
+                    UnaryOp::Negate if self.is_numeric(inner) && self.is_unsigned(inner) => {
+                        self.error(
+                            codes::E1009,
+                            "cannot negate an unsigned value",
+                            *span,
+                            "unsigned integers have no negative values; convert to a signed type first",
+                        );
+                        self.intern(Type::Error)
                     }
                     UnaryOp::Negate | UnaryOp::Positive if self.is_numeric(inner) => inner,
                     _ => {
@@ -307,7 +378,18 @@ impl Analyzer<'_> {
                 right,
                 span,
             } => {
-                let lhs = self.expr(module, left, context, None);
+                let numeric_context = matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide
+                        | BinaryOp::Modulo
+                )
+                .then_some(expected)
+                .flatten()
+                .filter(|ty| self.is_numeric(*ty));
+                let lhs = self.expr(module, left, context, numeric_context);
                 let rhs = self.expr(module, right, context, Some(lhs));
                 match op {
                     BinaryOp::And | BinaryOp::Or => {
@@ -342,12 +424,16 @@ impl Analyzer<'_> {
                     | BinaryOp::LessEqual
                     | BinaryOp::Greater
                     | BinaryOp::GreaterEqual
-                        if self.is_numeric(lhs) && self.is_numeric(rhs) =>
+                        if self.is_numeric(lhs)
+                            && self.is_numeric(rhs)
+                            && self.is_compatible(rhs, lhs) =>
                     {
                         self.intern(Type::Bool)
                     }
                     BinaryOp::RangeExclusive | BinaryOp::RangeInclusive
-                        if self.is_integer(lhs) && self.is_integer(rhs) =>
+                        if self.is_integer(lhs)
+                            && self.is_integer(rhs)
+                            && self.is_compatible(rhs, lhs) =>
                     {
                         self.intern(Type::Range(lhs))
                     }
@@ -377,6 +463,16 @@ impl Analyzer<'_> {
                 }
             }
             Expr::Member { object, member, .. } => {
+                // A module-qualified constant (`module.CONST`) is inlined from
+                // its initializer; record it and yield the constant's type.
+                if let Some(symbol) = self.reference_symbols.get(&member.span).copied()
+                    && let Some(initializer) = self.constant_initializers.get(&symbol).cloned()
+                {
+                    self.constant_references.insert(expr.span(), initializer);
+                    let ty = self.symbol_type(symbol);
+                    self.expression_types.insert(expr.span(), ty);
+                    return ty;
+                }
                 // A module-qualified type used as a value prefix
                 // (`module.Enum.variant`, `module.Type.field`) names the type;
                 // the resolver has already resolved the qualifier.
@@ -419,7 +515,7 @@ impl Analyzer<'_> {
                         codes::E1004,
                         "cannot infer result type",
                         *span,
-                        "`ok(...)` requires an expected `result(T, E)` type",
+                        "`ok(...)` requires an expected `result[T, E]` type",
                     );
                     self.expr(module, value, context, None);
                     return self.intern(Type::Error);
@@ -429,7 +525,7 @@ impl Analyzer<'_> {
                         codes::E1003,
                         "invalid result constructor context",
                         *span,
-                        "`ok(...)` can only construct `result(T, E)`",
+                        "`ok(...)` can only construct `result[T, E]`",
                     );
                     self.expr(module, value, context, None);
                     return self.intern(Type::Error);
@@ -450,7 +546,7 @@ impl Analyzer<'_> {
                         codes::E1004,
                         "cannot infer result type",
                         *span,
-                        "`err(...)` requires an expected `result(T, E)` type",
+                        "`err(...)` requires an expected `result[T, E]` type",
                     );
                     self.expr(module, value, context, None);
                     return self.intern(Type::Error);
@@ -460,7 +556,7 @@ impl Analyzer<'_> {
                         codes::E1003,
                         "invalid result constructor context",
                         *span,
-                        "`err(...)` can only construct `result(T, E)`",
+                        "`err(...)` can only construct `result[T, E]`",
                     );
                     self.expr(module, value, context, None);
                     return self.intern(Type::Error);
@@ -482,7 +578,7 @@ impl Analyzer<'_> {
                         codes::E1003,
                         "invalid `?` operand",
                         *span,
-                        "`?` requires a `result(T, E)` value",
+                        "`?` requires a `result[T, E]` value",
                     );
                     return self.intern(Type::Error);
                 };
@@ -491,7 +587,7 @@ impl Analyzer<'_> {
                         codes::E6007,
                         "`?` outside function",
                         *span,
-                        "`?` can only propagate from a function returning `result(_, E)`",
+                        "`?` can only propagate from a function returning `result[_, E]`",
                     );
                     return ok_ty;
                 };
@@ -500,7 +596,7 @@ impl Analyzer<'_> {
                         codes::E6005,
                         "invalid `?` return type",
                         *span,
-                        "current function must return `result(_, E)`",
+                        "current function must return `result[_, E]`",
                     );
                     return ok_ty;
                 };
@@ -540,7 +636,7 @@ impl Analyzer<'_> {
                         codes::E6012,
                         "cannot await non-awaitable value",
                         value.span(),
-                        "the operand of `await` must be an async computation, a `future(T)`, or a `vutcon` handle",
+                        "the operand of `await` must be an async computation, a `future[T]`, or a `vutcon` handle",
                     );
                     self.intern(Type::Error)
                 }
@@ -666,6 +762,92 @@ impl Analyzer<'_> {
         self.expression_types.insert(expr.span(), ty);
         ty
     }
+
+    /// Decides whether `object[...]` is a generic application or a collection
+    /// access from symbol/type information, not syntax.
+    fn subscript_kind(&self, module: &Module, object: &Expr) -> SubscriptKind {
+        let Expr::Name(name) = object else {
+            return SubscriptKind::Index;
+        };
+        let target = self
+            .reference_symbols
+            .get(&name.span)
+            .copied()
+            .or_else(|| module.symbols.get(&name.text).copied());
+        match target {
+            Some(symbol) if self.generic_params.contains_key(&symbol) => SubscriptKind::Generic,
+            _ => SubscriptKind::Index,
+        }
+    }
+
+    /// Returns the generic-application reading of a call callee, if any:
+    /// `parse[int](x)` / `Box[int](...)`. The subscript span is returned so MIR
+    /// can lower the subscript as a generic application.
+    fn generic_application_callee<'e>(
+        &self,
+        module: &Module,
+        callee: &'e Expr,
+    ) -> Option<(&'e Expr, &'e [vut_ast::TypeExpr], Span)> {
+        let Expr::Subscript {
+            object,
+            types: Some(types),
+            span,
+            ..
+        } = callee
+        else {
+            return None;
+        };
+        (self.subscript_kind(module, object) == SubscriptKind::Generic).then_some((
+            object.as_ref(),
+            types.as_slice(),
+            *span,
+        ))
+    }
+
+    /// Type-checks `object[index]` against array, list, and map element types.
+    fn check_index(
+        &mut self,
+        module: &Module,
+        object: &Expr,
+        index: &Expr,
+        span: Span,
+        context: &mut Context,
+    ) -> TypeId {
+        let collection = self.expr(module, object, context, None);
+        let index_ty = self.expr(module, index, context, None);
+        match self.types[collection.0].clone() {
+            Type::Array(element, _) | Type::List(element) => {
+                let int = self.intern(Type::Int);
+                self.compatible(
+                    index_ty,
+                    int,
+                    index.span(),
+                    codes::E1005,
+                    "collection index type mismatch",
+                );
+                element
+            }
+            Type::Map(key, value) => {
+                self.compatible(
+                    index_ty,
+                    key,
+                    index.span(),
+                    codes::E1005,
+                    "map key type mismatch",
+                );
+                value
+            }
+            _ => {
+                self.error(
+                    codes::E2004,
+                    "value is not indexable",
+                    span,
+                    "only arrays, lists, and maps support `[...]` access",
+                );
+                self.intern(Type::Error)
+            }
+        }
+    }
     /// `out`/`print` accept any number of displayable arguments. The compiler's
     /// display pass rewrites the call into a single `str` argument before final
     /// checking; this accepts both the original and the rewritten form.
@@ -775,6 +957,7 @@ impl Analyzer<'_> {
             module,
             &rest_signature,
             &arguments[1..],
+            rest_signature.parameters.len(),
             span,
             context,
             false,
@@ -795,7 +978,25 @@ impl Analyzer<'_> {
         context: &mut Context,
         expected: Option<TypeId>,
     ) -> TypeId {
+        if let Some((inner, type_arguments, subscript_span)) =
+            self.generic_application_callee(module, callee)
+        {
+            self.subscripts
+                .insert(subscript_span, SubscriptKind::Generic);
+            return self.explicit_generic_call(
+                module,
+                inner,
+                type_arguments,
+                arguments,
+                span,
+                context,
+            );
+        }
         if let Some(result) = self.try_display_builtin(module, callee, arguments, span, context) {
+            return result;
+        }
+        if let Some(result) = self.try_channel_constructor(module, callee, arguments, span, context)
+        {
             return result;
         }
         if let Some(result) = self.try_receiver_call(module, callee, arguments, span, context) {
@@ -899,7 +1100,10 @@ impl Analyzer<'_> {
                                     .collect(),
                                 result: requirement.result,
                             };
-                            self.arguments(module, &signature, arguments, span, context, false);
+                            let required = signature.parameters.len();
+                            self.arguments(
+                                module, &signature, arguments, required, span, context, false,
+                            );
                             return signature.result;
                         }
                         None
@@ -913,6 +1117,15 @@ impl Analyzer<'_> {
             }
             _ => None,
         };
+        let target = target.map(|symbol| {
+            self.aliases
+                .get(&symbol)
+                .and_then(|ty| match self.types[ty.0] {
+                    Type::Data(owner) | Type::Enum(owner) => Some(owner),
+                    _ => None,
+                })
+                .unwrap_or(symbol)
+        });
         if let Some(symbol) = target
             && matches!(
                 self.resolution.symbols[symbol.0].kind,
@@ -1026,13 +1239,17 @@ impl Analyzer<'_> {
                     context.await_span = None;
                 }
                 let borrows_resources = self.extern_symbols.contains(&symbol);
+                let required = self.required_parameters(symbol, signature.parameters.len());
                 if let Some(element) = self.variadic_functions.get(&symbol).copied() {
-                    self.variadic_arguments(module, &signature, element, arguments, span, context);
+                    self.variadic_arguments(
+                        module, &signature, required, element, arguments, span, context,
+                    );
                 } else {
                     self.arguments(
                         module,
                         &signature,
                         arguments,
+                        required,
                         span,
                         context,
                         borrows_resources,
@@ -1040,7 +1257,7 @@ impl Analyzer<'_> {
                 }
                 if self.async_externs.contains(&symbol) {
                     // Calling a native async extern starts the operation and
-                    // yields a `future(T)`; the logical result is awaited later.
+                    // yields a `future[T]`; the logical result is awaited later.
                     return self.intern(Type::Future(signature.result));
                 }
                 if self.async_symbols.contains(&symbol) {
@@ -1054,6 +1271,80 @@ impl Analyzer<'_> {
         }
         let callee_type = self.expr(module, callee, context, None);
         self.call_value(module, callee_type, arguments, span, context)
+    }
+
+    fn explicit_generic_call(
+        &mut self,
+        module: &Module,
+        callee: &Expr,
+        type_arguments: &[vut_ast::TypeExpr],
+        arguments: &[vut_ast::Argument],
+        span: Span,
+        context: &mut Context,
+    ) -> TypeId {
+        let Expr::Name(name) = callee else {
+            self.error(
+                codes::E2004,
+                "unsupported generic call target",
+                span,
+                "explicit generic application requires a named function or data type",
+            );
+            return self.intern(Type::Error);
+        };
+        let target = self
+            .resolution
+            .references
+            .iter()
+            .find(|reference| reference.span == name.span)
+            .map(|reference| reference.symbol)
+            .or_else(|| module.symbols.get(&name.text).copied());
+        let Some(target) = target else {
+            return self.intern(Type::Error);
+        };
+        let resolved: Vec<_> = type_arguments
+            .iter()
+            .map(|argument| self.resolve_type(module, argument))
+            .collect();
+        let Some(parameters) = self.generic_params.get(&target).cloned() else {
+            self.error(
+                codes::E2004,
+                "target is not generic",
+                span,
+                "remove `[...]` or call a generic declaration",
+            );
+            return self.intern(Type::Error);
+        };
+        if parameters.len() != resolved.len() {
+            self.error(
+                codes::E1003,
+                "wrong number of type arguments",
+                span,
+                "provide exactly one type argument for each generic parameter",
+            );
+            return self.intern(Type::Error);
+        }
+        self.check_constraints(&parameters, &resolved, span);
+        if self.symbol_kind(target) == vut_resolver::SymbolKind::Data {
+            let instance = self.instantiate_symbol(target, &resolved);
+            self.generic_type_applications.push(GenericApplication {
+                span,
+                template: target,
+                arguments: resolved.clone(),
+            });
+            self.call_targets.insert(span, instance);
+            if let Some(fields) = self.fields.get(&instance).cloned() {
+                return self.construct(module, instance, &fields, arguments, span, context);
+            }
+        }
+        self.explicit_generic_function_call(
+            module,
+            target,
+            &parameters,
+            &resolved,
+            arguments,
+            span,
+            context,
+        )
     }
 
     /// Reports an async call whose result is used without `await`.
@@ -1183,7 +1474,15 @@ impl Analyzer<'_> {
                 .collect(),
             result,
         };
-        self.arguments(module, &signature, arguments, span, context, false);
+        self.arguments(
+            module,
+            &signature,
+            arguments,
+            signature.parameters.len(),
+            span,
+            context,
+            false,
+        );
         self.bound_calls.insert(
             span,
             BoundCall {
@@ -1218,7 +1517,10 @@ impl Analyzer<'_> {
             return None;
         }
         let signature = self.signatures.get(&method).cloned()?;
-        self.arguments(module, &signature, arguments, span, context, false);
+        let required = self.required_parameters(method, signature.parameters.len());
+        self.arguments(
+            module, &signature, arguments, required, span, context, false,
+        );
         self.call_targets.insert(span, method);
         Some(signature.result)
     }
@@ -1302,7 +1604,15 @@ impl Analyzer<'_> {
                 .collect(),
             result: first.result,
         };
-        self.arguments(module, &signature, arguments, span, context, false);
+        self.arguments(
+            module,
+            &signature,
+            arguments,
+            signature.parameters.len(),
+            span,
+            context,
+            false,
+        );
         self.bound_calls.insert(
             span,
             BoundCall {
@@ -1317,10 +1627,15 @@ impl Analyzer<'_> {
     /// Checks the arguments of a call to a variadic function: fixed parameters
     /// first, then zero or more arguments of the variadic element type, or a
     /// single trailing spread of a matching sequence.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "variadic checking threads the signature, required arity, element type, arguments, span, and context"
+    )]
     fn variadic_arguments(
         &mut self,
         module: &Module,
         signature: &Signature,
+        required: usize,
         element: TypeId,
         arguments: &[vut_ast::Argument],
         span: Span,
@@ -1391,7 +1706,7 @@ impl Analyzer<'_> {
                 positional += 1;
             }
         }
-        if positional < fixed && arguments.iter().all(|argument| argument.name.is_none()) {
+        if positional < required && arguments.iter().all(|argument| argument.name.is_none()) {
             self.error(
                 codes::E6002,
                 "invalid argument count",
@@ -1401,7 +1716,7 @@ impl Analyzer<'_> {
         }
     }
 
-    /// A spread argument must be a `list(T)`, `array(T, N)`, or another variadic
+    /// A spread argument must be a `list[T]`, `array[T, N]`, or another variadic
     /// view with the same element type.
     fn is_variadic_spread(&self, actual: TypeId, element: TypeId) -> bool {
         match self.types[actual.0] {
@@ -1463,7 +1778,15 @@ impl Analyzer<'_> {
                 .collect(),
             result,
         };
-        self.arguments(module, &signature, arguments, span, context, false);
+        self.arguments(
+            module,
+            &signature,
+            arguments,
+            signature.parameters.len(),
+            span,
+            context,
+            false,
+        );
         result
     }
 
@@ -1624,7 +1947,7 @@ impl Analyzer<'_> {
                         codes::E7107,
                         "pattern type mismatch",
                         *span,
-                        "`ok(...)` can only match a `result(T, E)` value",
+                        "`ok(...)` can only match a `result[T, E]` value",
                     );
                     let error_ty = self.intern(Type::Error);
                     self.check_pattern(module, pattern, error_ty, bindings, context);
@@ -1638,7 +1961,7 @@ impl Analyzer<'_> {
                         codes::E7107,
                         "pattern type mismatch",
                         *span,
-                        "`err(...)` can only match a `result(T, E)` value",
+                        "`err(...)` can only match a `result[T, E]` value",
                     );
                     let error_ty = self.intern(Type::Error);
                     self.check_pattern(module, pattern, error_ty, bindings, context);
@@ -2084,7 +2407,7 @@ impl Analyzer<'_> {
         self.symbol_name(symbol)
     }
 
-    /// Type-checks `Enum.variant(field = value, ...)` and records the
+    /// Type-checks `Enum.variant(field: value, ...)` and records the
     /// construction for MIR lowering.
     #[expect(
         clippy::too_many_arguments,

@@ -13,6 +13,26 @@ The `path` module owns lexical operations such as joining paths, finding a paren
 
 Lexical normalization does not resolve symbolic links and is not equivalent to canonical filesystem resolution. Target-platform roots and separator rules must remain meaningful.
 
-## API availability
+## API
 
-The specification gives conceptual signatures such as `path.join(base: str, child: str) -> str`. Confirm the installed stdlib's exact API before relying on optional or proposed forms.
+```vut
+import path
+
+fn main():
+  file = path.join("docs", "guide.vut")
+  out(path.normalize(file))
+  suffix = path.extension(file)
+  if suffix != null:
+    out(suffix)
+```
+
+| Operation                                                              | Return      |
+| ---------------------------------------------------------------------- | ----------- |
+| `separator()`                                                          | `str`       |
+| `is_absolute(value)`, `is_relative(value)`                             | `bool`      |
+| `components(value)`                                                    | `list[str]` |
+| `join(base, child)`, `normalize(value)`                                | `str`       |
+| `parent(value)`, `file_name(value)`, `extension(value)`, `stem(value)` | `str?`      |
+| `with_extension(value, suffix)`                                        | `str`       |
+
+All path parameters are strings. Handle `null` when no requested component exists. Lexical normalization is not a security boundary: validate filesystem access separately, particularly with untrusted paths and symlinks.

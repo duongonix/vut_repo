@@ -22,8 +22,14 @@ must agree on it exactly (`vut_codegen::verify_runtime_abi`).
 * The `Release` workflow refuses to build when the tag does not equal
   `v<root Cargo.toml version>`.
 * The `manifest.json` in every artifact records `vut`, `vpm`, `stdlib`,
-  `runtime`, `abi_version`, `target`, `archive`, `build_commit` and optionally
-  `minimum_os`.
+  `runtime`, `abi_version`, `target`, `archive`, `channel`, `profile`,
+  `cranelift`, `build_commit` and optionally `minimum_os`.
+* The release-level `releases.json` records the version, compiler (version,
+  Cranelift, profile), `runtime_abi`, `stdlib_version`, `manifest_format`, and a
+  `targets[]` entry per target with its URL, SHA-256 and size. Installers resolve
+  targets through it instead of constructing URLs.
+* Each archive is attested with GitHub build provenance; the attestation bundles
+  are published as release assets.
 
 ## Compatibility
 

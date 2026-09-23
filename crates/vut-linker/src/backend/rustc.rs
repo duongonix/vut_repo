@@ -9,28 +9,44 @@ use crate::backend::LinkerBackend;
 use crate::error::LinkError;
 use crate::plan::LinkPlan;
 use crate::process;
+use crate::resolver::ResolvedLinker;
 
 /// Portable startup shim compiled by `rustc` at link time.
 const SHIM_SOURCE: &str = include_str!("../link_shim.rs");
 
 /// Links through `rustc`.
-pub struct RustcBackend;
+pub struct RustcBackend {
+    program: PathBuf,
+    search_paths: Vec<PathBuf>,
+    environment: Vec<(String, String)>,
+}
+
+impl RustcBackend {
+    #[must_use]
+    pub fn new(resolved: ResolvedLinker) -> Self {
+        Self {
+            program: resolved.program,
+            search_paths: resolved.search_paths,
+            environment: resolved.environment,
+        }
+    }
+}
 
 impl LinkerBackend for RustcBackend {
     fn name(&self) -> &'static str {
         "rustc"
     }
     fn link(&self, plan: &LinkPlan) -> Result<(), LinkError> {
-        let (program, arguments) = command(plan)?;
-        process::run(&program, &arguments, &plan.output)
+        let arguments = command(plan, &self.search_paths)?;
+        process::run(&self.program, &arguments, &plan.output, &self.environment)
     }
 }
 
-/// Builds the `rustc` invocation for a plan.
+/// Builds the `rustc` argument vector for a plan.
 ///
 /// # Errors
 /// Returns an error when the temporary shim cannot be written.
-pub(crate) fn command(plan: &LinkPlan) -> Result<(PathBuf, Vec<String>), LinkError> {
+pub(crate) fn command(plan: &LinkPlan, search_paths: &[PathBuf]) -> Result<Vec<String>, LinkError> {
     let shim = write_shim()?;
     let crate_name = format!(
         "vut_link_{}_{}",
@@ -44,6 +60,9 @@ pub(crate) fn command(plan: &LinkPlan) -> Result<(PathBuf, Vec<String>), LinkErr
         "-o".into(),
         plan.output.display().to_string(),
     ];
+    for path in search_paths.iter().chain(plan.search_paths.iter()) {
+        arguments.extend(["-C".into(), format!("link-arg=-L{}", path.display())]);
+    }
     for object in &plan.objects {
         arguments.extend(["-C".into(), format!("link-arg={}", object.display())]);
     }
@@ -87,7 +106,7 @@ pub(crate) fn command(plan: &LinkPlan) -> Result<(PathBuf, Vec<String>), LinkErr
             "link-arg=advapi32.lib".into(),
         ]);
     }
-    Ok((PathBuf::from("rustc"), arguments))
+    Ok(arguments)
 }
 
 /// Writes the embedded startup shim to a unique temporary file.
@@ -132,13 +151,14 @@ mod tests {
             } else {
                 "x86_64-unknown-linux-gnu".into()
             },
+            ..LinkPlan::default()
         }
     }
 
     #[test]
     fn command_keeps_entry_and_artifacts_explicit() {
         let plan = plan();
-        let (program, arguments) = command(&plan).expect("command");
+        let arguments = command(&plan, &[]).expect("command");
         assert!(arguments.iter().any(|value| value.contains("main.o")));
         assert!(arguments.iter().any(|value| value.contains("runtime.a")));
         assert_eq!(
@@ -155,6 +175,5 @@ mod tests {
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))),
             "the embedded startup shim supplies the entry point"
         );
-        assert_eq!(program, PathBuf::from("rustc"));
     }
 }

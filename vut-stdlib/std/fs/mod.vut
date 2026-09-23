@@ -5,37 +5,41 @@
 # Native primitives return the shared result envelope; this module maps status
 # codes into typed errors.
 #
-# Adaptation notes (specs/std/std.md §5): `result(null, ...)` is not expressible
-# in the language (there is no unit/value-less ok type) and `result(u64, ...)`
-# cannot be constructed because byte-decoding yields `int`; void operations
-# therefore return `result(bool, FsError)` and `copy` returns `result(int, ...)`.
+# Successful operations without a payload return result[unit, FsError].
 import _internal.abi
+import _internal.count as count
 import io
 import path
-import time
+import fs._errors as errors
+import fs._metadata as meta
+
+type FsError = errors.FsError
+type FsErrorKind = errors.FsErrorKind
+type Metadata = meta.Metadata
+type Permissions = meta.Permissions
 
 opaque data FileHandle
 
 @link_name("vut_rt_fs_open_v1")
-extern "C" fn _native_open(location: str, read: usize, write: usize, append: usize, truncate: usize, create: usize, create_new: usize) -> resource(FileHandle)
+extern "C" fn _native_open(location: str, read: usize, write: usize, append: usize, truncate: usize, create: usize, create_new: usize) -> resource[FileHandle]
 
 @link_name("vut_rt_fs_file_ok_v1")
-extern "C" fn _native_file_ok(handle: ptr(FileHandle)) -> usize
+extern "C" fn _native_file_ok(handle: ptr[FileHandle]) -> usize
 
 @link_name("vut_rt_fs_file_error_v1")
-extern "C" fn _native_file_error(handle: ptr(FileHandle)) -> bytes
+extern "C" fn _native_file_error(handle: ptr[FileHandle]) -> bytes
 
 @link_name("vut_rt_fs_file_read_v1")
-extern "C" fn _native_file_read(handle: ptr(FileHandle)) -> bytes
+extern "C" fn _native_file_read(handle: ptr[FileHandle]) -> bytes
 
-@link_name("vut_rt_fs_file_write_v1")
-extern "C" fn _native_file_write(handle: ptr(FileHandle), blob: bytes) -> bytes
+@link_name("vut_rt_fs_file_write_v2")
+extern "C" fn _native_file_write(handle: ptr[FileHandle], blob: bytes) -> resource[count.Handle]
 
 @link_name("vut_rt_fs_file_flush_v1")
-extern "C" fn _native_file_flush(handle: ptr(FileHandle)) -> bytes
+extern "C" fn _native_file_flush(handle: ptr[FileHandle]) -> bytes
 
 @link_name("vut_rt_fs_file_sync_v1")
-extern "C" fn _native_file_sync(handle: ptr(FileHandle)) -> bytes
+extern "C" fn _native_file_sync(handle: ptr[FileHandle]) -> bytes
 
 @link_name("vut_rt_fs_exists_v1")
 extern "C" fn _native_exists(location: str) -> usize
@@ -79,8 +83,8 @@ extern "C" fn _native_remove_dir_all(location: str) -> bytes
 @link_name("vut_rt_fs_remove_file_v1")
 extern "C" fn _native_remove_file(location: str) -> bytes
 
-@link_name("vut_rt_fs_copy_v1")
-extern "C" fn _native_copy(from: str, to: str) -> bytes
+@link_name("vut_rt_fs_copy_v2")
+extern "C" fn _native_copy(from: str, to: str) -> resource[count.Handle]
 
 @link_name("vut_rt_fs_rename_v1")
 extern "C" fn _native_rename(from: str, to: str) -> bytes
@@ -88,31 +92,13 @@ extern "C" fn _native_rename(from: str, to: str) -> bytes
 @link_name("vut_rt_fs_read_dir_v1")
 extern "C" fn _native_read_dir(location: str) -> bytes
 
-@link_name("vut_rt_fs_metadata_len_v1")
-extern "C" fn _native_metadata_len(location: str) -> u64
-
-@link_name("vut_rt_fs_metadata_is_file_v1")
-extern "C" fn _native_metadata_is_file(location: str) -> usize
-
-@link_name("vut_rt_fs_metadata_is_dir_v1")
-extern "C" fn _native_metadata_is_dir(location: str) -> usize
-
-@link_name("vut_rt_fs_metadata_readonly_v1")
-extern "C" fn _native_metadata_readonly(location: str) -> usize
-
-@link_name("vut_rt_fs_metadata_modified_v1")
-extern "C" fn _native_metadata_modified(location: str) -> usize
-
-@link_name("vut_rt_fs_metadata_created_v1")
-extern "C" fn _native_metadata_created(location: str) -> usize
-
-@link_name("vut_rt_fs_metadata_accessed_v1")
-extern "C" fn _native_metadata_accessed(location: str) -> usize
+@link_name("vut_rt_fs_file_metadata_v2")
+extern "C" fn _native_file_metadata(handle: ptr[FileHandle]) -> resource[meta.Handle]
 
 @link_name("vut_rt_fs_set_readonly_v1")
 extern "C" fn _native_set_readonly(location: str, readonly: usize) -> bytes
 
-fn _open(location: str, read: usize, write: usize, append: usize, truncate: usize, create: usize, create_new: usize) -> resource(FileHandle):
+fn _open(location: str, read: usize, write: usize, append: usize, truncate: usize, create: usize, create_new: usize) -> resource[FileHandle]:
   unsafe:
     _native_open(location, read, write, append, truncate, create, create_new)
 
@@ -172,7 +158,7 @@ fn _remove_file(location: str) -> bytes:
   unsafe:
     _native_remove_file(location)
 
-fn _copy(from: str, to: str) -> bytes:
+fn _copy(from: str, to: str) -> resource[count.Handle]:
   unsafe:
     _native_copy(from, to)
 
@@ -184,81 +170,12 @@ fn _read_dir(location: str) -> bytes:
   unsafe:
     _native_read_dir(location)
 
-fn _metadata_len(location: str) -> u64:
-  unsafe:
-    _native_metadata_len(location)
-
-fn _metadata_is_file(location: str) -> usize:
-  unsafe:
-    _native_metadata_is_file(location)
-
-fn _metadata_is_dir(location: str) -> usize:
-  unsafe:
-    _native_metadata_is_dir(location)
-
-fn _metadata_readonly(location: str) -> usize:
-  unsafe:
-    _native_metadata_readonly(location)
-
-fn _metadata_modified(location: str) -> usize:
-  unsafe:
-    _native_metadata_modified(location)
-
-fn _metadata_created(location: str) -> usize:
-  unsafe:
-    _native_metadata_created(location)
-
-fn _metadata_accessed(location: str) -> usize:
-  unsafe:
-    _native_metadata_accessed(location)
-
 fn _set_readonly(location: str, readonly: usize) -> bytes:
   unsafe:
     _native_set_readonly(location, readonly)
 
-# ---- Errors ----
-
-enum FsErrorKind:
-  not_found
-  permission_denied
-  already_exists
-  invalid_input
-  not_a_directory
-  is_a_directory
-  directory_not_empty
-  unsupported
-  io
-  unknown
-
-data FsError:
-  kind: FsErrorKind
-  message: str
-
-fn _kind(code: int) -> FsErrorKind:
-  kind: FsErrorKind = if code == 1:
-    FsErrorKind.not_found
-  elif code == 2:
-    FsErrorKind.permission_denied
-  elif code == 3:
-    FsErrorKind.already_exists
-  elif code == 4:
-    FsErrorKind.invalid_input
-  elif code == 5:
-    FsErrorKind.not_a_directory
-  elif code == 6:
-    FsErrorKind.is_a_directory
-  elif code == 7:
-    FsErrorKind.directory_not_empty
-  elif code == 8:
-    FsErrorKind.unsupported
-  elif code == 9 or code == 10 or code == 11 or code == 12 or code == 13:
-    FsErrorKind.io
-  else:
-    FsErrorKind.unknown
-  kind
-
 fn _error(code: int, raw: bytes) -> FsError:
-  FsError(kind = _kind(code), message = abi.message(raw))
+  errors.from_status(code, raw)
 
 fn _io_error(code: int, raw: bytes) -> io.IoError:
   io.error_from_status(code, raw)
@@ -266,170 +183,82 @@ fn _io_error(code: int, raw: bytes) -> io.IoError:
 fn _err_io(code: int, raw: bytes) -> io.IoError:
   _io_error(code, raw)
 
-fn _ok_bytes(value: bytes) -> result(bytes, FsError):
+fn _ok_bytes(value: bytes) -> result[bytes, FsError]:
   ok(value)
 
-fn _err_bytes(code: int, raw: bytes) -> result(bytes, FsError):
+fn _err_bytes(code: int, raw: bytes) -> result[bytes, FsError]:
   err(_error(code, raw))
 
-fn _bytes_result(raw: bytes) -> result(bytes, FsError):
-  value: result(bytes, FsError) = if abi.is_ok(raw):
+fn _bytes_result(raw: bytes) -> result[bytes, FsError]:
+  value: result[bytes, FsError] = if abi.is_ok(raw):
     _ok_bytes(abi.payload(raw))
   else:
     _err_bytes(abi.status(raw), raw)
   value
 
-fn _ok_text(value: str) -> result(str, FsError):
+fn _ok_text(value: str) -> result[str, FsError]:
   ok(value)
 
-fn _err_text(code: int, raw: bytes) -> result(str, FsError):
+fn _err_text(code: int, raw: bytes) -> result[str, FsError]:
   err(_error(code, raw))
 
-fn _text_result(raw: bytes) -> result(str, FsError):
-  value: result(str, FsError) = if abi.is_ok(raw):
+fn _text_result(raw: bytes) -> result[str, FsError]:
+  value: result[str, FsError] = if abi.is_ok(raw):
     _ok_text(abi.raw_text(raw))
   else:
     _err_text(abi.status(raw), raw)
   value
 
-fn _ok_flag() -> result(bool, FsError):
-  ok(true)
+fn _ok_flag() -> result[unit, FsError]:
+  ok(unit)
 
-fn _err_flag(code: int, raw: bytes) -> result(bool, FsError):
+fn _err_flag(code: int, raw: bytes) -> result[unit, FsError]:
   err(_error(code, raw))
 
-fn _flag_result(raw: bytes) -> result(bool, FsError):
-  value: result(bool, FsError) = if abi.is_ok(raw):
+fn _flag_result(raw: bytes) -> result[unit, FsError]:
+  value: result[unit, FsError] = if abi.is_ok(raw):
     _ok_flag()
   else:
     _err_flag(abi.status(raw), raw)
   value
 
-fn _ok_size(value: int) -> result(int, FsError):
+fn _ok_list(value: list[DirectoryEntry]) -> result[list[DirectoryEntry], FsError]:
   ok(value)
 
-fn _err_size(code: int, raw: bytes) -> result(int, FsError):
+fn _err_list(code: int, raw: bytes) -> result[list[DirectoryEntry], FsError]:
   err(_error(code, raw))
 
-fn _ok_list(value: list(DirectoryEntry)) -> result(list(DirectoryEntry), FsError):
+fn _ok_file(value: File) -> result[File, FsError]:
   ok(value)
 
-fn _err_list(code: int, raw: bytes) -> result(list(DirectoryEntry), FsError):
+fn _err_file(code: int, raw: bytes) -> result[File, FsError]:
   err(_error(code, raw))
 
-fn _ok_file(value: File) -> result(File, FsError):
+fn _ok_io_bytes(value: bytes) -> result[bytes, io.IoError]:
   ok(value)
 
-fn _err_file(code: int, raw: bytes) -> result(File, FsError):
-  err(_error(code, raw))
-
-fn _ok_metadata(value: Metadata) -> result(Metadata, FsError):
-  ok(value)
-
-fn _err_metadata(message: str) -> result(Metadata, FsError):
-  err(FsError(kind = FsErrorKind.not_found, message = message))
-
-fn _ok_permissions(value: Permissions) -> result(Permissions, FsError):
-  ok(value)
-
-fn _err_permissions(message: str) -> result(Permissions, FsError):
-  err(FsError(kind = FsErrorKind.not_found, message = message))
-
-fn _ok_timestamp(value: time.Timestamp) -> result(time.Timestamp, FsError):
-  ok(value)
-
-fn _err_timestamp(message: str) -> result(time.Timestamp, FsError):
-  err(FsError(kind = FsErrorKind.unsupported, message = message))
-
-fn _ok_io_bytes(value: bytes) -> result(bytes, io.IoError):
-  ok(value)
-
-fn _err_io_bytes(code: int, raw: bytes) -> result(bytes, io.IoError):
+fn _err_io_bytes(code: int, raw: bytes) -> result[bytes, io.IoError]:
   err(_err_io(code, raw))
 
-fn _io_bytes(raw: bytes) -> result(bytes, io.IoError):
-  value: result(bytes, io.IoError) = if abi.is_ok(raw):
+fn _io_bytes(raw: bytes) -> result[bytes, io.IoError]:
+  value: result[bytes, io.IoError] = if abi.is_ok(raw):
     _ok_io_bytes(abi.payload(raw))
   else:
     _err_io_bytes(abi.status(raw), raw)
   value
 
-fn _ok_io_size(value: int) -> result(int, io.IoError):
-  ok(value)
+fn _ok_io_flag() -> result[unit, io.IoError]:
+  ok(unit)
 
-fn _err_io_size(code: int, raw: bytes) -> result(int, io.IoError):
+fn _err_io_flag(code: int, raw: bytes) -> result[unit, io.IoError]:
   err(_err_io(code, raw))
 
-fn _io_size(raw: bytes) -> result(int, io.IoError):
-  value: result(int, io.IoError) = if abi.is_ok(raw):
-    _ok_io_size(abi.payload(raw).read_i64_le(0))
-  else:
-    _err_io_size(abi.status(raw), raw)
-  value
-
-fn _ok_io_flag() -> result(bool, io.IoError):
-  ok(true)
-
-fn _err_io_flag(code: int, raw: bytes) -> result(bool, io.IoError):
-  err(_err_io(code, raw))
-
-fn _io_flag(raw: bytes) -> result(bool, io.IoError):
-  value: result(bool, io.IoError) = if abi.is_ok(raw):
+fn _io_flag(raw: bytes) -> result[unit, io.IoError]:
+  value: result[unit, io.IoError] = if abi.is_ok(raw):
     _ok_io_flag()
   else:
     _err_io_flag(abi.status(raw), raw)
   value
-
-# ---- Metadata / permissions ----
-
-data Permissions:
-  _readonly: bool
-
-fn Permissions.readonly() -> bool:
-  self._readonly
-
-fn Permissions.set_readonly(value: bool):
-  self._readonly = value
-
-data Metadata:
-  _size: u64
-  _is_file: bool
-  _is_dir: bool
-  _readonly: bool
-  _modified: usize
-  _created: usize
-  _accessed: usize
-
-fn Metadata.len() -> u64:
-  self._size
-
-fn Metadata.is_file() -> bool:
-  self._is_file
-
-fn Metadata.is_dir() -> bool:
-  self._is_dir
-
-fn Metadata.readonly() -> bool:
-  self._readonly
-
-fn Metadata.permissions() -> Permissions:
-  Permissions(_readonly = self._readonly)
-
-fn _timestamp(nanos: usize, what: str) -> result(time.Timestamp, FsError):
-  value: result(time.Timestamp, FsError) = if nanos == 0:
-    _err_timestamp(what + " time is unavailable")
-  else:
-    _ok_timestamp(time.Timestamp(nanos = nanos))
-  value
-
-fn Metadata.modified() -> result(time.Timestamp, FsError):
-  _timestamp(self._modified, "modified")
-
-fn Metadata.created() -> result(time.Timestamp, FsError):
-  _timestamp(self._created, "created")
-
-fn Metadata.accessed() -> result(time.Timestamp, FsError):
-  _timestamp(self._accessed, "accessed")
 
 data DirectoryEntry:
   _name: str
@@ -447,42 +276,43 @@ fn DirectoryEntry.is_file() -> bool:
 fn DirectoryEntry.is_dir() -> bool:
   is_dir(self._path)
 
-fn DirectoryEntry.metadata() -> result(Metadata, FsError):
+fn DirectoryEntry.metadata() -> result[Metadata, FsError]:
   metadata(self._path)
 
 # ---- File / OpenOptions ----
 
 data File:
-  _handle: resource(FileHandle)
+  _handle: resource[FileHandle]
   _path: str
 
-static fn File.open(location: str) -> result(File, FsError):
-  options = OpenOptions(read = true)
+static fn File.open(location: str) -> result[File, FsError]:
+  options = OpenOptions(read: true)
   options.open(location)
 
-static fn File.create(location: str) -> result(File, FsError):
-  options = OpenOptions(write = true, create = true, truncate = true)
+static fn File.create(location: str) -> result[File, FsError]:
+  options = OpenOptions(write: true, create: true, truncate: true)
   options.open(location)
 
 fn File.path() -> str:
   self._path
 
-fn File.metadata() -> result(Metadata, FsError):
-  metadata(self._path)
+fn File.metadata() -> result[Metadata, FsError]:
+  unsafe:
+    meta.decode(_native_file_metadata(self._handle))
 
-fn File.read() -> result(bytes, io.IoError):
+fn File.read() -> result[bytes, io.IoError]:
   unsafe:
     return _io_bytes(_native_file_read(self._handle))
 
-fn File.write(blob: bytes) -> result(int, io.IoError):
+fn File.write(blob: bytes) -> result[usize, io.IoError]:
   unsafe:
-    return _io_size(_native_file_write(self._handle, blob))
+    return io.size_from_native(_native_file_write(self._handle, blob))
 
-fn File.flush() -> result(bool, io.IoError):
+fn File.flush() -> result[unit, io.IoError]:
   unsafe:
     return _io_flag(_native_file_flush(self._handle))
 
-fn File.sync() -> result(bool, io.IoError):
+fn File.sync() -> result[unit, io.IoError]:
   unsafe:
     return _io_flag(_native_file_sync(self._handle))
 
@@ -499,7 +329,7 @@ fn _flag(value: bool) -> usize:
     return 1
   return 0
 
-fn OpenOptions.open(location: str) -> result(File, FsError):
+fn OpenOptions.open(location: str) -> result[File, FsError]:
   handle = _open(location, _flag(self.read), _flag(self.write), _flag(self.append), _flag(self.truncate), _flag(self.create), _flag(self.create_new))
   valid: usize = 0
   unsafe:
@@ -509,7 +339,7 @@ fn OpenOptions.open(location: str) -> result(File, FsError):
     unsafe:
       raw = _native_file_error(handle)
     return _err_file(abi.status(raw), raw)
-  _ok_file(File(_handle = handle, _path = location))
+  _ok_file(File(_handle: handle, _path: location))
 
 # ---- Path-based operations ----
 
@@ -522,85 +352,72 @@ fn is_file(location: str) -> bool:
 fn is_dir(location: str) -> bool:
   _is_dir(location) != 0
 
-fn read(location: str) -> result(bytes, FsError):
+fn read(location: str) -> result[bytes, FsError]:
   _bytes_result(_read(location))
 
-fn read_str(location: str) -> result(str, FsError):
+fn read_str(location: str) -> result[str, FsError]:
   _text_result(_read_str(location))
 
 # Creates the file if absent and truncates it if present.
-fn write(location: str, blob: bytes) -> result(bool, FsError):
+fn write(location: str, blob: bytes) -> result[unit, FsError]:
   _flag_result(_write(location, blob))
 
-fn write_str(location: str, blob: str) -> result(bool, FsError):
+fn write_str(location: str, blob: str) -> result[unit, FsError]:
   _flag_result(_write_str(location, blob))
 
 # Creates the file if absent; appends otherwise.
-fn append(location: str, blob: bytes) -> result(bool, FsError):
+fn append(location: str, blob: bytes) -> result[unit, FsError]:
   _flag_result(_append(location, blob))
 
-fn append_str(location: str, blob: str) -> result(bool, FsError):
+fn append_str(location: str, blob: str) -> result[unit, FsError]:
   _flag_result(_append_str(location, blob))
 
-fn create_dir(location: str) -> result(bool, FsError):
+fn create_dir(location: str) -> result[unit, FsError]:
   _flag_result(_create_dir(location))
 
-fn create_dir_all(location: str) -> result(bool, FsError):
+fn create_dir_all(location: str) -> result[unit, FsError]:
   _flag_result(_create_dir_all(location))
 
-fn remove_dir(location: str) -> result(bool, FsError):
+fn remove_dir(location: str) -> result[unit, FsError]:
   _flag_result(_remove_dir(location))
 
-fn remove_dir_all(location: str) -> result(bool, FsError):
+fn remove_dir_all(location: str) -> result[unit, FsError]:
   _flag_result(_remove_dir_all(location))
 
-fn remove_file(location: str) -> result(bool, FsError):
+fn remove_file(location: str) -> result[unit, FsError]:
   _flag_result(_remove_file(location))
 
-fn copy(from: str, to: str) -> result(int, FsError):
-  raw = _copy(from, to)
-  value: result(int, FsError) = if abi.is_ok(raw):
-    _ok_size(abi.payload(raw).read_i64_le(0))
-  else:
-    _err_size(abi.status(raw), raw)
-  value
+fn copy(from: str, to: str) -> result[u64, FsError]:
+  handle = _copy(from, to)
+  unsafe:
+    valid = count.valid(handle)
+    raw = count.error(handle)
+    size = count.value(handle)
+    if valid == 0:
+      return err(_error(abi.status(raw), raw))
+    ok(size)
 
-fn rename(from: str, to: str) -> result(bool, FsError):
+fn rename(from: str, to: str) -> result[unit, FsError]:
   _flag_result(_rename(from, to))
 
-fn read_dir(location: str) -> result(list(DirectoryEntry), FsError):
+fn read_dir(location: str) -> result[list[DirectoryEntry], FsError]:
   raw = _read_dir(location)
-  value: result(list(DirectoryEntry), FsError) = if abi.is_ok(raw):
-    entries: list(DirectoryEntry) = @()
+  value: result[list[DirectoryEntry], FsError] = if abi.is_ok(raw):
+    entries: list[DirectoryEntry] = @[]
     for name in abi.fields(raw):
-      entries.push(DirectoryEntry(_name = name, _path = path.join(location, name)))
+      entries.push(DirectoryEntry(_name: name, _path: path.join(location, name)))
     _ok_list(entries)
   else:
     _err_list(abi.status(raw), raw)
   value
 
-fn metadata(location: str) -> result(Metadata, FsError):
-  value: result(Metadata, FsError) = if exists(location):
-    _ok_metadata(Metadata(
-      _size = _metadata_len(location),
-      _is_file = _metadata_is_file(location) != 0,
-      _is_dir = _metadata_is_dir(location) != 0,
-      _readonly = _metadata_readonly(location) != 0,
-      _modified = _metadata_modified(location),
-      _created = _metadata_created(location),
-      _accessed = _metadata_accessed(location)
-    ))
-  else:
-    _err_metadata("path does not exist")
-  value
+fn metadata(location: str) -> result[Metadata, FsError]:
+  meta.read(location)
 
-fn permissions(location: str) -> result(Permissions, FsError):
-  value: result(Permissions, FsError) = if exists(location):
-    _ok_permissions(Permissions(_readonly = _metadata_readonly(location) != 0))
-  else:
-    _err_permissions("path does not exist")
-  value
+fn permissions(location: str) -> result[Permissions, FsError]:
+  information = metadata(location)?
+  ok(information.permissions())
 
-fn set_permissions(location: str, permissions: Permissions) -> result(bool, FsError):
-  flag = _flag(permissions._readonly)
+fn set_permissions(location: str, permissions: Permissions) -> result[unit, FsError]:
+  flag = _flag(permissions.readonly())
   _flag_result(_set_readonly(location, flag))

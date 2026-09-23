@@ -1,0 +1,102 @@
+import _internal.abi
+import fs._errors as errors
+import time
+
+opaque data Handle
+
+@link_name("vut_rt_fs_metadata_v2")
+extern "C" fn load(location: str) -> resource[Handle]
+
+@link_name("vut_rt_fs_metadata_ok_v2")
+extern "C" fn valid(handle: ptr[Handle]) -> usize
+
+@link_name("vut_rt_fs_metadata_error_v2")
+extern "C" fn error(handle: ptr[Handle]) -> bytes
+
+@link_name("vut_rt_fs_metadata_len_v2")
+extern "C" fn size(handle: ptr[Handle]) -> u64
+
+@link_name("vut_rt_fs_metadata_is_file_v2")
+extern "C" fn is_file(handle: ptr[Handle]) -> usize
+
+@link_name("vut_rt_fs_metadata_is_dir_v2")
+extern "C" fn is_dir(handle: ptr[Handle]) -> usize
+
+@link_name("vut_rt_fs_metadata_readonly_v2")
+extern "C" fn readonly(handle: ptr[Handle]) -> usize
+
+@link_name("vut_rt_fs_metadata_time_v2")
+extern "C" fn nanos(handle: ptr[Handle], index: usize) -> i64
+
+@link_name("vut_rt_fs_metadata_time_error_v2")
+extern "C" fn time_error(handle: ptr[Handle], index: usize) -> bytes
+
+data Permissions:
+  _readonly: bool
+
+fn Permissions.readonly() -> bool:
+  self._readonly
+
+fn Permissions.set_readonly(value: bool):
+  self._readonly = value
+
+data Metadata:
+  _size: u64
+  _is_file: bool
+  _is_dir: bool
+  _readonly: bool
+  _modified: result[time.Timestamp, errors.FsError]
+  _created: result[time.Timestamp, errors.FsError]
+  _accessed: result[time.Timestamp, errors.FsError]
+
+fn Metadata.len() -> u64:
+  self._size
+
+fn Metadata.is_file() -> bool:
+  self._is_file
+
+fn Metadata.is_dir() -> bool:
+  self._is_dir
+
+fn Metadata.readonly() -> bool:
+  self._readonly
+
+fn Metadata.permissions() -> Permissions:
+  Permissions(_readonly: self._readonly)
+
+fn Metadata.modified() -> result[time.Timestamp, errors.FsError]:
+  self._modified
+
+fn Metadata.created() -> result[time.Timestamp, errors.FsError]:
+  self._created
+
+fn Metadata.accessed() -> result[time.Timestamp, errors.FsError]:
+  self._accessed
+
+
+fn _time(raw: bytes, value: i64) -> result[time.Timestamp, errors.FsError]:
+  if not abi.is_ok(raw):
+    return err(errors.from_status(abi.status(raw), raw))
+  ok(time.Timestamp(nanos: value))
+
+fn decode(handle: resource[Handle]) -> result[Metadata, errors.FsError]:
+  unsafe:
+    available = valid(handle)
+    raw = error(handle)
+    length = size(handle)
+    file = is_file(handle)
+    directory = is_dir(handle)
+    read_only = readonly(handle)
+    modified_error = time_error(handle, 0)
+    modified_nanos = nanos(handle, 0)
+    created_error = time_error(handle, 1)
+    created_nanos = nanos(handle, 1)
+    accessed_error = time_error(handle, 2)
+    accessed_nanos = nanos(handle, 2)
+    if available == 0:
+      return err(errors.from_status(abi.status(raw), raw))
+    ok(Metadata(_size: length, _is_file: file != 0, _is_dir: directory != 0, _readonly: read_only != 0, _modified: _time(modified_error, modified_nanos), _created: _time(created_error, created_nanos), _accessed: _time(accessed_error, accessed_nanos)))
+
+fn read(location: str) -> result[Metadata, errors.FsError]:
+  unsafe:
+    decode(load(location))

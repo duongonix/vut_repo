@@ -1,0 +1,78 @@
+# Native scalar math primitives (`vut_rt_math_*`).
+#
+# `float` is not FFI-safe; the ABI boundary uses `f64`, so callers convert with
+# `.to_f64()` / `.to_float()` (both are identity casts at codegen).
+@link_name("vut_rt_math_sin_v1")
+extern "C" fn sin(value: f64) -> f64
+
+@link_name("vut_rt_math_cos_v1")
+extern "C" fn cos(value: f64) -> f64
+
+@link_name("vut_rt_math_tan_v1")
+extern "C" fn tan(value: f64) -> f64
+
+@link_name("vut_rt_math_asin_v1")
+extern "C" fn asin(value: f64) -> f64
+
+@link_name("vut_rt_math_acos_v1")
+extern "C" fn acos(value: f64) -> f64
+
+@link_name("vut_rt_math_atan_v1")
+extern "C" fn atan(value: f64) -> f64
+
+@link_name("vut_rt_math_atan2_v1")
+extern "C" fn atan2(y: f64, x: f64) -> f64
+
+@link_name("vut_rt_math_sinh_v1")
+extern "C" fn sinh(value: f64) -> f64
+
+@link_name("vut_rt_math_cosh_v1")
+extern "C" fn cosh(value: f64) -> f64
+
+@link_name("vut_rt_math_tanh_v1")
+extern "C" fn tanh(value: f64) -> f64
+
+@link_name("vut_rt_math_exp_v1")
+extern "C" fn exp(value: f64) -> f64
+
+@link_name("vut_rt_math_exp2_v1")
+extern "C" fn exp2(value: f64) -> f64
+
+@link_name("vut_rt_math_log_v1")
+extern "C" fn log(value: f64) -> f64
+
+@link_name("vut_rt_math_log2_v1")
+extern "C" fn log2(value: f64) -> f64
+
+@link_name("vut_rt_math_log10_v1")
+extern "C" fn log10(value: f64) -> f64
+
+@link_name("vut_rt_math_cbrt_v1")
+extern "C" fn cbrt(value: f64) -> f64
+
+@link_name("vut_rt_math_hypot_v1")
+extern "C" fn hypot(left: f64, right: f64) -> f64
+
+# Pseudo-random generation (xoshiro256** seeded with splitmix64).
+opaque data RngHandle
+
+@link_name("vut_rt_math_rng_new_v1")
+extern "C" fn rng_new(seed: i64) -> resource[RngHandle]
+
+@link_name("vut_rt_math_rng_float_v1")
+extern "C" fn rng_float(handle: ptr[RngHandle]) -> f64
+
+@link_name("vut_rt_math_rng_int_v1")
+extern "C" fn rng_int(handle: ptr[RngHandle], min: i64, max: i64) -> i64
+
+@link_name("vut_rt_math_rng_bool_v1")
+extern "C" fn rng_bool(handle: ptr[RngHandle]) -> usize
+
+@link_name("vut_rt_math_random_float_v1")
+extern "C" fn random_float() -> f64
+
+@link_name("vut_rt_math_random_int_v1")
+extern "C" fn random_int(min: i64, max: i64) -> i64
+
+@link_name("vut_rt_math_random_bool_v1")
+extern "C" fn random_bool() -> usize

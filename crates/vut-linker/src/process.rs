@@ -23,12 +23,24 @@ pub(crate) fn next_sequence() -> u64 {
 }
 
 /// Runs a linker command, returning a classified error on failure and flushing
-/// the produced artifact on success.
-pub(crate) fn run(program: &Path, args: &[String], output: &Path) -> Result<(), LinkError> {
+/// the produced artifact on success. `environment` is applied on top of the
+/// inherited process environment (used to provision `LIB`/`INCLUDE` for a
+/// discovered platform toolchain).
+pub(crate) fn run(
+    program: &Path,
+    args: &[String],
+    output: &Path,
+    environment: &[(String, String)],
+) -> Result<(), LinkError> {
     let _guard = LINK_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let result = Command::new(program).args(args).output().map_err(|error| {
+    let mut command = Command::new(program);
+    command.args(args);
+    for (key, value) in environment {
+        command.env(key, value);
+    }
+    let result = command.output().map_err(|error| {
         let failure = if error.kind() == std::io::ErrorKind::NotFound {
             LinkFailure::ToolNotFound
         } else {

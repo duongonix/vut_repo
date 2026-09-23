@@ -1,0 +1,11 @@
+@link_name("vut_rt_time_now_nanos_v1")
+extern "C" fn now_nanos() -> i64
+
+@link_name("vut_rt_time_instant_nanos_v1")
+extern "C" fn instant_nanos() -> i64
+
+@link_name("vut_rt_time_sleep_nanos_v1")
+extern "C" fn sleep_nanos(nanos: i64)
+
+@link_name("vut_rt_numeric_panic_v1")
+extern "C" fn overflow(value: i64)

@@ -9,7 +9,7 @@ order: 4
 
 ```vut
 fn main():
-  for value, index in @(10, 20, 30):
+  for value, index in @[10, 20, 30]:
     out("$index: $value")
 ```
 

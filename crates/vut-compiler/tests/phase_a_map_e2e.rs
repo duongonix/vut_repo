@@ -43,7 +43,7 @@ fn run(source: &str) -> (Option<i32>, String) {
 
 #[test]
 fn map_keys_and_values_for_string_keys() {
-    let source = "fn main():\n  scores: map(str, int) = map((\"a\", 1), (\"b\", 2), (\"c\", 3))\n  keys = scores.keys()\n  keys.sort()\n  out(\"keys=$keys\")\n  values = scores.values()\n  values.sort()\n  out(\"values=$values\")\n";
+    let source = "fn main():\n  scores: map[str, int] = (\"a\": 1, \"b\": 2, \"c\": 3)\n  keys = scores.keys()\n  keys.sort()\n  out(\"keys=$keys\")\n  values = scores.values()\n  values.sort()\n  out(\"values=$values\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "keys=[\"a\", \"b\", \"c\"]\nvalues=[1, 2, 3]\n");
@@ -51,7 +51,7 @@ fn map_keys_and_values_for_string_keys() {
 
 #[test]
 fn map_keys_and_values_for_int_keys() {
-    let source = "fn main():\n  counts: map(int, str) = map((2, \"two\"), (1, \"one\"))\n  keys = counts.keys()\n  keys.sort()\n  out(\"keys=$keys\")\n  values = counts.values()\n  values.sort()\n  out(\"values=$values\")\n";
+    let source = "fn main():\n  counts: map[int, str] = (2: \"two\", 1: \"one\")\n  keys = counts.keys()\n  keys.sort()\n  out(\"keys=$keys\")\n  values = counts.values()\n  values.sort()\n  out(\"values=$values\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "keys=[1, 2]\nvalues=[\"one\", \"two\"]\n");
@@ -59,7 +59,7 @@ fn map_keys_and_values_for_int_keys() {
 
 #[test]
 fn map_get_or_returns_value_or_default() {
-    let source = "fn main():\n  scores: map(str, int) = map((\"a\", 1))\n  present = scores.get_or(\"a\", 0)\n  out(\"present=$present\")\n  missing = scores.get_or(\"z\", 99)\n  out(\"missing=$missing\")\n";
+    let source = "fn main():\n  scores: map[str, int] = (\"a\": 1)\n  present = scores.get_or(\"a\", 0)\n  out(\"present=$present\")\n  missing = scores.get_or(\"z\", 99)\n  out(\"missing=$missing\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "present=1\nmissing=99\n");
@@ -67,7 +67,7 @@ fn map_get_or_returns_value_or_default() {
 
 #[test]
 fn map_values_with_managed_values_do_not_leak() {
-    let source = "fn main():\n  labels: map(str, str) = map((\"a\", \"apple\"), (\"b\", \"banana\"))\n  values = labels.values()\n  values.sort()\n  out(\"values=$values\")\n  first = labels.get_or(\"a\", \"none\")\n  out(\"first=$first\")\n";
+    let source = "fn main():\n  labels: map[str, str] = (\"a\": \"apple\", \"b\": \"banana\")\n  values = labels.values()\n  values.sort()\n  out(\"values=$values\")\n  first = labels.get_or(\"a\", \"none\")\n  out(\"first=$first\")\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,
@@ -79,7 +79,7 @@ fn map_values_with_managed_values_do_not_leak() {
 
 #[test]
 fn large_map_does_not_leak() {
-    let source = "fn main():\n  counts: map(int, int) = map((0, 0))\n  index = 1\n  for index < 5000:\n    counts.set(index, index)\n    index = index + 1\n  keys = counts.keys()\n  out(\"len=$(keys.len())\")\n  total = 0\n  for key in keys:\n    total = total + counts.get_or(key, 0)\n  out(\"total=$total\")\n";
+    let source = "fn main():\n  counts: map[int, int] = (0: 0)\n  index = 1\n  for index < 5000:\n    counts.set(index, index)\n    index = index + 1\n  keys = counts.keys()\n  out(\"len=$(keys.len())\")\n  total = 0\n  for key in keys:\n    total = total + counts.get_or(key, 0)\n  out(\"total=$total\")\n";
     let (code, stdout) = run(source);
     assert_eq!(
         code,

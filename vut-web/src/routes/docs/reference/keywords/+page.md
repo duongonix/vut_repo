@@ -20,7 +20,7 @@ order: 9
 
 ## Specialized syntax
 
-`async` and `await` provide suspension. `vut` schedules a Vutcon; `vutcon(T)` is a built-in type, not another spawn keyword. `composition` declares Vutcom domains. FFI uses declarations such as `extern "C" fn` and `opaque data`.
+`async` and `await` provide suspension. `vut` schedules a Vutcon; `vutcon[T]` is a built-in type, not another spawn keyword. `static` declares a type-level method. FFI uses `extern "C" fn`, `opaque data`, and `unsafe` blocks. `composition` and `children` are not current lexer keywords; they belong to the superseded Vutcom design.
 
 These mechanisms have their own constraints; see the Advanced section before using them.
 

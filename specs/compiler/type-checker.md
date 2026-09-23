@@ -135,7 +135,7 @@ Equivalent types should preferably canonicalize to the same `TypeId`.
 Example:
 
 ```text
-list(int)
+list[int]
 ```
 
 should not allocate a completely new type object on every occurrence.
@@ -188,13 +188,13 @@ Do not prematurely force every literal into one fixed-width type if the language
 For:
 
 ```vut
-@(1, 2, 3)
+@[1, 2, 3]
 ```
 
 infer:
 
 ```text
-list(int)
+list[int]
 ```
 
 or equivalent context-selected element type.
@@ -202,7 +202,7 @@ or equivalent context-selected element type.
 For:
 
 ```vut
-@(1, "hello")
+@[1, "hello"]
 ```
 
 report:
@@ -214,7 +214,7 @@ E1005
 unless expected type is explicitly:
 
 ```text
-list(dyn)
+list[dyn]
 ```
 
 and conversion semantics permit it.
@@ -226,7 +226,7 @@ and conversion semantics permit it.
 Example:
 
 ```vut
-items = @()
+items = @[]
 ```
 
 without type context should report:
@@ -240,7 +240,7 @@ if element type cannot be inferred.
 With context:
 
 ```vut
-items: list(int) = @()
+items: list[int] = @[]
 ```
 
 is valid.
@@ -400,16 +400,16 @@ If return type is inferred, collect compatible return/final-expression constrain
 
 ## 20a. Async and Await
 
-Calling an `async fn` whose logical result is `T` produces `Future(T)`.
+Calling an `async fn` whose logical result is `T` produces `future[T]`.
 
 ```text
-async fn load() -> int   ->   load() : Future(int)
+async fn load() -> int   ->   load() : future[int]
 ```
 
-`await` requires an operand of `Future(T)` and yields `T`:
+`await` requires an operand of `future[T]` and yields `T`:
 
 ```text
-await e : T     where e : Future(T)
+await e : T     where e : future[T]
 ```
 
 Rules:
@@ -426,8 +426,8 @@ no implicit conversion to/from Future
 `await operation()?` is typed as `(await operation())?`:
 
 ```text
-operation()          : Future(result(T, E))
-await operation()    : result(T, E)
+operation()          : future[result[T, E]]
+await operation()    : result[T, E]
 await operation()?   : T
 ```
 

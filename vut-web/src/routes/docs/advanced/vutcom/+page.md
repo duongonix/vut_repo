@@ -1,37 +1,16 @@
 ---
 title: Vutcom
-description: 'Typed declarative composition, with meaning supplied by libraries.'
+description: 'Migration from the historical composition proposal to receiver functions.'
 section: Advanced
 order: 3
 ---
 
-## Composition domains
+## Superseded design
 
-Vutcom provides language-level composition and domain safety. It is not a UI framework, renderer, virtual DOM, router, or workflow engine.
+Vutcom is a historical proposal, not the current language surface. Its overview explicitly delegates trailing-colon blocks to the receiver-function specification. Do not write `composition UI`, `vutcom[UI]`, or `children` based on older examples.
 
-```vut
-composition UI
-composition Build
-```
+## Use receiver functions
 
-These declarations introduce distinct domains: `vutcom(UI)` and `vutcom(Build)` are different types.
+Declare a callback type such as `fn(ColumnScope)() -> void`, invoke it with `body.call(scope)`, and supply it with a trailing colon block. Scope types and methods belong to ordinary Vut libraries; UI, router, build, and testing DSLs do not require separate compiler domains.
 
-## Ordinary functions
-
-A composition-producing function is an ordinary function with a `vutcom(D)` return type. Libraries supply primitives and consumers; the compiler does not hardcode names such as `Column`, `Text`, or `Pipeline`.
-
-The following is a conceptual library example, not a standalone program: it requires a library defining the UI domain and its primitives.
-
-```vut
-fn Home() -> vutcom(UI):
-  Column():
-    Text(value = "Hello")
-```
-
-## Opaque values
-
-Do not depend on `.nodes`, `.children`, `.props`, or a particular tree representation. The runtime representation is intentionally opaque.
-
-## Domain safety
-
-There is no implicit conversion between domains. A consumer of `vutcom(UI)` cannot receive `vutcom(Build)`. Cross-domain composition requires an explicit ordinary typed parameter.
+See [Receiver functions](/docs/advanced/receivers/) for a complete example, and [Source compatibility](/docs/reference/source-compatibility/) for the source reconciliation policy.

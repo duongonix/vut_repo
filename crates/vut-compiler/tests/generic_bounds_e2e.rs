@@ -64,7 +64,7 @@ fn diagnostic_codes(source: &str) -> Vec<String> {
 
 #[test]
 fn generic_bound_method_dispatches_to_the_concrete_method() {
-    let source = "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode(T: Encodable)(value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age = 7)))\")\n";
+    let source = "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode[T: Encodable](value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age: 7)))\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "7\n");
@@ -72,7 +72,7 @@ fn generic_bound_method_dispatches_to_the_concrete_method() {
 
 #[test]
 fn generic_bound_dispatch_specializes_per_instantiation() {
-    let source = "interface Encodable:\n  to_json() -> int\ndata A:\n  n: int\nfn A.to_json() -> int:\n  self.n\ndata B:\n  n: int\nfn B.to_json() -> int:\n  self.n * 100\nfn encode(T: Encodable)(value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(A(n = 3))) $(encode(B(n = 4)))\")\n";
+    let source = "interface Encodable:\n  to_json() -> int\ndata A:\n  n: int\nfn A.to_json() -> int:\n  self.n\ndata B:\n  n: int\nfn B.to_json() -> int:\n  self.n * 100\nfn encode[T: Encodable](value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(A(n: 3))) $(encode(B(n: 4)))\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "3 400\n");
@@ -80,7 +80,7 @@ fn generic_bound_dispatch_specializes_per_instantiation() {
 
 #[test]
 fn multiple_bounds_and_nested_container_receivers_work() {
-    let source = "interface Ping:\n  ping() -> int\ninterface Pong:\n  pong() -> int\ndata D:\n  n: int\nfn D.ping() -> int:\n  self.n\nfn D.pong() -> int:\n  self.n + 10\nfn use(T: Ping + Pong)(items: list(T)) -> int:\n  items.at(0).ping() + items.at(0).pong()\nfn main():\n  items: list(D) = @()\n  items.push(D(n = 5))\n  out(\"$(use(items))\")\n";
+    let source = "interface Ping:\n  ping() -> int\ninterface Pong:\n  pong() -> int\ndata D:\n  n: int\nfn D.ping() -> int:\n  self.n\nfn D.pong() -> int:\n  self.n + 10\nfn use[T: Ping + Pong](items: list[T]) -> int:\n  items.at(0).ping() + items.at(0).pong()\nfn main():\n  items: list[D] = @[]\n  items.push(D(n: 5))\n  out(\"$(use(items))\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "20\n");
@@ -88,7 +88,7 @@ fn multiple_bounds_and_nested_container_receivers_work() {
 
 #[test]
 fn bound_call_lowers_to_an_ordinary_concrete_call() {
-    let source = "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode(T: Encodable)(value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age = 7)))\")\n";
+    let source = "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode[T: Encodable](value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age: 7)))\")\n";
     let (root, path) = write_source(source, "vut-generic-bounds-mir");
     let mut session = CompilerSession::new(CompilerConfig::default());
     let checked = session.check_source_file(Path::new(&path)).expect("check");
@@ -116,7 +116,7 @@ fn bound_call_lowers_to_an_ordinary_concrete_call() {
 #[test]
 fn unsatisfied_bound_reports_missing_method() {
     let codes = diagnostic_codes(
-        "interface Ping:\n  ping() -> int\ndata D:\n  n: int\nfn other(T: Ping)(value: T) -> int:\n  value.ping()\nfn main():\n  out(\"$(other(42))\")\n",
+        "interface Ping:\n  ping() -> int\ndata D:\n  n: int\nfn other[T: Ping](value: T) -> int:\n  value.ping()\nfn main():\n  out(\"$(other(42))\")\n",
     );
     assert!(codes.iter().any(|code| code == "E1017"), "{codes:?}");
 }
@@ -124,7 +124,7 @@ fn unsatisfied_bound_reports_missing_method() {
 #[test]
 fn method_not_declared_by_any_bound_reports_e1018() {
     let codes = diagnostic_codes(
-        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn bad(T: Encodable)(value: T) -> int:\n  value.missing()\nfn main():\n  out(\"$(bad(User(age = 1)))\")\n",
+        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn bad[T: Encodable](value: T) -> int:\n  value.missing()\nfn main():\n  out(\"$(bad(User(age: 1)))\")\n",
     );
     assert!(codes.iter().any(|code| code == "E1018"), "{codes:?}");
     assert!(!codes.iter().any(|code| code == "E2005"), "{codes:?}");
@@ -133,7 +133,7 @@ fn method_not_declared_by_any_bound_reports_e1018() {
 #[test]
 fn conflicting_bounds_report_e1019() {
     let codes = diagnostic_codes(
-        "interface A:\n  m() -> int\ninterface B:\n  m() -> str\ndata D:\n  n: int\nfn D.m() -> int:\n  self.n\nfn use(T: A + B)(value: T) -> int:\n  value.m()\n",
+        "interface A:\n  m() -> int\ninterface B:\n  m() -> str\ndata D:\n  n: int\nfn D.m() -> int:\n  self.n\nfn use[T: A + B](value: T) -> int:\n  value.m()\n",
     );
     assert!(codes.iter().any(|code| code == "E1019"), "{codes:?}");
 }

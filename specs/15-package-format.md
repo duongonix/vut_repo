@@ -48,16 +48,18 @@ Inside a package directory, each published version is stored in its own director
 Format:
 
 ```text
-v<semantic-version>
+<semantic-version>
 ```
+
+There is no `v` prefix.
 
 Example:
 
 ```text
 math/
-├── v0.1.0/
-├── v0.1.1/
-└── v1.0.0/
+├── 0.1.0/
+├── 0.1.1/
+└── 1.0.0/
 ```
 
 ---
@@ -70,10 +72,10 @@ Example:
 
 ```text
 math/
-└── v1.2.0/
+└── 1.2.0/
     ├── vpm.toml
     ├── src/
-    │   ├── lib.vut
+    │   ├── mod.vut
     │   ├── vector.vut
     │   └── matrix.vut
     ├── tests/
@@ -90,14 +92,14 @@ A version directory must not contain only differences from another version.
 Do not design:
 
 ```text
-v1.2.0/
+1.2.0/
   full source
 
-v1.2.1/
+1.2.1/
   only changed files
 ```
 
-`v1.2.1` must contain everything required to use `v1.2.1` independently.
+`1.2.1` must contain everything required to use `1.2.1` independently.
 
 This makes versions:
 
@@ -133,7 +135,7 @@ The manifest is required for package validation.
 Given path:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 the manifest must contain:
@@ -160,7 +162,7 @@ VPM must reject the package.
 Given directory:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 the manifest must contain:
@@ -179,19 +181,18 @@ The directory and manifest version must agree.
 
 ---
 
-## 9. Remote Version Prefix
+## 9. Version Directory Naming
 
-Remote package version directories include `v`.
+Remote and local package version directories are named with the bare semantic
+version, with no `v` prefix.
 
 Example:
 
 ```text
-v1.2.0
+1.2.0
 ```
 
-The manifest version does not include `v`.
-
-Correct:
+The manifest version is the same bare semantic version:
 
 ```toml
 version = "1.2.0"
@@ -235,9 +236,9 @@ Prerelease versions may also exist:
 Corresponding directories:
 
 ```text
-v2.0.0-alpha.1
-v2.0.0-beta.2
-v2.0.0-rc.1
+2.0.0-alpha.1
+2.0.0-beta.2
+2.0.0-rc.1
 ```
 
 ---
@@ -254,6 +255,8 @@ old/
 backup/
 v1/
 v1.2/
+1/
+1.2/
 version1.2.0/
 ```
 
@@ -272,9 +275,9 @@ src/
 Example:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 └── src/
-    ├── lib.vut
+    ├── mod.vut
     ├── vector.vut
     └── matrix.vut
 ```
@@ -285,48 +288,60 @@ The package source root is:
 src/
 ```
 
+All Vut source of a package lives below `src/`.
+
 ---
 
 ## 13. Library Entry
 
-Library packages should use:
+The only public library entry is:
 
 ```text
-src/lib.vut
+src/mod.vut
 ```
-
-as their conventional root entry module.
 
 Example:
 
 ```text
 src/
-├── lib.vut
+├── mod.vut
 ├── parser.vut
 └── lexer.vut
 ```
 
-`lib.vut` may expose or coordinate the public package API according to module visibility/import rules.
+When `src/mod.vut` exists, it exposes the package namespace root and may
+coordinate the public package API according to module visibility/import rules.
 
 It does not use an `export` keyword.
+
+`src/mod.vut` is optional; a package may be CLI-only.
+
+`src/lib.vut` is not a library entry and has no special meaning. It is treated
+as an ordinary module named `lib`. There is no deprecated alias.
 
 ---
 
 ## 14. Application Entry
 
-Application projects use:
+Command-line entry points are declared explicitly in `vpm.toml` with `[[bin]]`:
 
-```text
-src/main.vut
+```toml
+[[bin]]
+name = "math"
+path = "src/bin/math.vut"
 ```
 
-A package intended purely as a library normally uses:
+Each `path`:
 
-```text
-src/lib.vut
-```
+- is relative to the package root
+- must live below `src/`
+- must end in `.vut`
+- may appear in any subdirectory of `src/` (conventionally `src/bin/`)
 
-The exact package-kind metadata may be expanded in the manifest specification.
+Bin names are Vut identifiers and must be unique. A package may be library-only,
+CLI-only, or both. There is no implicit `src/main.vut` application entry.
+
+See `specs/vpm/manifest.md` for the manifest schema.
 
 ---
 
@@ -341,7 +356,7 @@ tests/
 Example:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ├── src/
 └── tests/
     ├── vector.vut
@@ -510,20 +525,20 @@ Conceptual structure:
 ```text
 vpm/
 ├── math/
-│   ├── v0.1.0/
+│   ├── 0.1.0/
 │   │   ├── vpm.toml
 │   │   └── src/
-│   └── v1.0.0/
+│   └── 1.0.0/
 │       ├── vpm.toml
 │       └── src/
 │
 ├── json/
-│   └── v1.0.0/
+│   └── 1.0.0/
 │       ├── vpm.toml
 │       └── src/
 │
 └── http/
-    └── v0.5.0/
+    └── 0.5.0/
         ├── vpm.toml
         └── src/
 ```
@@ -539,15 +554,15 @@ Example:
 ```text
 github.com/nam/abc/
 ├── math/
-│   ├── v1.0.0/
+│   ├── 1.0.0/
 │   │   ├── vpm.toml
 │   │   └── src/
-│   └── v1.1.0/
+│   └── 1.1.0/
 │       ├── vpm.toml
 │       └── src/
 │
 └── json/
-    └── v2.0.0/
+    └── 2.0.0/
         ├── vpm.toml
         └── src/
 ```
@@ -563,9 +578,9 @@ This is valid:
 ```text
 repository/
 ├── math/
-│   └── v1.0.0/
+│   └── 1.0.0/
 └── json/
-    └── v1.0.0/
+    └── 1.0.0/
 ```
 
 Install independently:
@@ -589,9 +604,9 @@ Example:
 repository/
 └── libs/
     ├── math/
-    │   └── v1.0.0/
+    │   └── 1.0.0/
     └── json/
-        └── v1.0.0/
+        └── 1.0.0/
 ```
 
 Install:
@@ -615,7 +630,7 @@ A published version must be treated as immutable.
 Once:
 
 ```text
-math/v1.2.0
+math/1.2.0
 ```
 
 is published, its source must not be modified.
@@ -623,13 +638,13 @@ is published, its source must not be modified.
 If a bug is discovered, publish:
 
 ```text
-math/v1.2.1
+math/1.2.1
 ```
 
 Do not modify:
 
 ```text
-math/v1.2.0
+math/1.2.0
 ```
 
 in place.
@@ -726,13 +741,13 @@ It must not rely on undeclared files from:
 For example:
 
 ```text
-math/v1.2.0/
+math/1.2.0/
 ```
 
 must not silently read source from:
 
 ```text
-math/v1.1.0/
+math/1.1.0/
 ```
 
 ---
@@ -765,8 +780,8 @@ Before accepting a package version, VPM should validate at least:
 2. `vpm.toml` exists
 3. package name matches path
 4. manifest version matches directory
-5. `src/` exists where required
-6. required entry structure is valid
+5. a `src/mod.vut` library entry or at least one `[[bin]]` entry exists
+6. every declared `[[bin]].path` exists below `src/`
 7. manifest is parseable
 8. dependency declarations are valid
 
@@ -819,17 +834,11 @@ Remote format:
 
 ```text
 math/
-└── v1.2.0/
-```
-
-Local store may normalize this to:
-
-```text
-math/
 └── 1.2.0/
 ```
 
-The missing local `v` prefix does not change package identity.
+The local store uses the same bare `<semver>` version directory, so the layout
+is identical and does not encode any source prefix.
 
 Detailed local layout is defined in:
 
@@ -879,20 +888,22 @@ The Vut package format follows these principles:
 1. Repository root is never a package.
 2. Packages live in repository subdirectories.
 3. Versions live under package directories.
-4. Version directories use `v<semver>`.
+4. Version directories use bare `<semver>` with no `v` prefix.
 5. Every version is complete and independent.
 6. Every version contains `vpm.toml`.
 7. Manifest name must match package path.
 8. Manifest version must match version directory.
 9. Package source lives under `src/`.
 10. Packages are distributed as source.
-11. `.vutlib` does not exist as a public distribution format.
-12. Published versions are immutable.
-13. Lockfiles may detect unexpected mutation.
-14. One repository may contain multiple packages.
-15. Nested package paths are supported.
-16. Final path segment determines package/import name.
-17. Package namespace collisions are rejected.
-18. Package handling must prevent path traversal and unsafe extraction.
+11. The public library entry is `src/mod.vut`; `src/lib.vut` has no special meaning.
+12. Command-line entry points are declared with `[[bin]]`.
+13. `.vutlib` does not exist as a public distribution format.
+14. Published versions are immutable.
+15. Lockfiles may detect unexpected mutation.
+16. One repository may contain multiple packages.
+17. Nested package paths are supported.
+18. Final path segment determines package/import name.
+19. Package namespace collisions are rejected.
+20. Package handling must prevent path traversal and unsafe extraction.
 
 This document is normative for the Vut package format.

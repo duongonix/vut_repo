@@ -214,7 +214,7 @@ Vut vẫn sử dụng:
 async fn
 await
 vut(...)
-vutcon(T)
+vutcon[T]
 ```
 
 làm concurrency model chính thức.
@@ -360,14 +360,14 @@ Canonical usage:
 ```vut
 import http
 
-async fn main() -> result(null, http.Error):
+async fn main() -> result[unit, http.Error]:
   response = await http.get("https://example.com")?
 
   text = response.text()?
 
   out(text)
 
-  ok(null)
+  ok(unit)
 ```
 
 Không block OS thread trong lúc chỉ đang chờ network I/O nếu backend có khả năng async.
@@ -435,8 +435,8 @@ import http
 import time
 
 client = http.Client(
-  timeout = time.seconds(30),
-  redirects = 5
+  timeout: time.seconds(30),
+  redirects: 5
 )
 ```
 
@@ -454,8 +454,8 @@ Ví dụ:
 
 ```vut
 request = http.Request(
-  method = http.Method.post,
-  url = "https://api.example.com/users"
+  method: http.Method.post,
+  url: "https://api.example.com/users"
 )
 
 request.header("Authorization", "Bearer $token")
@@ -540,7 +540,7 @@ remove
 contains
 ```
 
-HTTP headers không được implementation đơn giản như một `map(str, str)` nếu điều đó làm mất multi-value semantics.
+HTTP headers không được implementation đơn giản như một `map[str, str]` nếu điều đó làm mất multi-value semantics.
 
 Header names phải được xử lý case-insensitive theo HTTP semantics.
 
@@ -802,8 +802,8 @@ Conceptual:
 
 ```vut
 request = http.Request(
-  method = http.Method.get,
-  url = url
+  method: http.Method.get,
+  url: url
 )
 
 request.range(start, end)
@@ -852,14 +852,14 @@ job = vut(fn():
 Ví dụ concurrent HTTP requests:
 
 ```vut
-async fn main() -> result(null, http.Error):
+async fn main() -> result[unit, http.Error]:
   a = vut(() => http.get("https://example.com/a"))
   b = vut(() => http.get("https://example.com/b"))
 
   response_a = await a?
   response_b = await b?
 
-  ok(null)
+  ok(unit)
 ```
 
 HTTP không được tạo concurrency syntax riêng.
@@ -913,8 +913,8 @@ import http
 import time
 
 request = http.Request(
-  method = http.Method.get,
-  url = url
+  method: http.Method.get,
+  url: url
 )
 
 request.timeout(time.seconds(30))
@@ -938,7 +938,7 @@ Ví dụ conceptual:
 
 ```vut
 client = http.Client(
-  redirects = 5
+  redirects: 5
 )
 ```
 
@@ -1471,12 +1471,12 @@ error handling
 Ví dụ phải dùng canonical Vut syntax hiện tại:
 
 ```text
-@(...)          list literal
-array(...)      array literal
+@[...]          list literal
+[...]      array literal
 Type(...)       generic/type application
 vut(...)        Vutcon spawn
 await           await
-result(T, E)    Result
+result[T, E]    Result
 ```
 
 Không dùng syntax cũ hoặc syntax từ ngôn ngữ khác.

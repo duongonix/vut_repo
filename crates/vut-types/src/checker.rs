@@ -15,6 +15,8 @@ use vut_source::Span;
 pub enum Type {
     Error,
     Void,
+    /// The single zero-sized source-language value, distinct from no return.
+    Unit,
     Bool,
     Int,
     Float,
@@ -32,9 +34,11 @@ pub enum Type {
     Result(TypeId, TypeId),
     /// A typed handle for a lightweight concurrent execution unit.
     Vutcon(TypeId),
+    /// A typed, scheduler-aware message channel (`channel[T]`).
+    Channel(TypeId),
     /// A native asynchronous computation produced by an `extern "C" async fn`.
     Future(TypeId),
-    /// An owned, move-only opaque native resource handle (`resource(T)`).
+    /// An owned, move-only opaque native resource handle (`resource[T]`).
     Resource(TypeId),
     List(TypeId),
     /// A read-only view of the arguments bound by a variadic parameter
@@ -67,6 +71,8 @@ pub enum Type {
 #[derive(Debug)]
 pub struct SemanticResult {
     pub types: Vec<Type>,
+    /// Canonical alias targets, shared with generated syntax and lowering.
+    pub type_aliases: HashMap<SymbolId, TypeId>,
     pub expression_types: HashMap<Span, TypeId>,
     pub diagnostics: DiagnosticSink,
     pub interface_shapes: HashMap<SymbolId, InterfaceShape>,
@@ -77,7 +83,18 @@ pub struct SemanticResult {
     /// The semantic layer has already resolved names and type-checked each
     /// expression, so MIR lowers them as ordinary expressions.
     pub data_field_defaults: HashMap<SymbolId, Vec<Option<vut_ast::Expr>>>,
+    /// Default parameter expressions per function/method, aligned with the
+    /// resolved parameter order. Callers may omit a trailing parameter that has
+    /// a default; the semantic layer has already resolved and type-checked it.
+    pub parameter_defaults: HashMap<SymbolId, Vec<Option<vut_ast::Expr>>>,
+    /// The reading chosen for every `object[...]` postfix: a generic application
+    /// or a collection access. MIR lowers each subscript accordingly.
+    pub subscripts: HashMap<Span, SubscriptKind>,
     pub opaque_data: HashSet<SymbolId>,
+    /// Initializer expression recorded for each module-constant reference span.
+    /// MIR inlines the initializer at the reference (module constants are
+    /// immutable scalar values with no addressable storage).
+    pub constant_references: HashMap<Span, vut_ast::Expr>,
     pub function_signatures: HashMap<SymbolId, FunctionSignatureInfo>,
     pub builtin_functions: HashMap<SymbolId, BuiltinFunction>,
     pub builtin_calls: HashMap<Span, BuiltinFunction>,
@@ -92,7 +109,7 @@ pub struct SemanticResult {
     /// entry for the specialization; no runtime dispatch is introduced.
     pub bound_calls: HashMap<Span, BoundCall>,
     pub async_symbols: HashSet<SymbolId>,
-    /// Symbols declared `extern "C" async fn`; calling one yields `future(T)`.
+    /// Symbols declared `extern "C" async fn`; calling one yields `future[T]`.
     pub async_externs: HashSet<SymbolId>,
     /// Symbols declared as `extern`; their parameters are borrowed by native
     /// code, so callers must keep ownership of managed arguments.
@@ -107,6 +124,9 @@ pub struct SemanticResult {
     pub attributes: AttributeSemantics,
     /// Symbols declared `static fn Type.name` (associated, no `self`).
     pub static_methods: HashSet<SymbolId>,
+    /// Captured bindings of each lambda, keyed by the lambda expression span, in
+    /// first-use order. The type is the enclosing binding's type at creation.
+    pub closure_captures: HashMap<Span, Vec<(String, TypeId)>>,
     /// Ordered type-parameter symbols for each generic declaration.
     pub generic_params: HashMap<SymbolId, Vec<SymbolId>>,
     /// Interface bounds declared for each type parameter.
@@ -158,7 +178,7 @@ pub struct VariantFieldInfo {
     pub name: String,
     pub ty: TypeId,
 }
-/// A resolved `Enum.variant(field = value, ...)` construction.
+/// A resolved `Enum.variant(field: value, ...)` construction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VariantConstruction {
     pub enum_symbol: SymbolId,
@@ -166,6 +186,16 @@ pub struct VariantConstruction {
     /// Field index for each supplied argument, in argument order.
     pub fields: Vec<usize>,
 }
+pub use numeric::NumericKind;
+
+impl Type {
+    /// Canonical numeric metadata shared by semantic analysis and MIR.
+    #[must_use]
+    pub fn numeric_kind(&self) -> Option<NumericKind> {
+        numeric::numeric_kind(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuiltinFunction {
     Print,
@@ -255,6 +285,17 @@ pub enum BuiltinFunction {
     FloatMin,
     FloatMax,
     FloatClamp,
+    /// Fused multiply-add (`x.fma(multiplier, addend)`), lowered to a native
+    /// `fma` instruction when the target supports it.
+    FloatFma,
+    /// Sign copy (`x.copysign(sign)`), lowered to a native instruction.
+    FloatCopysign,
+    /// Explicit numeric conversion (`value.to_u64()`, `value.to_int()`, ...).
+    /// Codegen range-checks and traps on out-of-range values.
+    NumericCast {
+        from: NumericKind,
+        to: NumericKind,
+    },
     BoolToStr,
     ResultIsOk,
     ResultIsErr,
@@ -272,6 +313,9 @@ pub enum BuiltinFunction {
     ListReserve,
     ListPush,
     ListAt,
+    /// Optimizer-emitted unchecked element access; the index is proven in
+    /// bounds, so the runtime bounds check is skipped.
+    ListAtUnchecked,
     ListSet,
     ListInsert,
     ListRemove,
@@ -288,7 +332,7 @@ pub enum BuiltinFunction {
     ListTruncate,
     ListSwap,
     ListShrinkToFit,
-    /// `list(str).join(separator) -> str` (native runtime string building).
+    /// `list[str].join(separator) -> str` (native runtime string building).
     ListJoin,
     /// Compiler-lowered higher-order `list` builtins (see
     /// `checker::collections` and the MIR inline lowering).
@@ -312,9 +356,19 @@ pub enum BuiltinFunction {
     MapKeys,
     MapValues,
     MapGetOr,
+    /// `channel[T](capacity:)`: creates a typed channel.
+    ChannelNew,
+    /// `ch.send(value)`: suspends until the value is handed off.
+    ChannelSend,
+    /// `ch.recv()`: suspends until a value arrives; yields `T?`.
+    ChannelRecv,
+    /// `ch.close()`: closes the channel and wakes all waiters.
+    ChannelClose,
     NumericToStr,
     ArrayLen,
     ArrayAt,
+    /// Optimizer-emitted unchecked array access; the index is proven in bounds.
+    ArrayAtUnchecked,
     ArraySet,
     ArrayFirst,
     ArrayLast,
@@ -323,6 +377,13 @@ pub enum BuiltinFunction {
     ArrayContains,
     ArrayReverse,
     ArraySort,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubscriptKind {
+    /// `object[types]`: an explicit generic application (`parse[int](x)`).
+    Generic,
+    /// `object[index]`: a collection access (`values[0]`).
+    Index,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionSignatureInfo {
@@ -354,6 +415,7 @@ struct Field {
 
 pub struct Analyzer<'a> {
     resolution: &'a Resolution,
+    pointer_bytes: usize,
     types: Vec<Type>,
     type_ids: HashMap<Type, TypeId>,
     expression_types: HashMap<Span, TypeId>,
@@ -401,6 +463,19 @@ pub struct Analyzer<'a> {
     instances: HashMap<(SymbolId, Vec<TypeId>), SymbolId>,
     /// Declaration-order field names for each data type (including instances).
     data_field_order: HashMap<SymbolId, Vec<String>>,
+    /// Default parameter expressions per function/method, aligned with the
+    /// resolved parameter order (including generic specializations).
+    parameter_defaults: HashMap<SymbolId, Vec<Option<vut_ast::Expr>>>,
+    /// The chosen reading for each `object[...]` postfix, shared with MIR.
+    subscripts: HashMap<Span, SubscriptKind>,
+    /// Captured bindings of each lambda, keyed by lambda expression span.
+    closure_captures: HashMap<Span, Vec<(String, TypeId)>>,
+    /// Module-level constant initializers, keyed by name (current module only).
+    module_constants: HashMap<String, vut_ast::Expr>,
+    /// Module-level constant initializers, keyed by symbol (all modules).
+    constant_initializers: HashMap<SymbolId, vut_ast::Expr>,
+    /// Initializer expression recorded for each module-constant reference span.
+    constant_references: HashMap<Span, vut_ast::Expr>,
     next_instance: usize,
 }
 
@@ -412,6 +487,8 @@ mod context;
 mod expressions;
 mod functions;
 mod generics;
+mod numeric;
+mod pointees;
 #[cfg(test)]
 mod tests;
 mod typing;

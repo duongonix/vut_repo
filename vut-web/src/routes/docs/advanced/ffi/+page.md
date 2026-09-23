@@ -35,7 +35,7 @@ A native pointer does not tell the compiler how to release its allocation. Wrapp
 
 ## Managed values
 
-Do not pass `str`, `bytes`, `list(T)`, `map(K, V)`, `dyn`, `result(T, E)`, optional values, interface values, or managed data directly through the FFI v1 boundary. Use explicitly ABI-safe types and conversions.
+Do not pass `str`, `bytes`, `list[T]`, `map[K, V]`, `dyn`, `result[T, E]`, optional values, interface values, or managed data directly through the FFI v1 boundary. Use explicitly ABI-safe types and conversions.
 
 ## Packaging
 

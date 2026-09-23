@@ -145,19 +145,51 @@ fn zero_parameter_block_lambda_with_void_result() {
 }
 
 #[test]
-fn named_function_stored_in_typed_binding_is_callable() {
-    let source = "fn double(value: int) -> int:\n  value * 2\nfn main():\n  handler: fn(int) -> int = double\n  out(\"$(handler(5))\")\n";
+fn captures_a_managed_string() {
+    let source = "fn main():\n  name = \"hi\"\n  greet = fn():\n    out(name)\n  greet()\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(stdout, "10\n");
+    assert_eq!(stdout, "hi\n");
 }
 
 #[test]
-fn lambda_capture_is_rejected() {
-    let errors = check_errors(
-        "fn apply(value: int, callback: fn(int) -> int) -> int:\n  callback(value)\nfn main():\n  base = 10\n  out(\"$(apply(3, x => x + base))\")\n",
-    );
-    assert!(errors.contains(&"E1013".to_owned()), "{errors:?}");
+fn returned_closure_captures_a_managed_string() {
+    let source = "fn make() -> fn() -> void:\n  msg = \"hi\"\n  fn():\n    out(msg)\nfn main():\n  f = make()\n  f()\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "hi\n");
+}
+
+#[test]
+fn captured_managed_value_survives_later_outer_use() {
+    let source = "fn main():\n  name = \"hi\"\n  greet = fn():\n    out(\"in $name\")\n  greet()\n  out(\"out $name\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "in hi\nout hi\n");
+}
+
+#[test]
+fn shared_managed_capture_by_two_closures() {
+    let source = "fn main():\n  name = \"hi\"\n  f = fn():\n    out(name)\n  g = fn():\n    out(\"g $name\")\n  f()\n  g()\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "hi\ng hi\n");
+}
+
+#[test]
+fn returned_capturing_closure_is_callable() {
+    let source = "fn make_adder(a: int) -> fn(int) -> int:\n  fn(b):\n    a + b\nfn main():\n  add = make_adder(10)\n  out(\"$(add(5))\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "15\n");
+}
+
+#[test]
+fn capturing_closure_environment_is_released() {
+    let source = "extern \"C\" fn vut_rt_closure_live_count_v1() -> usize\nfn apply(value: int, callback: fn(int) -> int) -> int:\n  callback(value)\nfn main():\n  base = 10\n  out(\"$(apply(3, x => x + base))\")\n  unsafe:\n    out(\"live=$(vut_rt_closure_live_count_v1())\")\n";
+    let (code, stdout) = run(source);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout, "13\nlive=0\n");
 }
 
 #[test]

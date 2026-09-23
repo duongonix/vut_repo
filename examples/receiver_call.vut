@@ -15,7 +15,7 @@ fn FormScope.Field(name: str) -> bool:
   name != ""
 
 fn main():
-  scope = FormScope(label = "signup")
+  scope = FormScope(label: "signup")
   submit = capture() (name):
     Field(name)
 

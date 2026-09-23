@@ -22,7 +22,7 @@ active: bool = true
 | `str`     | Text                     |
 | `bool`    | `true` or `false`        |
 | `dyn`     | Explicit dynamic values  |
-| `list(T)` | A typed list of elements |
+| `list[T]` | A typed list of elements |
 | `T?`      | An optional value        |
 
 ## Type compatibility

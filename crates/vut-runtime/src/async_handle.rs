@@ -68,6 +68,8 @@ pub(crate) struct State {
     pub(crate) resume: Option<Wake>,
     pub(crate) signalled: bool,
     pub(crate) dropped: bool,
+    /// A drop arrived while a worker was polling; the worker finishes teardown.
+    pub(crate) drop_pending: bool,
 }
 
 /// Opaque poll task handed to generated code.
@@ -133,6 +135,7 @@ pub(crate) fn new_handle(
             resume: None,
             signalled: false,
             dropped: false,
+            drop_pending: false,
         }),
         task,
     }));
@@ -278,6 +281,10 @@ pub unsafe extern "C" fn vut_rt_async_poll_v1(handle: *mut AsyncHandle, out: *mu
 /// Cancels and destroys the handle. Safe to call after the operation completed
 /// and safe against a concurrent completion.
 ///
+/// If a worker is currently polling the task, teardown is deferred to that
+/// worker (see [`poll_finished`]) so the native destructor never runs
+/// concurrently with the native poll function.
+///
 /// # Safety
 /// `handle` must be a live handle produced by [`vut_rt_async_new_v1`] or
 /// [`vut_rt_task_new_v1`].
@@ -287,28 +294,76 @@ pub unsafe extern "C" fn vut_rt_async_drop_v1(handle: *mut AsyncHandle) {
         return;
     }
     // SAFETY: the handle is live and owned by this call.
-    if crate::task::is_task(unsafe { &*handle }) {
-        crate::executor::forget(handle);
+    let handle_ref = unsafe { &*handle };
+    if crate::task::is_task(handle_ref) {
+        crate::scheduler::forget_handle(handle);
     }
+    let defer = match handle_ref.task() {
+        // A task being polled is torn down by its worker.
+        Some(task) if task.running.load(Ordering::Acquire) => {
+            let mut state = handle_ref.lock_state();
+            if state.dropped {
+                return;
+            }
+            state.drop_pending = true;
+            true
+        }
+        _ => false,
+    };
+    if !defer {
+        // SAFETY: no worker is polling this handle.
+        unsafe { finish_drop(handle) };
+    }
+}
+
+/// Whether the handle has been dropped (fast check for workers).
+#[must_use]
+pub(crate) fn handle_dropped(handle: &AsyncHandle) -> bool {
+    handle.lock_state().dropped
+}
+
+/// Completes a drop that was deferred because a worker was polling the task.
+///
+/// # Safety
+/// `handle` must be a live handle whose poll has returned.
+pub(crate) unsafe fn poll_finished(handle: *mut AsyncHandle) {
+    let pending = {
+        // SAFETY: the handle is live and owned by the runtime.
+        let handle_ref = unsafe { &*handle };
+        let state = handle_ref.lock_state();
+        state.drop_pending && !state.dropped
+    };
+    if pending {
+        // SAFETY: the poll has returned, so no worker is using the operation.
+        unsafe { finish_drop(handle) };
+    }
+}
+
+/// Runs the native destructor and release exactly once. `dropped` guards re-entry.
+///
+/// # Safety
+/// `handle` must be live and not currently being polled.
+unsafe fn finish_drop(handle: *mut AsyncHandle) {
     let (op, drop_fn) = {
         // SAFETY: the handle is live and owned by this call.
-        let handle = unsafe { &*handle };
-        let mut state = handle.lock_state();
+        let handle_ref = unsafe { &*handle };
+        let mut state = handle_ref.lock_state();
         if state.dropped {
             return;
         }
         state.dropped = true;
         state.waiter = None;
         state.resume = None;
-        (handle.op, handle.drop_fn)
+        (handle_ref.op, handle_ref.drop_fn)
     };
     crate::task::release_storage(handle);
     // SAFETY: the destructor was registered for `op`.
     unsafe { drop_fn(op) };
-    // SAFETY: the handle was created by `new_handle` and is dropped exactly once
-    // because `dropped` guards re-entry.
-    drop(unsafe { Box::from_raw(handle) });
     LIVE_ASYNC.fetch_sub(1, Ordering::Relaxed);
+    // Deferred reclamation: while a run is active the handle may still be
+    // referenced by the ready queue or a wake callback, so it is only freed
+    // after every worker has stopped.
+    crate::scheduler::reclaim(handle);
 }
 
 #[cfg(test)]

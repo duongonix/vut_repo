@@ -14,8 +14,8 @@ data CardScope:
   title: str
 
 fn UserCard(user: User, body: fn(CardScope)(Event, int) -> void) -> void:
-  scope = CardScope(title = user.name)
-  event = Event(clicked = true)
+  scope = CardScope(title: user.name)
+  event = Event(clicked: true)
   body.call(scope, event, 1)
 
 fn CardScope.Text(text: str) -> void:
@@ -25,17 +25,17 @@ fn CardScope.Divider() -> void:
   out("---")
 
 fn main():
-  user = User(name = "ann")
+  user = User(name: "ann")
   UserCard(user) (event, index):
-    Text("card=$(self.title) index=$index")
+    Text("card: $(self.title) index: $index")
 
     if event.clicked:
       Text("clicked")
     else:
       Text("idle")
 
-    for tag in @("a", "b"):
-      Text("tag=$tag")
+    for tag in @["a", "b"]:
+      Text("tag: $tag")
 
     match index:
       1:

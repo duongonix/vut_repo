@@ -155,11 +155,19 @@ fn dependency_request<'a>(
 pub(crate) fn checksum(snapshot: &PackageSnapshot) -> String {
     let mut hash = blake3::Hasher::new();
     for (path, data) in &snapshot.files {
+        if is_checksum_excluded(path) {
+            continue;
+        }
         hash.update(path.as_bytes());
         hash.update(&(data.len() as u64).to_le_bytes());
         hash.update(data);
     }
     hash.finalize().to_hex().to_string()
+}
+
+/// Registry/CI-generated metadata that is not part of the source checksum.
+pub(crate) fn is_checksum_excluded(path: &str) -> bool {
+    path == crate::artifact::FILE
 }
 
 pub struct Providers {
@@ -207,7 +215,7 @@ mod tests {
                 .packages
                 .keys()
                 .filter(|(source, _)| source == &s.identity())
-                .map(|(_, v)| format!("v{v}"))
+                .map(|(_, v)| v.clone())
                 .collect())
         }
         fn fetch(&self, s: &PackageSource, v: &Version) -> Result<PackageSnapshot, ProviderError> {
@@ -224,7 +232,7 @@ mod tests {
         PackageSnapshot {
             files: BTreeMap::from([
                 ("vpm.toml".into(), manifest.into_bytes()),
-                ("src/lib.vut".into(), b"fn value() -> int:\n  1\n".to_vec()),
+                ("src/mod.vut".into(), b"fn value() -> int:\n  1\n".to_vec()),
             ]),
             revision: format!("rev-{name}-{version}"),
         }
@@ -306,6 +314,33 @@ mod tests {
                 .resolve(&[(PackageSource::parse("a").unwrap(), None)])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn rejects_same_name_from_different_sources() {
+        let mock = Mock {
+            packages: BTreeMap::from([
+                (
+                    ("registry:math".into(), "1.0.0".into()),
+                    snap("math", "1.0.0", ""),
+                ),
+                (
+                    ("github:alice/vut-packages/math".into(), "1.0.0".into()),
+                    snap("math", "1.0.0", ""),
+                ),
+            ]),
+            calls: RefCell::new(0),
+        };
+        let error = Resolver::new(&mock)
+            .resolve(&[
+                (PackageSource::parse("math").unwrap(), None),
+                (
+                    PackageSource::parse("alice/vut-packages/math").unwrap(),
+                    None,
+                ),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("conflict"), "{error}");
     }
 
     #[test]

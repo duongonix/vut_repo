@@ -15,7 +15,7 @@ mod response;
 mod runtime;
 mod stream;
 
-pub use client::vut_rt_http_client_create;
+pub use client::vut_rt_http_client_create_v1;
 pub use future::vut_rt_http_send_v1;
 pub use stream::{
     vut_rt_http_stream_chunk_v1, vut_rt_http_stream_read_v1, vut_rt_http_stream_send_v1,

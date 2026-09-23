@@ -46,7 +46,7 @@ const DECODE: &str = "fn text_of(blob: bytes) -> str:\n  match blob.to_str():\n 
 #[test]
 fn bytes_conversions_preserve_exact_contents() {
     let source = format!(
-        "{DECODE}fn main():\n  text = \"Xin chào Vut\"\n  blob = text.to_bytes()\n  out(\"$(blob.len())\")\n  out(text_of(blob))\n  values: list(u8) = blob.to_list()\n  again = bytes.from_list(values)\n  out(text_of(again))\n  out(\"$(values.len())\")\n"
+        "{DECODE}fn main():\n  text = \"Xin chào Vut\"\n  blob = text.to_bytes()\n  out(\"$(blob.len())\")\n  out(text_of(blob))\n  values: list[u8] = blob.to_list()\n  again = bytes.from_list(values)\n  out(text_of(again))\n  out(\"$(values.len())\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -66,7 +66,7 @@ fn bytes_buffer_methods_are_bounds_safe_and_complete() {
 #[test]
 fn bytes_utf8_validation_handles_multibyte_and_invalid_input() {
     let source = format!(
-        "{DECODE}fn main():\n  out(text_of(\"中文\".to_bytes()))\n  out(text_of(\"😀\".to_bytes()))\n  out(text_of(\"abc🇻🇳\".to_bytes()))\n  first: list(u8) = @(255, 255)\n  out(text_of(bytes.from_list(first)))\n  second: list(u8) = @(65, 200, 66)\n  out(text_of(bytes.from_list(second)))\n"
+        "{DECODE}fn main():\n  out(text_of(\"中文\".to_bytes()))\n  out(text_of(\"😀\".to_bytes()))\n  out(text_of(\"abc🇻🇳\".to_bytes()))\n  first: list[u8] = @[255, 255]\n  out(text_of(bytes.from_list(first)))\n  second: list[u8] = @[65, 200, 66]\n  out(text_of(bytes.from_list(second)))\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");
@@ -76,7 +76,7 @@ fn bytes_utf8_validation_handles_multibyte_and_invalid_input() {
 #[test]
 fn bytes_value_semantics_isolate_copies_across_fields_and_collections() {
     let source = format!(
-        "{DECODE}data Packet:\n  payload: bytes\nfn touch(blob: bytes) -> int:\n  blob.len()\nfn main():\n  blob = \"Xin chào Vut\".to_bytes()\n  copied = blob\n  copied.set(0, 86)\n  out(text_of(blob))\n  out(text_of(copied))\n  packet = Packet(payload = blob)\n  out(\"$(packet.payload.len())\")\n  values: list(bytes) = @(blob, copied)\n  out(\"$(values.at(0).at(0)) $(values.at(1).at(0))\")\n  table: map(str, bytes) = map((\"a\", blob))\n  entry: bytes? = table.get(\"a\")\n  entry_text = 0\n  if entry != null:\n    entry_text = entry.len()\n  out(\"$(entry_text)\")\n  items: array(bytes, 2) = array(blob, copied)\n  out(\"$(items.at(0).at(0)) $(items.at(1).at(0))\")\n  out(\"$(touch(blob))\")\n"
+        "{DECODE}data Packet:\n  payload: bytes\nfn touch(blob: bytes) -> int:\n  blob.len()\nfn main():\n  blob = \"Xin chào Vut\".to_bytes()\n  copied = blob\n  copied.set(0, 86)\n  out(text_of(blob))\n  out(text_of(copied))\n  packet = Packet(payload: blob)\n  out(\"$(packet.payload.len())\")\n  values: list[bytes] = @[blob, copied]\n  out(\"$(values.at(0).at(0)) $(values.at(1).at(0))\")\n  table: map[str, bytes] = (\"a\": blob)\n  entry: bytes? = table.get(\"a\")\n  entry_text = 0\n  if entry != null:\n    entry_text = entry.len()\n  out(\"$(entry_text)\")\n  items: array[bytes, 2] = [blob, copied]\n  out(\"$(items.at(0).at(0)) $(items.at(1).at(0))\")\n  out(\"$(touch(blob))\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "leak or crash: {stdout}");
@@ -88,7 +88,7 @@ fn bytes_value_semantics_isolate_copies_across_fields_and_collections() {
 
 #[test]
 fn bytes_result_propagation_uses_typed_error() {
-    let source = "fn read_text(blob: bytes) -> result(str, Utf8Error):\n  value = blob.to_str()?\n  ok(value)\nfn main():\n  match read_text(\"hi\".to_bytes()):\n    ok(value): out(value)\n    err(error): out(\"bad $(error.valid_up_to)\")\n";
+    let source = "fn read_text(blob: bytes) -> result[str, Utf8Error]:\n  value = blob.to_str()?\n  ok(value)\nfn main():\n  match read_text(\"hi\".to_bytes()):\n    ok(value): out(value)\n    err(error): out(\"bad $(error.valid_up_to)\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "hi\n");
@@ -103,7 +103,7 @@ fn bytes_large_buffers_grow_without_corruption() {
         .collect::<Vec<_>>()
         .join(", ");
     let source = format!(
-        "fn main():\n  values: list(u8) = @({literal})\n  blob = bytes.from_list(values)\n  out(\"$(blob.len()) $(blob.at(0)) $(blob.at(255)) $(blob.at(999))\")\n  blob.reserve(8192)\n  out(\"$(blob.capacity() >= 8192)\")\n  out(\"$(blob.at(999))\")\n"
+        "fn main():\n  values: list[u8] = @[{literal}]\n  blob = bytes.from_list(values)\n  out(\"$(blob.len()) $(blob.at(0)) $(blob.at(255)) $(blob.at(999))\")\n  blob.reserve(8192)\n  out(\"$(blob.capacity() >= 8192)\")\n  out(\"$(blob.at(999))\")\n"
     );
     let (code, stdout) = run(&source);
     assert_eq!(code, Some(0), "{stdout}");

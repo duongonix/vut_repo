@@ -18,6 +18,7 @@ members = [
   "crates/vut-linker",
   "crates/vut-compiler",
   "crates/vut-runtime",
+  "crates/vut-bench",
   "crates/vut-cli",
   "crates/vpm",
   "crates/vut-dist",
@@ -32,6 +33,15 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["Vut contributors"]
+
+[profile.release]
+# Production artifacts ship stripped debug info, thin LTO and abort-on-panic
+# (see specs/deploy/native-linking.md §8). Debug info is stripped rather than
+# symbols because the runtime archives are static libraries the linker must
+# still resolve symbols from.
+lto = "thin"
+strip = "debuginfo"
+panic = "abort"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

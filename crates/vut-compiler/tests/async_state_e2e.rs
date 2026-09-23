@@ -67,7 +67,7 @@ fn keeps_a_managed_local_across_an_await() {
 
 #[test]
 fn awaits_inside_conditionals_and_loops() {
-    let source = "async fn one() -> int:\n  1\nasync fn choose(flag: bool) -> int:\n  if flag:\n    return await one()\n  0\nasync fn total() -> int:\n  sum = 0\n  for index in @(0, 1, 2):\n    sum = sum + await one()\n  sum\n\nasync fn main():\n  out(\"$(await choose(true))\")\n  out(\"$(await total())\")\n";
+    let source = "async fn one() -> int:\n  1\nasync fn choose(flag: bool) -> int:\n  if flag:\n    return await one()\n  0\nasync fn total() -> int:\n  sum = 0\n  for index in @[0, 1, 2]:\n    sum = sum + await one()\n  sum\n\nasync fn main():\n  out(\"$(await choose(true))\")\n  out(\"$(await total())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "1\n3\n");
@@ -75,7 +75,7 @@ fn awaits_inside_conditionals_and_loops() {
 
 #[test]
 fn propagates_async_result_with_question_operator() {
-    let source = "async fn maybe(flag: bool) -> result(int, int):\n  if flag:\n    return ok(5)\n  err(9)\nasync fn work(flag: bool) -> result(int, int):\n  v = await maybe(flag)?\n  ok(v + 1)\n\nasync fn main():\n  match await work(true):\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n  match await work(false):\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
+    let source = "async fn maybe(flag: bool) -> result[int, int]:\n  if flag:\n    return ok(5)\n  err(9)\nasync fn work(flag: bool) -> result[int, int]:\n  v = await maybe(flag)?\n  ok(v + 1)\n\nasync fn main():\n  match await work(true):\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n  match await work(false):\n    ok(v): out(\"ok=$v\")\n    err(e): out(\"err=$e\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "ok=6\nerr=9\n");
@@ -99,7 +99,7 @@ fn passes_parameters_through_the_future_frame() {
 
 #[test]
 fn passes_an_aggregate_receiver_through_the_frame() {
-    let source = "data Counter:\n  value: int\nasync fn Counter.doubled() -> int:\n  self.value * 2\n\nasync fn main():\n  counter = Counter(value = 21)\n  out(\"$(await counter.doubled())\")\n";
+    let source = "data Counter:\n  value: int\nasync fn Counter.doubled() -> int:\n  self.value * 2\n\nasync fn main():\n  counter = Counter(value: 21)\n  out(\"$(await counter.doubled())\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "42\n");

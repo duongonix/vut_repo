@@ -1,6 +1,6 @@
 # `bytes` — managed byte buffer: methods, hex, UTF-8, and endian I/O.
 #
-# `bytes` is a contiguous, growable buffer distinct from `str` and `list(u8)`.
+# `bytes` is a contiguous, growable buffer distinct from `str` and `list[u8]`.
 # Fixed-width reads/writes always state their byte order (`_le`/`_be`).
 
 data Packet:
@@ -13,7 +13,7 @@ fn main():
   blob.push(105)
   out("blob:", blob)
 
-  extra: list(u8) = @(33, 33)
+  extra: list[u8] = @[33, 33]
   suffix = bytes.from_list(extra)
   blob.extend(suffix)
   out("extended:", blob)
@@ -52,7 +52,7 @@ fn main():
     ok(text): out("text:", text)
     err(error): out("invalid_at:", error.valid_up_to, "error_len:", error.error_len)
 
-  packet = Packet(label = "p", payload = blob)
+  packet = Packet(label: "p", payload: blob)
   out("packet_payload:", packet.payload)
 
   # Explicit-endian fixed-width I/O.
@@ -69,7 +69,7 @@ fn main():
   out("read_i64_le:", buf.read_i64_le(0))
 
   # Invalid UTF-8 is reported rather than silently replaced.
-  raw: list(u8) = @(255, 254)
+  raw: list[u8] = @[255, 254]
   broken = bytes.from_list(raw)
   match broken.to_str():
     ok(text): out("text:", text)

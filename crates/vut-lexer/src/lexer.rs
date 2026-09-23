@@ -55,6 +55,10 @@ impl<'a> Lexer<'a> {
         self.emit(TokenKind::Eof, self.position, self.position);
         (self.tokens, self.diagnostics)
     }
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single-character token dispatch is intentionally exhaustive"
+    )]
     fn scan(&mut self) {
         if self.line_start && !self.begin_line() {
             return;
@@ -138,6 +142,24 @@ impl<'a> Lexer<'a> {
                     self.delimiters -= 1;
                 }
                 self.emit(TokenKind::RParen, start, self.position);
+            }
+            b'[' => {
+                self.position += 1;
+                self.delimiters += 1;
+                self.emit(TokenKind::LBracket, start, self.position);
+            }
+            b']' => {
+                self.position += 1;
+                if self.delimiters == 0 {
+                    self.error(
+                        codes::E0001,
+                        Span::new(self.source, start, self.position),
+                        "unmatched `]`",
+                    );
+                } else {
+                    self.delimiters -= 1;
+                }
+                self.emit(TokenKind::RBracket, start, self.position);
             }
             b'@' => self.one(TokenKind::AtSign),
             _ => {
@@ -606,7 +628,7 @@ mod tests {
     }
     #[test]
     fn rejects_unescaped_bad_characters() {
-        let (_, diagnostics) = Lexer::new(SourceId::from_index(0), "[]").lex();
+        let (_, diagnostics) = Lexer::new(SourceId::from_index(0), "`").lex();
         assert!(diagnostics.has_errors());
     }
     #[test]
@@ -628,7 +650,7 @@ mod tests {
     }
     #[test]
     fn tokenizes_attributes_without_changing_list_literal_prefix() {
-        let (actual, diagnostics) = kinds("@repr(C)\nitems = @(1, 2, 3)\n");
+        let (actual, diagnostics) = kinds("@repr(C)\nitems = @[1, 2, 3]\n");
         assert!(!diagnostics.has_errors());
         assert_eq!(
             &actual[..12],
@@ -642,7 +664,7 @@ mod tests {
                 TokenKind::Identifier,
                 TokenKind::Equal,
                 TokenKind::AtSign,
-                TokenKind::LParen,
+                TokenKind::LBracket,
                 TokenKind::Integer,
                 TokenKind::Comma,
             ]
@@ -741,7 +763,7 @@ mod tests {
     }
     #[test]
     fn ignores_layout_newlines_inside_parentheses_and_flushes_eof_dedents() {
-        let (actual, diagnostics) = kinds("value = @(\n  1,\n  2\n)\nif true:\n  value");
+        let (actual, diagnostics) = kinds("value = @[\n  1,\n  2\n]\nif true:\n  value");
         assert!(!diagnostics.has_errors());
         assert_eq!(
             actual
@@ -799,8 +821,8 @@ mod tests {
     }
     #[test]
     fn recovery_reports_independent_errors_and_reaches_eof() {
-        let (actual, diagnostics) = kinds("[] ! 12bad ok");
-        assert!(diagnostics.as_slice().len() >= 4);
+        let (actual, diagnostics) = kinds("` ! 12bad ok");
+        assert!(diagnostics.as_slice().len() >= 3);
         assert_eq!(actual.last(), Some(&TokenKind::Eof));
         assert!(actual.contains(&TokenKind::Identifier));
     }

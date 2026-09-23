@@ -35,8 +35,10 @@ pub mod values;
 /// Size of the compiler-generated iterator state block (`data`, `current`,
 /// `len`, `stride`).
 const ITERATOR_STATE_SIZE: usize = 32;
-/// Bytes reserved per spilled value (a machine word, plus slack).
-const SPILL_SLOT_SIZE: usize = 16;
+/// Bytes reserved per spilled value. A spilled value is a machine word (an
+/// integer, float, pointer, or the address of an aggregate), so one word is
+/// enough; the codegen store uses the value's own machine type.
+const SPILL_SLOT_SIZE: usize = 8;
 
 /// Computes frame layouts, per-await liveness, and the frame-based body layout
 /// for all async functions.

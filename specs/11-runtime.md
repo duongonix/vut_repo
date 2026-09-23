@@ -210,8 +210,8 @@ Programs must not depend on this physical layout.
 Runtime support may be required for:
 
 ```text
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 bytes
 ```
 
@@ -579,12 +579,13 @@ single-thread executor
 minimal wake/resume mechanism
 ```
 
-The executor:
+The scheduler:
 
 ```text
-runs on the current OS thread
-does not spawn worker threads
-does not run futures in parallel
+multiplexes tasks onto M worker OS threads (caller = worker 0)
+M = VUT_MAXPROCS, else available_parallelism(), never zero
+runs ready tasks in parallel on multiple cores
+does not implement work stealing, blocking offload, or preemption
 is linked only when async is used
 ```
 

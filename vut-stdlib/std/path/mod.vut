@@ -1,121 +1,118 @@
-# Pure path manipulation. Never touches the filesystem.
-#
-# All behavior is lexical and platform-aware; `os.name()` selects the
-# separator so Windows and Unix-like platforms use their own rules.
-import os
+# Pure lexical path operations; never access the filesystem.
+import path._parts as parts
 
 fn separator() -> str:
-  sep: str = if os.name() == "windows":
-    "\\"
-  else:
-    "/"
-  sep
-
-fn _last_index(value: str, needle: str) -> int:
-  parts = value.split(needle)
-  count = parts.len()
-  result: int = if count <= 1:
-    -1
-  else:
-    last = parts.at(count - 1)
-    value.byte_len() - last.byte_len() - needle.byte_len()
-  result
-
-fn _file_name_value(value: str) -> str:
-  index = _last_index(value, separator())
-  result: str = if index < 0:
-    value
-  else:
-    value.substring(index + 1, value.byte_len())
-  result
+  parts.separator()
 
 fn is_absolute(value: str) -> bool:
-  absolute: bool = if separator() == "\\":
-    value.starts_with("\\") or value.starts_with("/") or value.find(":") == 1
-  else:
-    value.starts_with("/")
-  absolute
+  parsed = parts.parse(value)
+  parsed.rooted and (not parts.windows() or not parsed.prefix.is_empty())
 
 fn is_relative(value: str) -> bool:
   not is_absolute(value)
 
+fn components(value: str) -> list[str]:
+  parsed = parts.parse(value)
+  values: list[str] = @[]
+  if not parsed.prefix.is_empty():
+    values.push(parsed.prefix)
+  if parsed.rooted:
+    values.push(separator())
+  for part in parsed.values:
+    values.push(part)
+  values
+
 fn join(base: str, child: str) -> str:
-  joined: str = if is_absolute(child):
-    child
-  elif base.is_empty():
-    child
-  elif base.ends_with(separator()):
-    base + child
-  else:
-    base + separator() + child
-  joined
+  parsed = parts.parse(child)
+  if not parsed.prefix.is_empty():
+    return child
+  if parsed.rooted:
+    owner = parts.parse(base)
+    return owner.prefix + parts.render(parsed)
+  if base.is_empty():
+    return child
+  if base.ends_with(separator()) or (parts.windows() and base.ends_with("/")):
+    return base + child
+  if parts.windows() and base.ends_with(":"):
+    return base + child
+  base + separator() + child
 
 fn parent(value: str) -> str?:
-  result: str? = null
-  index = _last_index(value, separator())
-  if index > 0:
-    result = value.substring(0, index)
-  result
+  parsed = parts.parse(value)
+  if parsed.values.is_empty():
+    return null
+  removed = parsed.values.remove(parsed.values.len() - 1)
+  parts.render(parsed)
 
 fn file_name(value: str) -> str?:
-  result: str? = null
-  name = _file_name_value(value)
-  if not name.is_empty():
-    result = name
-  result
+  parsed = parts.parse(value)
+  if parsed.values.is_empty():
+    return null
+  name = parsed.values.last()
+  if name == "." or name == "..":
+    return null
+  name
+
+fn _dot(name: str) -> int:
+  count = 0
+  last = -1
+  for piece in name.split("."):
+    if count > 0:
+      last = count - 1
+    count = count + piece.byte_len() + 1
+  last
 
 fn extension(value: str) -> str?:
-  result: str? = null
-  name = _file_name_value(value)
-  index = _last_index(name, ".")
-  if index > 0:
-    result = name.substring(index + 1, name.byte_len())
-  result
+  name = file_name(value)
+  if name == null:
+    return null
+  dot = _dot(name)
+  if dot <= 0:
+    return null
+  name.substring(dot + 1, name.byte_len())
 
 fn stem(value: str) -> str?:
-  result: str? = null
-  name = _file_name_value(value)
-  index = _last_index(name, ".")
-  if not name.is_empty():
-    if index > 0:
-      result = name.substring(0, index)
-    else:
-      result = name
-  result
+  name = file_name(value)
+  if name == null:
+    return null
+  dot = _dot(name)
+  if dot <= 0:
+    return name
+  name.substring(0, dot)
 
-fn with_extension(value: str, extension: str) -> str:
-  index = _last_index(value, ".")
-  dot = _last_index(value, separator())
-  result: str = if index > dot:
-    value.substring(0, index) + "." + extension
+fn with_extension(value: str, suffix: str) -> str:
+  name = file_name(value)
+  if name == null:
+    return value
+  parsed = parts.parse(value)
+  dot = _dot(name)
+  base = if dot > 0:
+    name.substring(0, dot)
   else:
-    value + "." + extension
-  result
+    name
+  replacement = if suffix.is_empty():
+    base
+  else:
+    base + "." + suffix
+  parsed.values.set(parsed.values.len() - 1, replacement)
+  parts.render(parsed)
 
-fn components(value: str) -> list(str):
-  result: list(str) = @()
-  for part in value.split(separator()):
-    if not part.is_empty():
-      result.push(part)
-  result
-
-# Lexically normalizes `.` and `..` components. Does not resolve symlinks and
-# never touches the filesystem.
 fn normalize(value: str) -> str:
-  kept: list(str) = @()
-  # `list.remove` returns the removed element, which must stay owned so it is
-  # released; bind it rather than discarding the call.
+  parsed = parts.parse(value)
+  if parsed.verbatim:
+    return value
+  kept: list[str] = @[]
   removed = ""
-  for part in value.split(separator()):
+  for part in parsed.values:
     if part == "..":
-      if not kept.is_empty():
-        removed = kept.remove(kept.len() - 1)
-    elif not part.is_empty() and part != ".":
+      if not kept.is_empty() and kept.last() != "..":
+        removed = kept.pop()
+      elif not parsed.rooted:
+        kept.push(part)
+    elif part != ".":
       kept.push(part)
-  joined = ""
-  for part in kept:
-    joined = if joined.is_empty():
-      part
-    else:
-      joined + separator() + part
-  joined
+  parsed.values = kept
+  result = parts.render(parsed)
+  if result.is_empty() and not value.is_empty():
+    return "."
+  result

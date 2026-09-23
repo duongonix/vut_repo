@@ -1,0 +1,27 @@
+# Pure integer algorithms for `math` (no native calls).
+#
+# `int` is signed 64-bit and integer arithmetic wraps (two's complement) on
+# overflow, so `lcm` wraps when the result does not fit. `gcd` uses the
+# Euclidean algorithm.
+
+fn gcd(a: int, b: int) -> int:
+  x = a.abs()
+  y = b.abs()
+  for y != 0:
+    remainder = x % y
+    x = y
+    y = remainder
+  x
+
+fn lcm(a: int, b: int) -> int:
+  if a == 0 or b == 0:
+    return 0
+  (a / gcd(a, b)) * b
+
+fn is_power_of_two(value: int) -> bool:
+  if value <= 0:
+    return false
+  remaining = value
+  for remaining > 1 and remaining % 2 == 0:
+    remaining = remaining / 2
+  remaining == 1

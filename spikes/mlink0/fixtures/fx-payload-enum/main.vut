@@ -25,7 +25,7 @@ fn area(shape: Shape) -> float:
 
 fn classify(o: Option) -> str:
   match o:
-    some(value = "hi"): "exact"
+    some(value: "hi"): "exact"
     some(value = _): "some"
     none: "none"
 
@@ -38,11 +38,11 @@ fn describe(value: int) -> str:
     _: "large"
 
 fn main():
-  out("$(area(Shape.circle(radius = 2.0)))")
-  out("$(area(Shape.rect(width = 3.0, height = 4.0)))")
+  out("$(area(Shape.circle(radius: 2.0)))")
+  out("$(area(Shape.rect(width: 3.0, height: 4.0)))")
   out("$(area(Shape.point))")
-  out(classify(Option.some(value = "hi")))
-  out(classify(Option.some(value = "bye")))
+  out(classify(Option.some(value: "hi")))
+  out(classify(Option.some(value: "bye")))
   out(classify(Option.none))
   out(describe(0))
   out(describe(2))

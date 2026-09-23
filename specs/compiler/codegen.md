@@ -199,12 +199,12 @@ Backend lowering should call/runtime integrate through stable internal runtime A
 Statically typed:
 
 ```text
-list(T)
+list[T]
 ```
 
 should retain element type/layout information.
 
-Do not represent all lists as `list(dyn)`.
+Do not represent all lists as `list[dyn]`.
 
 ---
 
@@ -360,7 +360,7 @@ Optional representation may use niche/null optimization.
 Example:
 
 ```text
-ptr(T)?
+ptr[T]?
 ```
 
 could potentially use null pointer representation internally.

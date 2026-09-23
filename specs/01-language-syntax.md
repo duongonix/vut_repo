@@ -461,16 +461,16 @@ specs/02-type-system.md
 
 Vut does not use square brackets for list literals.
 
-A list literal uses `@()`.
+A list literal uses `@[]`.
 
 ```vut
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 Explicit type:
 
 ```vut
-numbers: list(int) = @(1, 2, 3)
+numbers: list[int] = @[1, 2, 3]
 ```
 
 Lists are homogeneous by default.
@@ -478,20 +478,20 @@ Lists are homogeneous by default.
 Valid:
 
 ```vut
-numbers = @(1, 2, 3)
-names = @("Ha", "Nam", "Lan")
+numbers = @[1, 2, 3]
+names = @["Ha", "Nam", "Lan"]
 ```
 
 Invalid:
 
 ```vut
-values = @(1, "hello", true)
+values = @[1, "hello", true]
 ```
 
 Mixed values require an explicitly dynamic element type.
 
 ```vut
-values: list(dyn) = @(1, "hello", true)
+values: list[dyn] = @[1, "hello", true]
 ```
 
 ---
@@ -515,7 +515,7 @@ data Point:
   x: int
   y: int
 
-point = Point(x = 10, y = 20)
+point = Point(x: 10, y: 20)
 ```
 
 ---
@@ -652,8 +652,8 @@ Named construction also uses call syntax:
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 ```
 
@@ -670,10 +670,10 @@ specs/04-functions-methods.md
 Parameterized types use parentheses.
 
 ```vut
-list(int)
-map(str, int)
-result(User, Error)
-ptr(int)
+list[int]
+map[str, int]
+result[User, Error]
+ptr[int]
 ```
 
 Vut does not use angle-bracket generic syntax such as:

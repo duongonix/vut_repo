@@ -454,6 +454,7 @@ impl Builder<'_> {
         });
         let condition = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: condition,
             op: BinaryOp::Equal,
             left: tag,
@@ -576,6 +577,7 @@ impl Builder<'_> {
             BinaryOp::Equal
         };
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: condition,
             op,
             left: length,
@@ -719,6 +721,7 @@ impl Builder<'_> {
                 self.emit(Instruction::ConstFloat {
                     value: constant,
                     literal: text.parse().unwrap_or(0.0),
+                    ty: Some(ty),
                 });
             }
             vut_ast::LiteralPattern::Bool(value) => {
@@ -737,6 +740,7 @@ impl Builder<'_> {
         }
         let condition = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: condition,
             op: BinaryOp::Equal,
             left: value,
@@ -764,6 +768,7 @@ impl Builder<'_> {
         });
         let lower = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: lower,
             op: BinaryOp::GreaterEqual,
             left: value,
@@ -776,6 +781,7 @@ impl Builder<'_> {
         });
         let upper = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: upper,
             op: if inclusive {
                 BinaryOp::LessEqual
@@ -787,6 +793,7 @@ impl Builder<'_> {
         });
         let condition = self.value();
         self.emit(Instruction::Binary {
+            operand_type: None,
             value: condition,
             op: BinaryOp::And,
             left: lower,
@@ -797,7 +804,7 @@ impl Builder<'_> {
 
     /// Stores an ignored value into a temporary and drops it when it owns
     /// managed data, so `_` patterns do not leak.
-    fn drop_ignored(&mut self, value: ValueId, ty: TypeId, span: Span) {
+    pub(super) fn drop_ignored(&mut self, value: ValueId, ty: TypeId, span: Span) {
         if !self.layouts.types[ty.0].needs_drop {
             return;
         }

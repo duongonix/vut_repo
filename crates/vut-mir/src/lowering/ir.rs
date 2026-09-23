@@ -4,7 +4,7 @@ pub use vut_ast::BinaryOp;
 use vut_hir::TypeId;
 pub use vut_resolver::SymbolId;
 use vut_source::Span;
-pub use vut_types::BuiltinFunction;
+pub use vut_types::{BuiltinFunction, NumericKind};
 
 use super::LayoutTable;
 use super::future::{AwaitLive, FrameLayout};
@@ -33,6 +33,9 @@ pub struct Program {
     pub frames: HashMap<SymbolId, FrameLayout>,
     /// Locals live across each await per async function (B2.3).
     pub awaits: HashMap<SymbolId, Vec<AwaitLive>>,
+    /// Heap environment layout for each capturing closure body, keyed by the
+    /// lambda body symbol.
+    pub closure_layouts: HashMap<SymbolId, ClosureLayout>,
 }
 #[derive(Clone, Debug)]
 pub struct InterfaceVtable {
@@ -80,6 +83,20 @@ pub struct Local {
     /// Where the local's value lives.
     pub storage: LocalStorage,
 }
+/// One captured value stored in a closure environment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosureCapture {
+    pub ty: TypeId,
+    /// Byte offset of the value inside the environment block.
+    pub offset: usize,
+}
+/// Heap environment layout for a capturing closure body.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClosureLayout {
+    pub size: usize,
+    pub alignment: usize,
+    pub captures: Vec<ClosureCapture>,
+}
 /// Storage class of a MIR local.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalStorage {
@@ -120,6 +137,18 @@ pub enum Instruction {
         operand: ValueId,
         inner: TypeId,
     },
+    /// Builds an optional `ty` from a raw inner value plus a presence flag,
+    /// without allocating a managed wrapper: a managed inner yields a nullable
+    /// handle, a scalar/aggregate inner yields the tagged representation.
+    /// `payload` is the address of the value storage, `present` is nonzero when
+    /// the value is present.
+    OptionalFromValue {
+        value: ValueId,
+        present: ValueId,
+        payload: ValueId,
+        ty: TypeId,
+        inner: TypeId,
+    },
     ConstInt {
         value: ValueId,
         literal: i64,
@@ -127,6 +156,9 @@ pub enum Instruction {
     ConstFloat {
         value: ValueId,
         literal: f64,
+        /// The destination numeric type, so a `f32` literal is emitted as a
+        /// 32-bit constant rather than being narrowed at the store site.
+        ty: Option<TypeId>,
     },
     ConstBool {
         value: ValueId,
@@ -180,12 +212,15 @@ pub enum Instruction {
         frame: LocalId,
         value: ValueId,
     },
-    /// Assigns `value` to the field `name` of the aggregate held in `base`,
-    /// releasing the previous field value when it is managed.
+    /// Assigns `value` to the field `name` of the aggregate held in `base`.
+    /// When `release` is set the previous field value is released first; a
+    /// copy-on-write replacement clears it because the old reference was already
+    /// consumed by `MakeUnique`.
     FieldStore {
         base: LocalId,
         name: String,
         value: ValueId,
+        release: bool,
     },
     /// Produces a borrow (address) of the field `name` of the aggregate held in
     /// `base`, without retaining or releasing the field. Used for method
@@ -220,7 +255,40 @@ pub enum Instruction {
         frame: LocalId,
         result_type: TypeId,
     },
+    /// Marks a channel `recv` suspension site. The async pass rewrites it into
+    /// [`Instruction::PollChannelRecv`]; `value` and `present` are produced on
+    /// resume.
+    AwaitChannelRecv {
+        value: ValueId,
+        present: ValueId,
+        handle: ValueId,
+        result_type: TypeId,
+    },
+    /// Polls the in-flight channel-recv child stored in `frame`. On `ready`,
+    /// `value` is the address of the received inner value and `present` is
+    /// nonzero when a value (rather than the closed/empty absence) was received.
+    PollChannelRecv {
+        value: ValueId,
+        present: ValueId,
+        ready: ValueId,
+        frame: LocalId,
+        result_type: TypeId,
+    },
     Allocate {
+        value: ValueId,
+        ty: TypeId,
+    },
+    /// Loads a scalar/pointer of type `ty` from the raw address `pointer + offset`.
+    LoadRaw {
+        value: ValueId,
+        pointer: ValueId,
+        offset: i64,
+        ty: TypeId,
+    },
+    /// Stores a scalar/pointer of type `ty` at the raw address `pointer + offset`.
+    StoreRaw {
+        pointer: ValueId,
+        offset: i64,
         value: ValueId,
         ty: TypeId,
     },
@@ -228,11 +296,22 @@ pub enum Instruction {
         value: ValueId,
         ty: TypeId,
     },
+    /// Returns a uniquely-referenced copy of a managed collection handle,
+    /// deep-copying it (retaining managed elements) when the storage is shared.
+    /// Preserves value semantics before an in-place mutation.
+    MakeUnique {
+        value: ValueId,
+        operand: ValueId,
+        ty: TypeId,
+    },
     Release {
         value: ValueId,
         ty: TypeId,
     },
     Binary {
+        /// Numeric operand type; required for target width and signedness even
+        /// when both operands are literals without a typed local.
+        operand_type: Option<TypeId>,
         value: ValueId,
         op: BinaryOp,
         left: ValueId,
@@ -328,7 +407,7 @@ pub enum Instruction {
         callable: SymbolId,
         result_type: TypeId,
     },
-    /// Awaits a poll task (`future(T)` or `vutcon(T)`) and yields `T`.
+    /// Awaits a poll task (`future[T]` or `vutcon[T]`) and yields `T`.
     AwaitFuture {
         value: ValueId,
         handle: ValueId,
@@ -351,6 +430,14 @@ pub enum Instruction {
     MakeFunction {
         value: ValueId,
         symbol: SymbolId,
+    },
+    /// Creates a capturing closure: allocates a reference-counted environment
+    /// holding `captures`, bundles the body code pointer, and produces a tagged
+    /// closure value.
+    MakeClosure {
+        value: ValueId,
+        symbol: SymbolId,
+        captures: Vec<ValueId>,
     },
     CallIndirect {
         value: Option<ValueId>,
@@ -394,6 +481,9 @@ pub enum Instruction {
         len: ValueId,
         index: ValueId,
         element: TypeId,
+        /// Set by the optimizer when the index is provably within `len`; codegen
+        /// then skips the bounds check.
+        in_bounds: bool,
     },
     /// Boxes a concrete `data`/`enum` value into an interface or `dyn` value.
     ConstructInterface {

@@ -1,4 +1,5 @@
 //! Type checker tests.
+mod numeric_target;
 
 use super::*;
 use vut_lexer::Lexer;
@@ -172,7 +173,7 @@ fn receiver_and_plain_callables_are_not_interchangeable() {
 #[test]
 fn checks_result_constructors_match_and_question_operator() {
     let valid = analyze(
-        "fn load() -> result(int, str):\n  ok(1)\nfn main() -> result(int, str):\n  value = load()?\n  checked: result(int, str) = ok(value)\n  match checked:\n    ok(number): ok(number)\n    err(message): err(message)\n",
+        "fn load() -> result[int, str]:\n  ok(1)\nfn main() -> result[int, str]:\n  value = load()?\n  checked: result[int, str] = ok(value)\n  match checked:\n    ok(number): ok(number)\n    err(message): err(message)\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -192,16 +193,16 @@ fn rejects_uncontextual_result_constructors_bad_question_and_incomplete_match() 
     let uncontextual = analyze("fn main():\n  value = ok(1)\n");
     assert!(codes(&uncontextual).contains(&"E1004"));
     let bad_question =
-        analyze("fn load() -> result(int, str):\n  ok(1)\nfn main() -> int:\n  load()?\n");
+        analyze("fn load() -> result[int, str]:\n  ok(1)\nfn main() -> int:\n  load()?\n");
     assert!(codes(&bad_question).contains(&"E6005"));
     let incomplete = analyze(
-        "fn main() -> int:\n  value: result(int, str) = ok(1)\n  match value:\n    ok(number): number\n",
+        "fn main() -> int:\n  value: result[int, str] = ok(1)\n  match value:\n    ok(number): number\n",
     );
     assert!(codes(&incomplete).contains(&"E5009"));
 }
 
 #[test]
-fn checks_usize_isize_and_rejects_bool_across_ffi() {
+fn checks_usize_isize_and_bool_across_ffi() {
     let valid = analyze("extern \"C\" fn a(x: usize, y: isize) -> usize\n");
     assert!(
         !valid.diagnostics.has_errors(),
@@ -209,8 +210,9 @@ fn checks_usize_isize_and_rejects_bool_across_ffi() {
         valid.diagnostics.as_slice()
     );
 
-    let booly = analyze("extern \"C\" fn a(x: bool)\n");
-    assert!(codes(&booly).contains(&"E8004"), "{:?}", codes(&booly));
+    // `bool` maps to the target C ABI's C `_Bool` and is FFI-safe in v1.
+    let booly = analyze("extern \"C\" fn a(x: bool) -> bool\n");
+    assert!(!codes(&booly).contains(&"E8004"), "{:?}", codes(&booly));
 
     let abi = analyze("extern \"Rust\" fn a()\n");
     assert!(codes(&abi).contains(&"E8005"), "{:?}", codes(&abi));
@@ -218,7 +220,7 @@ fn checks_usize_isize_and_rejects_bool_across_ffi() {
 
 #[test]
 fn rejects_result_in_extern_signatures_for_ffi_v1() {
-    let result = analyze("extern \"C\" fn native(value: result(i32, i32)) -> result(i32, i32)\n");
+    let result = analyze("extern \"C\" fn native(value: result[i32, i32]) -> result[i32, i32]\n");
     let codes = codes(&result);
     assert!(codes.contains(&"E8004"), "{codes:?}");
 }
@@ -226,7 +228,7 @@ fn rejects_result_in_extern_signatures_for_ffi_v1() {
 #[test]
 fn checks_core_bytes_type_methods_and_conversions() {
     let valid = analyze(
-        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main():\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list(u8) = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list(bytes) = @(rebuilt)\n  table: map(str, bytes) = map((\"payload\", text))\n  maybe: bytes? = text\n  result_value: result(bytes, str) = ok(text)\n  entry: bytes? = table.get(\"payload\")\n  if entry != null:\n    entry.len()\n",
+        "data Packet:\n  payload: bytes\nfn take(blob: bytes) -> bytes:\n  blob\nfn inspect(blob: bytes) -> int:\n  match blob.to_str():\n    ok(value): 0\n    err(error): error.valid_up_to + error.error_len\nfn main():\n  raw = bytes()\n  raw.reserve(8)\n  text = \"Xin chào\".to_bytes()\n  copied = text\n  copied.set(0, 86)\n  values: list[u8] = copied.to_list()\n  rebuilt = bytes.from_list(values)\n  packets: list[bytes] = @[rebuilt]\n  table: map[str, bytes] = (\"payload\": text)\n  maybe: bytes? = text\n  result_value: result[bytes, str] = ok(text)\n  entry: bytes? = table.get(\"payload\")\n  if entry != null:\n    entry.len()\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -238,7 +240,7 @@ fn checks_core_bytes_type_methods_and_conversions() {
     assert!(codes(&invalid).contains(&"E1003"));
 
     let ffi = analyze(
-        "extern \"C\" fn bad(blob: map(str, i32))\nextern \"C\" fn good(blob: ptr(u8), len: u64)\n",
+        "extern \"C\" fn bad(blob: map[str, i32])\nextern \"C\" fn good(blob: ptr[u8], len: u64)\n",
     );
     assert!(
         codes(&ffi).contains(&"E8004"),
@@ -250,7 +252,7 @@ fn checks_core_bytes_type_methods_and_conversions() {
 #[test]
 fn checks_functions_methods_data_and_lists() {
     let result = analyze(
-        "data Counter:\n  value: int = 0\nfn Counter.add(amount: int) -> int:\n  self.value = self.value + amount\n  self.value\nfn main() -> int:\n  counter = Counter(value = 1)\n  values: list(int) = @(1, 2, 3)\n  counter.add(values.len)\n",
+        "data Counter:\n  value: int = 0\nfn Counter.add(amount: int) -> int:\n  self.value = self.value + amount\n  self.value\nfn main() -> int:\n  counter = Counter(value: 1)\n  values: list[int] = @[1, 2, 3]\n  counter.add(values.len)\n",
     );
     assert!(result.diagnostics.has_errors());
     assert!(codes(&result).contains(&"E2004"));
@@ -273,7 +275,7 @@ fn omitted_return_type_defaults_to_void_and_explicit_void_is_supported() {
 #[test]
 fn structurally_satisfies_interfaces_and_caches_result() {
     let result = analyze(
-        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn hear(value: Speaker) -> str:\n  value.speak()\nfn main() -> str:\n  dog = Dog(name = \"Milo\")\n  hear(dog)\n",
+        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn hear(value: Speaker) -> str:\n  value.speak()\nfn main() -> str:\n  dog = Dog(name: \"Milo\")\n  hear(dog)\n",
     );
     assert!(
         !result.diagnostics.has_errors(),
@@ -292,15 +294,15 @@ fn structurally_satisfies_interfaces_and_caches_result() {
 #[test]
 fn reports_missing_mismatched_and_private_interface_methods() {
     let missing = analyze(
-        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn hear(value: Speaker):\n  value.speak()\nfn main():\n  hear(Dog(name = \"Milo\"))\n",
+        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn hear(value: Speaker):\n  value.speak()\nfn main():\n  hear(Dog(name: \"Milo\"))\n",
     );
     assert!(codes(&missing).contains(&"E4102"));
     let mismatch = analyze(
-        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn Dog.speak(value: int) -> str:\n  \"woof\"\nfn hear(value: Speaker):\n  value.speak()\nfn main():\n  hear(Dog(name = \"Milo\"))\n",
+        "interface Speaker:\n  speak() -> str\ndata Dog:\n  name: str\nfn Dog.speak(value: int) -> str:\n  \"woof\"\nfn hear(value: Speaker):\n  value.speak()\nfn main():\n  hear(Dog(name: \"Milo\"))\n",
     );
     assert!(codes(&mismatch).contains(&"E4103"));
     let private = analyze(
-        "interface Speaker:\n  _speak() -> str\ndata Dog:\n  name: str\nfn Dog._speak() -> str:\n  \"woof\"\nfn hear(value: Speaker):\n  value._speak()\nfn main():\n  hear(Dog(name = \"Milo\"))\n",
+        "interface Speaker:\n  _speak() -> str\ndata Dog:\n  name: str\nfn Dog._speak() -> str:\n  \"woof\"\nfn hear(value: Speaker):\n  value._speak()\nfn main():\n  hear(Dog(name: \"Milo\"))\n",
     );
     assert!(codes(&private).contains(&"E4104"));
 }
@@ -318,7 +320,7 @@ fn detects_interface_composition_conflicts_and_cycles() {
 #[test]
 fn rejects_fixed_type_heterogeneous_list_and_truthiness() {
     let result = analyze(
-        "fn invalid():\n  value = 1\n  value = \"one\"\n  items = @(1, \"two\")\n  if 1:\n    value\n",
+        "fn invalid():\n  value = 1\n  value = \"one\"\n  items = @[1, \"two\"]\n  if 1:\n    value\n",
     );
     let actual = codes(&result);
     assert!(actual.contains(&"E1003"), "{actual:?}");
@@ -329,7 +331,7 @@ fn rejects_fixed_type_heterogeneous_list_and_truthiness() {
 #[test]
 fn checks_calls_constructors_returns_and_loop_control() {
     let result = analyze(
-        "data User:\n  name: str\n  age: int = 0\nfn greet(name: str) -> str:\n  return 1\nfn invalid():\n  user = User(age = \"old\", extra = 1)\n  greet()\n  break\n  continue\n",
+        "data User:\n  name: str\n  age: int = 0\nfn greet(name: str) -> str:\n  return 1\nfn invalid():\n  user = User(age: \"old\", extra: 1)\n  greet()\n  break\n  continue\n",
     );
     let actual = codes(&result);
     for expected in ["E6005", "E2004", "E1003", "E6002", "E5005", "E5006"] {
@@ -348,7 +350,7 @@ fn checks_ranges_iterables_and_enum_match_exhaustiveness() {
 #[test]
 fn checks_optional_dyn_empty_list_and_numeric_bounds() {
     let result = analyze(
-        "fn types():\n  small: u8 = 300\n  name: str = null\n  maybe: str? = null\n  items: list(int) = @()\n  value: dyn = 1\n  value = \"text\"\n",
+        "fn types():\n  small: u8 = 300\n  name: str = null\n  maybe: str? = null\n  items: list[int] = @[]\n  value: dyn = 1\n  value = \"text\"\n",
     );
     let actual = codes(&result);
     assert!(actual.contains(&"E1008"), "{actual:?}");
@@ -359,7 +361,7 @@ fn checks_optional_dyn_empty_list_and_numeric_bounds() {
 #[test]
 fn type_checks_builtin_methods_and_their_generic_receivers() {
     let valid = analyze(
-        "fn main():\n  values: list(int) = @(1, 2, 3)\n  size: int = values.len()\n  empty: bool = values.is_empty()\n  text = \" Vut \"\n  clean: str = text.trim().to_upper()\n  found: bool = text.contains(\"Vut\")\n  number: str = size.to_str()\n",
+        "fn main():\n  values: list[int] = @[1, 2, 3]\n  size: int = values.len()\n  empty: bool = values.is_empty()\n  text = \" Vut \"\n  clean: str = text.trim().to_upper()\n  found: bool = text.contains(\"Vut\")\n  number: str = size.to_str()\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -368,7 +370,7 @@ fn type_checks_builtin_methods_and_their_generic_receivers() {
     );
 
     let invalid = analyze(
-        "fn main():\n  text = \"Vut\"\n  bad = text.contains(1)\n  values: list(int) = @(1)\n  also_bad = values.len(1)\n",
+        "fn main():\n  text = \"Vut\"\n  bad = text.contains(1)\n  values: list[int] = @[1]\n  also_bad = values.len(1)\n",
     );
     let actual = codes(&invalid);
     assert!(actual.contains(&"E1003"), "{actual:?}");
@@ -378,7 +380,7 @@ fn type_checks_builtin_methods_and_their_generic_receivers() {
 #[test]
 fn rejects_duplicate_constructor_fields_and_if_branch_mismatch() {
     let result = analyze(
-        "data User:\n  name: str\nfn invalid():\n  user = User(name = \"A\", name = \"B\")\n  value = if true:\n    1\n  else:\n    \"one\"\n",
+        "data User:\n  name: str\nfn invalid():\n  user = User(name: \"A\", name: \"B\")\n  value = if true:\n    1\n  else:\n    \"one\"\n",
     );
     let actual = codes(&result);
     assert!(actual.contains(&"E6004"), "{actual:?}");
@@ -431,10 +433,10 @@ fn type_checks_async_await_and_result_interaction() {
         "data User:\n  name: str\n  age: int\n\
 fn User.label() -> str:\n  \"$(self.name) ($(self.age))\"\n\
 async fn read_value() -> int:\n  7\n\
-async fn read_async() -> result(int, str):\n  ok(1)\n\
+async fn read_async() -> result[int, str]:\n  ok(1)\n\
 async fn compute() -> int:\n  first = await read_value()\n  second = await read_value()\n  first + second\n\
-async fn load() -> result(int, str):\n  value = await read_async()?\n  ok(value)\n\
-async fn make_user() -> User:\n  User(name = \"Nam\", age = await read_value())\n\
+async fn load() -> result[int, str]:\n  value = await read_async()?\n  ok(value)\n\
+async fn make_user() -> User:\n  User(name: \"Nam\", age: await read_value())\n\
 async fn main():\n  total = await compute()\n  loaded = await load()\n  match loaded:\n    ok(value): out(\"$value\")\n    err(message): out(message)\n  user = await make_user()\n  out(user.label())\n  out(\"$total\")\n",
     );
     assert!(
@@ -498,7 +500,7 @@ fn area(shape: Shape) -> float:\n  match shape:\n    point: 0.0\n    circle(radi
 enum Option:\n  none\n  some(value: str)\n\
 fn classify(o: Option) -> str:\n  match o:\n    some(value = \"hi\"): \"exact\"\n    some(value = _): \"some\"\n    none: \"none\"\n\
 fn ints(v: int) -> str:\n  match v:\n    0: \"z\"\n    1 or 2: \"s\"\n    3..=9: \"m\"\n    _ if v < 0: \"n\"\n    _: \"l\"\n\
-fn call() -> float:\n  shape = Shape.circle(radius = 1.0)\n  area(shape)\n",
+fn call() -> float:\n  shape = Shape.circle(radius: 1.0)\n  area(shape)\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -537,14 +539,14 @@ fn rejects_invalid_payload_enum_usage() {
         codes(&recursive)
     );
 
-    let list_pattern = analyze("fn f(xs: list(int)) -> int:\n  match xs:\n    @(a): a\n    _: 0\n");
+    let list_pattern = analyze("fn f(xs: list[int]) -> int:\n  match xs:\n    @[a]: a\n    _: 0\n");
     assert!(
         codes(&list_pattern).contains(&"E7112"),
         "{:?}",
         codes(&list_pattern)
     );
 
-    let construct = analyze("enum E:\n  a(value: int)\nfn f() -> E:\n  E.a(value = 1)\n");
+    let construct = analyze("enum E:\n  a(value: int)\nfn f() -> E:\n  E.a(value: 1)\n");
     assert!(
         !construct.diagnostics.has_errors(),
         "{:?}",
@@ -562,7 +564,7 @@ fn rejects_invalid_payload_enum_usage() {
 #[test]
 fn resolves_instance_methods_declared_by_generic_bounds() {
     let valid = analyze(
-        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode(T: Encodable)(value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age = 7)))\")\n",
+        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn encode[T: Encodable](value: T) -> int:\n  value.to_json()\nfn main():\n  out(\"$(encode(User(age: 7)))\")\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -575,7 +577,7 @@ fn resolves_instance_methods_declared_by_generic_bounds() {
 #[test]
 fn resolves_multiple_bounds_and_nested_container_receivers() {
     let valid = analyze(
-        "interface Ping:\n  ping() -> int\ninterface Pong:\n  pong() -> int\ndata D:\n  n: int\nfn D.ping() -> int:\n  self.n\nfn D.pong() -> int:\n  self.n\nfn use(T: Ping + Pong)(items: list(T)) -> int:\n  items.at(0).ping() + items.at(0).pong()\nfn main():\n  items: list(D) = @()\n  items.push(D(n = 1))\n  out(\"$(use(items))\")\n",
+        "interface Ping:\n  ping() -> int\ninterface Pong:\n  pong() -> int\ndata D:\n  n: int\nfn D.ping() -> int:\n  self.n\nfn D.pong() -> int:\n  self.n\nfn use[T: Ping + Pong](items: list[T]) -> int:\n  items.at(0).ping() + items.at(0).pong()\nfn main():\n  items: list[D] = @[]\n  items.push(D(n: 1))\n  out(\"$(use(items))\")\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -588,7 +590,7 @@ fn resolves_multiple_bounds_and_nested_container_receivers() {
 #[test]
 fn rejects_method_not_declared_by_any_bound() {
     let result = analyze(
-        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn bad(T: Encodable)(value: T) -> int:\n  value.missing()\nfn main():\n  out(\"$(bad(User(age = 1)))\")\n",
+        "interface Encodable:\n  to_json() -> int\ndata User:\n  age: int\nfn User.to_json() -> int:\n  self.age\nfn bad[T: Encodable](value: T) -> int:\n  value.missing()\nfn main():\n  out(\"$(bad(User(age: 1)))\")\n",
     );
     assert!(codes(&result).contains(&"E1018"), "{:?}", codes(&result));
     assert!(!codes(&result).contains(&"E2005"), "{:?}", codes(&result));
@@ -597,7 +599,7 @@ fn rejects_method_not_declared_by_any_bound() {
 #[test]
 fn rejects_conflicting_bounds_for_the_same_method_name() {
     let result = analyze(
-        "interface A:\n  m() -> int\ninterface B:\n  m() -> str\ndata D:\n  n: int\nfn D.m() -> int:\n  self.n\nfn use(T: A + B)(value: T) -> int:\n  value.m()\n",
+        "interface A:\n  m() -> int\ninterface B:\n  m() -> str\ndata D:\n  n: int\nfn D.m() -> int:\n  self.n\nfn use[T: A + B](value: T) -> int:\n  value.m()\n",
     );
     assert!(codes(&result).contains(&"E1019"), "{:?}", codes(&result));
 }
@@ -605,7 +607,7 @@ fn rejects_conflicting_bounds_for_the_same_method_name() {
 #[test]
 fn reports_unsatisfied_bound_with_the_missing_method() {
     let result = analyze(
-        "interface Ping:\n  ping() -> int\ndata D:\n  n: int\nfn other(T: Ping)(value: T) -> int:\n  value.ping()\nfn main():\n  out(\"$(other(42))\")\n",
+        "interface Ping:\n  ping() -> int\ndata D:\n  n: int\nfn other[T: Ping](value: T) -> int:\n  value.ping()\nfn main():\n  out(\"$(other(42))\")\n",
     );
     assert!(codes(&result).contains(&"E1017"), "{:?}", codes(&result));
 }
@@ -613,7 +615,7 @@ fn reports_unsatisfied_bound_with_the_missing_method() {
 #[test]
 fn resolves_static_bound_calls_with_self() {
     let result = analyze(
-        "interface Decodable:\n  static from_text(text: str) -> result(Self, int)\ndata User:\n  name: str\nstatic fn User.from_text(text: str) -> result(User, int):\n  ok(User(name = text))\nfn decode(T: Decodable)(text: str) -> result(T, int):\n  T.from_text(text)\nfn main():\n  value: result(User, int) = decode(\"hi\")\n  match value:\n    ok(user): out(user.name)\n    err(code): out(\"err\")\n",
+        "interface Decodable:\n  static from_text(text: str) -> result[Self, int]\ndata User:\n  name: str\nstatic fn User.from_text(text: str) -> result[User, int]:\n  ok(User(name: text))\nfn decode[T: Decodable](text: str) -> result[T, int]:\n  T.from_text(text)\nfn main():\n  value: result[User, int] = decode(\"hi\")\n  match value:\n    ok(user): out(user.name)\n    err(code): out(\"err\")\n",
     );
     assert!(
         !result.diagnostics.has_errors(),
@@ -626,7 +628,7 @@ fn resolves_static_bound_calls_with_self() {
 #[test]
 fn rejects_static_method_used_as_instance_method() {
     let result = analyze(
-        "data User:\n  name: str\nstatic fn User.make(text: str) -> User:\n  User(name = text)\nfn bad(value: User) -> User:\n  value.make(\"x\")\nfn main():\n  out(\"x\")\n",
+        "data User:\n  name: str\nstatic fn User.make(text: str) -> User:\n  User(name: text)\nfn bad(value: User) -> User:\n  value.make(\"x\")\nfn main():\n  out(\"x\")\n",
     );
     assert!(codes(&result).contains(&"E2005"), "{:?}", codes(&result));
 }
@@ -634,7 +636,7 @@ fn rejects_static_method_used_as_instance_method() {
 #[test]
 fn reports_unsatisfied_static_bound() {
     let result = analyze(
-        "interface Decodable:\n  static from_text(text: str) -> result(Self, int)\ndata Plain:\n  n: int\nfn decode(T: Decodable)(text: str) -> result(T, int):\n  T.from_text(text)\nfn main():\n  value: result(Plain, int) = decode(\"hi\")\n  match value:\n    ok(item): out(\"ok\")\n    err(code): out(\"err\")\n",
+        "interface Decodable:\n  static from_text(text: str) -> result[Self, int]\ndata Plain:\n  n: int\nfn decode[T: Decodable](text: str) -> result[T, int]:\n  T.from_text(text)\nfn main():\n  value: result[Plain, int] = decode(\"hi\")\n  match value:\n    ok(item): out(\"ok\")\n    err(code): out(\"err\")\n",
     );
     assert!(codes(&result).contains(&"E1017"), "{:?}", codes(&result));
 }
@@ -642,7 +644,7 @@ fn reports_unsatisfied_static_bound() {
 #[test]
 fn match_arm_block_value_is_the_final_expression() {
     let valid = analyze(
-        "enum Maybe:\n  none\n  some(value: int)\nfn value(input: Maybe) -> int:\n  match input:\n    some(inner):\n      doubled = inner * 2\n      doubled\n    none: 0\nfn main():\n  out(\"$(value(Maybe.some(value = 3)))\")\n",
+        "enum Maybe:\n  none\n  some(value: int)\nfn value(input: Maybe) -> int:\n  match input:\n    some(inner):\n      doubled = inner * 2\n      doubled\n    none: 0\nfn main():\n  out(\"$(value(Maybe.some(value: 3)))\")\n",
     );
     assert!(
         !valid.diagnostics.has_errors(),
@@ -691,7 +693,7 @@ fn variadic_functions_accept_zero_or_more_matching_arguments() {
 #[test]
 fn list_higher_order_builtins_infer_lambda_parameters() {
     let result = analyze(
-        "fn main():\n  items = @(1, 2, 3)\n  labels = items.map(x => x.to_str())\n  evens = items.filter(x => x % 2 == 0)\n  total = items.fold(0, (acc, x) => acc + x)\n  any = items.any(x => x > 1)\n  all = items.all(x => x > 0)\n  index = items.find_index(x => x == 2)\n  out(labels)\n  out(evens)\n  out(total)\n  out(any)\n  out(all)\n  out(index)\n",
+        "fn main():\n  items = @[1, 2, 3]\n  labels = items.map(x => x.to_str())\n  evens = items.filter(x => x % 2 == 0)\n  total = items.fold(0, (acc, x) => acc + x)\n  any = items.any(x => x > 1)\n  all = items.all(x => x > 0)\n  index = items.find_index(x => x == 2)\n  out(labels)\n  out(evens)\n  out(total)\n  out(any)\n  out(all)\n  out(index)\n",
     );
     assert!(
         !result.diagnostics.has_errors(),
@@ -707,10 +709,10 @@ fn list_higher_order_builtins_infer_lambda_parameters() {
 
 #[test]
 fn join_is_only_defined_for_list_str() {
-    let invalid = analyze("fn main():\n  nums = @(1, 2)\n  value = nums.join(\"-\")\n");
+    let invalid = analyze("fn main():\n  nums = @[1, 2]\n  value = nums.join(\"-\")\n");
     assert!(codes(&invalid).contains(&"E1028"), "{:?}", codes(&invalid));
 
-    let valid = analyze("fn main():\n  words = @(\"a\", \"b\")\n  value = words.join(\"-\")\n");
+    let valid = analyze("fn main():\n  words = @[\"a\", \"b\"]\n  value = words.join(\"-\")\n");
     assert!(
         !valid.diagnostics.has_errors(),
         "{:?}",
@@ -720,10 +722,10 @@ fn join_is_only_defined_for_list_str() {
 
 #[test]
 fn collection_callbacks_are_arity_checked() {
-    let missing = analyze("fn main():\n  items = @(1, 2)\n  value = items.map()\n");
+    let missing = analyze("fn main():\n  items = @[1, 2]\n  value = items.map()\n");
     assert!(codes(&missing).contains(&"E1003"), "{:?}", codes(&missing));
 
-    let bad_fold = analyze("fn main():\n  items = @(1, 2)\n  value = items.fold(0)\n");
+    let bad_fold = analyze("fn main():\n  items = @[1, 2]\n  value = items.fold(0)\n");
     assert!(
         codes(&bad_fold).contains(&"E1003"),
         "{:?}",
@@ -808,7 +810,7 @@ fn interface_satisfaction_uses_compatible_signatures() {
     // A covariant return (`Dog` where `Animal` is required) satisfies the
     // interface; a contravariant parameter mismatch does not.
     let covariant = analyze(
-        "interface Animal:\n  speak() -> str\ninterface Producer:\n  make() -> Animal\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.make() -> Dog:\n  Dog(name = \"d\")\nfn accept(producer: Producer) -> str:\n  \"ok\"\nfn main():\n  out(accept(Dog(name = \"d\")))\n",
+        "interface Animal:\n  speak() -> str\ninterface Producer:\n  make() -> Animal\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.make() -> Dog:\n  Dog(name: \"d\")\nfn accept(producer: Producer) -> str:\n  \"ok\"\nfn main():\n  out(accept(Dog(name: \"d\")))\n",
     );
     assert!(
         !covariant.diagnostics.has_errors(),
@@ -817,7 +819,7 @@ fn interface_satisfaction_uses_compatible_signatures() {
     );
 
     let wrong_parameter = analyze(
-        "interface Animal:\n  speak() -> str\ninterface Consumer:\n  take(value: Animal)\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.take(value: Dog):\n  value.name\nfn accept(consumer: Consumer) -> int:\n  0\nfn main():\n  value = accept(Dog(name = \"d\"))\n  out(\"$(value)\")\n",
+        "interface Animal:\n  speak() -> str\ninterface Consumer:\n  take(value: Animal)\ndata Dog:\n  name: str\nfn Dog.speak() -> str:\n  \"woof\"\nfn Dog.take(value: Dog):\n  value.name\nfn accept(consumer: Consumer) -> int:\n  0\nfn main():\n  value = accept(Dog(name: \"d\"))\n  out(\"$(value)\")\n",
     );
     assert!(
         wrong_parameter.diagnostics.has_errors(),

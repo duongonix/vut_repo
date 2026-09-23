@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use vut_compiler::{BuildMode, CompilerConfig, CompilerSession};
+use vut_compiler::{BuildMode, CompilerConfig, CompilerSession, OptimizationLevel};
 
 #[derive(Parser, Debug)]
 #[command(name = "vut", version, about = "The Vut compiler")]
@@ -37,6 +37,9 @@ enum Command {
         /// Target triple to diagnose; defaults to the host.
         #[arg(long)]
         target: Option<String>,
+        /// Emit a machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -46,8 +49,21 @@ struct Options {
     source: Option<PathBuf>,
     #[arg(long)]
     release: bool,
+    /// Optimization level: 0, 1, 2, or 3. `--release` implies `-O2`.
+    #[arg(short = 'O', long = "opt-level", value_name = "LEVEL")]
+    opt_level: Option<String>,
     #[arg(long)]
     target: Option<String>,
+    /// Target CPU: `native` or a preset. Portable baseline by default.
+    #[arg(long = "target-cpu", value_name = "CPU")]
+    target_cpu: Option<String>,
+    /// Cranelift feature override (`avx2`, `+avx2`, `-avx2`); repeatable.
+    #[arg(
+        long = "target-feature",
+        value_name = "FEATURE",
+        allow_hyphen_values = true
+    )]
+    target_feature: Vec<String>,
     #[arg(long, short)]
     output: Option<PathBuf>,
     /// Native static library (`.lib`/`.a`) to link; repeatable.
@@ -76,8 +92,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(status.code().unwrap_or(1));
             }
         }
-        Command::Doctor { target } => {
-            crate::doctor::run(target)?;
+        Command::Doctor { target, json } => {
+            if !crate::doctor::run(target, json)? {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())
@@ -109,6 +127,13 @@ fn build(
     );
     config.runtime_library = vut_paths::runtime_library(&config.target);
     config.startup_object = vut_paths::startup_object(&config.target);
+    config.optimization = options
+        .opt_level
+        .as_deref()
+        .map(parse_opt_level)
+        .transpose()?;
+    config.target_cpu.clone_from(&options.target_cpu);
+    config.target_features.clone_from(&options.target_feature);
     config.native_libraries.clone_from(&options.native_lib);
     config.system_libraries.clone_from(&options.system_lib);
     let output = options
@@ -153,6 +178,18 @@ fn default_output(release: bool) -> PathBuf {
         .join(if cfg!(windows) { "app.exe" } else { "app" })
 }
 
+fn parse_opt_level(value: &str) -> Result<OptimizationLevel, Box<dyn std::error::Error>> {
+    match value {
+        "0" => Ok(OptimizationLevel::O0),
+        "1" => Ok(OptimizationLevel::O1),
+        "2" => Ok(OptimizationLevel::O2),
+        "3" => Ok(OptimizationLevel::O3),
+        other => {
+            Err(format!("invalid optimization level `{other}`; expected 0, 1, 2, or 3").into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +206,38 @@ mod tests {
         };
         assert_eq!(options.args, ["one", "two"]);
     }
+    #[test]
+    fn accepts_optimization_level() {
+        let parsed = Cli::try_parse_from(["vut", "build", "app.vut", "-O3"]).unwrap();
+        let Command::Build(options) = parsed.command else {
+            panic!()
+        };
+        assert_eq!(options.opt_level.as_deref(), Some("3"));
+        assert_eq!(parse_opt_level("2").unwrap(), OptimizationLevel::O2);
+        assert!(parse_opt_level("9").is_err());
+    }
+
+    #[test]
+    fn accepts_target_cpu_and_features() {
+        let parsed = Cli::try_parse_from([
+            "vut",
+            "build",
+            "app.vut",
+            "--target-cpu",
+            "native",
+            "--target-feature",
+            "+avx2",
+            "--target-feature",
+            "-sse3",
+        ])
+        .unwrap();
+        let Command::Build(options) = parsed.command else {
+            panic!()
+        };
+        assert_eq!(options.target_cpu.as_deref(), Some("native"));
+        assert_eq!(options.target_feature, ["+avx2", "-sse3"]);
+    }
+
     #[test]
     fn accepts_all_build_controls() {
         let parsed = Cli::try_parse_from([

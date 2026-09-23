@@ -257,7 +257,7 @@ Examples:
 
 ```text
 TypeId(int)
-TypeId(list(int))
+TypeId(list[int])
 TypeId(User)
 ```
 

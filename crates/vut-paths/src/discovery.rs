@@ -100,6 +100,61 @@ pub fn is_windows_target(target: &str) -> bool {
     target.contains("windows")
 }
 
+/// Reads the installed distribution's runtime ABI version from
+/// `$VUT_HOME/manifest.json`, when present.
+#[must_use]
+pub fn installed_abi_version() -> Option<u32> {
+    let home = Home::resolve()?;
+    manifest_abi_version(&home.manifest_path())
+}
+
+/// Reads a string field from the installed `$VUT_HOME/manifest.json`.
+#[must_use]
+pub fn installed_manifest_string(key: &str) -> Option<String> {
+    let home = Home::resolve()?;
+    let text = std::fs::read_to_string(home.manifest_path()).ok()?;
+    parse_string_field(&text, key)
+}
+
+/// Reads an unsigned integer field from the installed `$VUT_HOME/manifest.json`.
+#[must_use]
+pub fn installed_manifest_u32(key: &str) -> Option<u32> {
+    let home = Home::resolve()?;
+    let text = std::fs::read_to_string(home.manifest_path()).ok()?;
+    parse_u32_field(&text, key)
+}
+
+/// Parses `abi_version` from a distribution `manifest.json`.
+#[must_use]
+pub fn manifest_abi_version(path: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(path).ok()?;
+    parse_u32_field(&text, "abi_version")
+}
+
+fn parse_string_field(text: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let after = &text[text.find(&needle)? + needle.len()..];
+    let after = after.trim_start().strip_prefix(':')?.trim_start();
+    let after = after.strip_prefix('"')?;
+    let end = after.find('"')?;
+    Some(after[..end].to_owned())
+}
+
+fn parse_u32_field(text: &str, key: &str) -> Option<u32> {
+    let needle = format!("\"{key}\"");
+    let after = &text[text.find(&needle)? + needle.len()..];
+    let after = after.trim_start().strip_prefix(':')?.trim_start();
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Returns `true` when the installed ABI (if any) matches the expected revision.
+/// A missing manifest (development tree) is always compatible.
+#[must_use]
+pub fn abi_compatible(installed: Option<u32>, expected: u32) -> bool {
+    installed.is_none_or(|installed| installed == expected)
+}
+
 /// Candidate directories in resolution order.
 fn search_dirs(target: &str) -> Vec<PathBuf> {
     let mut directories = Vec::new();
@@ -230,5 +285,35 @@ mod tests {
     fn windows_target_detection_uses_the_triple() {
         assert!(is_windows_target("aarch64-pc-windows-msvc"));
         assert!(!is_windows_target("aarch64-apple-darwin"));
+    }
+
+    #[test]
+    fn parses_abi_version_from_a_manifest() {
+        assert_eq!(
+            parse_u32_field("{\"abi_version\": 13}", "abi_version"),
+            Some(13)
+        );
+        assert_eq!(
+            parse_u32_field(
+                "{\n  \"abi_version\": 7,\n  \"target\": \"x\"\n}",
+                "abi_version"
+            ),
+            Some(7)
+        );
+        assert_eq!(parse_u32_field("{}", "abi_version"), None);
+    }
+
+    #[test]
+    fn parses_string_fields_from_a_manifest() {
+        let text = "{\n  \"stdlib\": \"0.1.0\",\n  \"target\": \"x\"\n}";
+        assert_eq!(parse_string_field(text, "stdlib"), Some("0.1.0".to_owned()));
+        assert_eq!(parse_string_field(text, "missing"), None);
+    }
+
+    #[test]
+    fn abi_compatibility_matches_or_ignores_absence() {
+        assert!(abi_compatible(Some(13), 13));
+        assert!(!abi_compatible(Some(12), 13));
+        assert!(abi_compatible(None, 13));
     }
 }

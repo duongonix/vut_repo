@@ -290,7 +290,7 @@ impl Parser<'_> {
     pub(crate) fn data(&mut self, attributes: Vec<Attribute>) -> Data {
         let start = self.advance().span.start();
         let name = self.name("expected data name");
-        let type_parameters = if self.at(TokenKind::LParen) {
+        let type_parameters = if self.at(TokenKind::LBracket) {
             self.type_parameters()
         } else {
             Vec::new()
@@ -374,7 +374,7 @@ impl Parser<'_> {
     pub(crate) fn interface(&mut self, attributes: Vec<Attribute>) -> Interface {
         let start = self.advance().span.start();
         let name = self.name("expected interface name");
-        let type_parameters = if self.at(TokenKind::LParen) {
+        let type_parameters = if self.at(TokenKind::LBracket) {
             self.type_parameters()
         } else {
             Vec::new()
@@ -453,7 +453,7 @@ impl Parser<'_> {
     pub(crate) fn enum_declaration(&mut self, attributes: Vec<Attribute>) -> Enum {
         let start = self.advance().span.start();
         let name = self.name("expected enum name");
-        let type_parameters = if self.at(TokenKind::LParen) {
+        let type_parameters = if self.at(TokenKind::LBracket) {
             self.type_parameters()
         } else {
             Vec::new()
@@ -556,7 +556,7 @@ impl Parser<'_> {
         while self.take(TokenKind::Dot).is_some() {
             path.push(self.type_name());
         }
-        let mut ty = if self.take(TokenKind::LParen).is_some() {
+        let mut ty = if self.take(TokenKind::LBracket).is_some() {
             if path.len() != 1 {
                 self.error(
                     codes::E0101,
@@ -584,9 +584,9 @@ impl Parser<'_> {
                     .unwrap_or(0);
                 let end = self
                     .expect(
-                        TokenKind::RParen,
+                        TokenKind::RBracket,
                         codes::E0101,
-                        "expected `)` after array type",
+                        "expected `]` after array type",
                     )
                     .span
                     .end();
@@ -598,7 +598,7 @@ impl Parser<'_> {
                 }
             } else {
                 let mut arguments = Vec::new();
-                while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
+                while !self.at_any(&[TokenKind::RBracket, TokenKind::Eof]) {
                     arguments.push(self.type_expression());
                     if self.take(TokenKind::Comma).is_none() {
                         break;
@@ -606,9 +606,9 @@ impl Parser<'_> {
                 }
                 let end = self
                     .expect(
-                        TokenKind::RParen,
+                        TokenKind::RBracket,
                         codes::E0101,
-                        "expected `)` after type arguments",
+                        "expected `]` after type arguments",
                     )
                     .span
                     .end();
@@ -758,15 +758,15 @@ impl Parser<'_> {
         }
     }
 
-    /// Parses a generic type-parameter list: `(T, U: Bound)`.
+    /// Parses a generic type-parameter list: `[T, U: Bound]`.
     fn type_parameters(&mut self) -> Vec<TypeParameter> {
         self.expect(
-            TokenKind::LParen,
+            TokenKind::LBracket,
             codes::E0110,
-            "expected `(` before type parameters",
+            "expected `[` before type parameters",
         );
         let mut parameters = Vec::new();
-        while !self.at_any(&[TokenKind::RParen, TokenKind::Eof]) {
+        while !self.at_any(&[TokenKind::RBracket, TokenKind::Eof]) {
             let start = self.current().span.start();
             let name = self.name("expected type parameter");
             let mut bounds = Vec::new();
@@ -789,27 +789,25 @@ impl Parser<'_> {
             }
         }
         self.expect(
-            TokenKind::RParen,
+            TokenKind::RBracket,
             codes::E0110,
-            "expected `)` after type parameters",
+            "expected `]` after type parameters",
         );
         parameters
     }
 
-    /// Returns true when the parenthesized group starting at the current `(` is
-    /// immediately followed by another `(`. Generic functions/declarations put
-    /// the type-parameter list before the value-parameter list, so two adjacent
-    /// groups disambiguate `fn f(T)(x: T)` from `fn f(x: T)`.
+    /// Generic declaration parameters are always a bracketed group before the
+    /// ordinary parenthesized parameter list.
     fn type_parameter_list_ahead(&self) -> bool {
-        if !self.at(TokenKind::LParen) {
+        if !self.at(TokenKind::LBracket) {
             return false;
         }
         let mut depth = 0_usize;
         let mut offset = 0_usize;
         loop {
             match self.nth(offset).kind {
-                TokenKind::LParen => depth += 1,
-                TokenKind::RParen => {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
                     if depth == 0 {
                         return false;
                     }
@@ -842,11 +840,16 @@ impl Parser<'_> {
                 "expected `:` after parameter name",
             );
             let ty = self.type_expression();
+            let default = self.take(TokenKind::Equal).map(|_| self.expression(0));
+            let end = default
+                .as_ref()
+                .map_or_else(|| ty.span().end(), |value| value.span().end());
             parameters.push(Parameter {
                 name,
-                span: self.span_from(start, ty.span().end()),
+                span: self.span_from(start, end),
                 ty,
                 variadic,
+                default,
             });
             if self.take(TokenKind::Comma).is_none() {
                 break;

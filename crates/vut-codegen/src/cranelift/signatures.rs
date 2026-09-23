@@ -86,6 +86,13 @@ pub(super) fn external_signature_for(
     if let Some(ty) = function.return_type
         && layouts.types[ty.0].repr != ValueRepr::Void
     {
+        // FFI v1 passes aggregates by pointer only, so an extern return is never
+        // an aggregate and no sret parameter is needed. If by-value `repr(C)`
+        // returns are added, this must become sret-aware like `signature_for`.
+        debug_assert!(
+            !layouts.is_aggregate(ty),
+            "extern return type must not be an aggregate"
+        );
         signature
             .returns
             .push(AbiParam::new(machine_type(layouts, ty)));
@@ -110,6 +117,39 @@ pub(super) fn indirect_signature(
         // Aggregate return uses a caller-provided destination pointer (sret).
         signature.params.push(AbiParam::new(types::I64));
     }
+    signature.params.extend(
+        parameters
+            .iter()
+            .map(|ty| AbiParam::new(machine_type(layouts, *ty))),
+    );
+    if layouts.types[result.0].repr != ValueRepr::Void {
+        signature
+            .returns
+            .push(AbiParam::new(machine_type(layouts, result)));
+    }
+    Ok(signature)
+}
+
+/// The environment-first variant of [`indirect_signature`], used for a tagged
+/// capturing closure whose body receives a hidden leading environment pointer.
+pub(super) fn indirect_signature_with_env(
+    module: &ObjectModule,
+    layouts: &LayoutTable,
+    callable_ty: Option<vut_hir::TypeId>,
+) -> Result<Signature, CodegenError> {
+    let mut signature = Signature::new(c_call_conv(module));
+    let Some(ty) = callable_ty else {
+        return Err(CodegenError::Backend(
+            "invalid typed MIR: indirect call without a callable type".into(),
+        ));
+    };
+    let (parameters, result) = layouts.callables.get(&ty).cloned().ok_or_else(|| {
+        CodegenError::Backend(format!("invalid typed MIR: type {} is not callable", ty.0))
+    })?;
+    if layouts.is_aggregate(result) {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    signature.params.push(AbiParam::new(types::I64));
     signature.params.extend(
         parameters
             .iter()

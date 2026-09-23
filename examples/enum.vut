@@ -34,7 +34,7 @@ fn classify(code: int) -> str:
     _ if code < 0: "negative"
     _: "unknown"
 
-fn command_code(command: Command) -> result(int, str):
+fn command_code(command: Command) -> result[int, str]:
   match command:
     quit: ok(0)
     move(dx = x, dy = y): ok(x + y)
@@ -45,9 +45,9 @@ fn main():
   out(color_name(Color.green))
 
   out(describe(Command.quit))
-  out(describe(Command.move(dx = 3, dy = 4)))
-  out(describe(Command.move(dx = 0, dy = 0)))
-  out(describe(Command.say(text = "hello")))
+  out(describe(Command.move(dx: 3, dy: 4)))
+  out(describe(Command.move(dx: 0, dy: 0)))
+  out(describe(Command.say(text: "hello")))
 
   out(classify(0))
   out(classify(2))
@@ -55,10 +55,10 @@ fn main():
   out(classify(-1))
   out(classify(42))
 
-  match command_code(Command.move(dx = 10, dy = 5)):
+  match command_code(Command.move(dx: 10, dy: 5)):
     ok(code): out("code: $(code)")
     err(message): out("error: $message")
 
-  match command_code(Command.say(text = "nope")):
+  match command_code(Command.say(text: "nope")):
     ok(code): out("code: $(code)")
     err(message): out("error: $message")

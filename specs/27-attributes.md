@@ -54,13 +54,13 @@ declaration.
 The existing list literal syntax remains unchanged:
 
 ```vut
-items = @(1, 2, 3)
+items = @[1, 2, 3]
 ```
 
 The parser distinguishes the two forms by the token after `@`:
 
 ```text
-"@("          list literal
+"@["          list literal
 "@" ident     attribute
 ```
 

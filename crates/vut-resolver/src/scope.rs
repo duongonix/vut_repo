@@ -1,6 +1,6 @@
 use crate::{
-    ImplicitReceiverMethod, LambdaInfo, Module, ModuleId, ResolvedReference, Symbol, SymbolId,
-    SymbolKind,
+    ImplicitReceiverMethod, LambdaCapture, LambdaInfo, Module, ModuleId, ResolvedReference, Symbol,
+    SymbolId, SymbolKind,
 };
 use std::collections::HashMap;
 use vut_ast::{
@@ -73,9 +73,9 @@ pub(crate) fn resolve_bodies(
             root.insert(name.to_owned(), id);
         }
         for name in [
-            "void", "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize",
-            "f32", "f64", "int", "float", "str", "bytes", "dyn", "list", "map", "result", "ptr",
-            "vutcon", "resource", "future",
+            "void", "unit", "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize",
+            "isize", "f32", "f64", "int", "float", "str", "bytes", "dyn", "list", "map", "result",
+            "ptr", "vutcon", "channel", "resource", "future",
         ] {
             let id = allocate(
                 symbols,
@@ -98,6 +98,7 @@ pub(crate) fn resolve_bodies(
             lambdas: &mut lambdas,
             lambda_symbols: &mut lambda_symbols,
             lambda_floors: Vec::new(),
+            capture_frames: Vec::new(),
             scopes: vec![root],
             receivers: Vec::new(),
             pending_lambda_receiver: None,
@@ -128,6 +129,9 @@ struct Context<'a> {
     lambdas: &'a mut Vec<LambdaInfo>,
     lambda_symbols: &'a mut HashMap<Span, SymbolId>,
     lambda_floors: Vec<usize>,
+    /// Capture list being collected for each lambda currently being resolved.
+    /// Parallel to `lambda_floors` (outermost first).
+    capture_frames: Vec<Vec<LambdaCapture>>,
     scopes: Vec<HashMap<String, SymbolId>>,
     /// Lexical receiver type stack; the last entry is the current receiver.
     receivers: Vec<SymbolId>,
@@ -150,6 +154,14 @@ impl Context<'_> {
             Item::Function(value) => {
                 self.push_scope();
                 self.define_type_parameters(&value.type_parameters);
+                // Defaults are constant expressions evaluated at the call site:
+                // resolve them before binding the parameters so a default cannot
+                // reference another parameter.
+                for parameter in &value.parameters {
+                    if let Some(default) = &parameter.default {
+                        self.expr(default);
+                    }
+                }
                 for parameter in &value.parameters {
                     let symbol = self.define(
                         &parameter.name.text,
@@ -169,6 +181,11 @@ impl Context<'_> {
                 self.push_scope();
                 self.define_type_parameters(&value.type_parameters);
                 self.ty(&value.receiver);
+                for parameter in &value.parameters {
+                    if let Some(default) = &parameter.default {
+                        self.expr(default);
+                    }
+                }
                 self.define("self", SymbolKind::Parameter, value.name.span);
                 for parameter in &value.parameters {
                     if parameter.name.text == "self" {
@@ -296,6 +313,7 @@ impl Context<'_> {
                 match target {
                     Expr::Name(name) if !module_level => {
                         if let Some(symbol) = self.lookup(&name.text) {
+                            self.check_capture_assignment(&name.text, symbol, name.span);
                             self.references.push(ResolvedReference {
                                 span: name.span,
                                 symbol,
@@ -425,6 +443,27 @@ impl Context<'_> {
                     }
                 }
             }
+            Expr::Subscript {
+                object,
+                types,
+                index,
+                ..
+            } => {
+                // The reading is chosen from symbol information: a generic
+                // declaration is applied with type arguments, everything else is
+                // a collection access.
+                let generic = self.subscript_target_is_generic(object);
+                self.expr(object);
+                if generic {
+                    if let Some(types) = types {
+                        for argument in types {
+                            self.ty(argument);
+                        }
+                    }
+                } else if let Some(index) = index {
+                    self.expr(index);
+                }
+            }
             Expr::Call {
                 callee, arguments, ..
             } => {
@@ -533,6 +572,7 @@ impl Context<'_> {
             false,
         );
         self.lambda_symbols.insert(span, symbol);
+        let lambda_index = self.lambdas.len();
         self.lambdas.push(LambdaInfo {
             symbol,
             module: self.module,
@@ -540,6 +580,7 @@ impl Context<'_> {
             body: body.clone(),
             is_async,
             receiver,
+            captures: Vec::new(),
             span,
         });
         let floor = self.scopes.len();
@@ -559,16 +600,42 @@ impl Context<'_> {
             }
         }
         self.lambda_floors.push(floor);
+        self.capture_frames.push(Vec::new());
         match body {
             LambdaBody::Expression(value) => self.expr(value),
             LambdaBody::Block(block) => self.block(block, true),
         }
         self.lambda_floors.pop();
+        if let Some(captures) = self.capture_frames.pop() {
+            self.lambdas[lambda_index].captures = captures;
+        }
         if receiver.is_some() {
             self.receivers.pop();
         }
         self.pop_scope();
     }
+    /// Returns true when a subscript target is a bare name bound to a generic
+    /// declaration, so `name[...]` is a generic application rather than a
+    /// collection access.
+    fn subscript_target_is_generic(&self, object: &Expr) -> bool {
+        let Expr::Name(name) = object else {
+            return false;
+        };
+        let Some(symbol) = self.lookup(&name.text) else {
+            return false;
+        };
+        let symbol = &self.symbols[symbol.0];
+        symbol.generic
+            && matches!(
+                symbol.kind,
+                SymbolKind::Function
+                    | SymbolKind::Method
+                    | SymbolKind::Data
+                    | SymbolKind::Interface
+                    | SymbolKind::Enum
+            )
+    }
+
     fn ty(&mut self, ty: &TypeExpr) {
         match ty {
             TypeExpr::Named { path, .. } => {
@@ -671,7 +738,7 @@ impl Context<'_> {
     }
     fn reference(&mut self, name: &str, span: Span) {
         if let Some(symbol) = self.lookup(name) {
-            self.check_capture(name, symbol, span);
+            self.record_capture(name, symbol);
             self.references.push(ResolvedReference { span, symbol });
         } else {
             if name == "self" {
@@ -909,26 +976,68 @@ impl Context<'_> {
             )
         })
     }
-    fn check_capture(&mut self, name: &str, symbol: SymbolId, span: Span) {
-        let Some(floor) = self.lambda_floors.last().copied() else {
+    /// Records `symbol` as captured by every enclosing lambda whose body this
+    /// reference is inside. A symbol defined within a lambda is not captured by
+    /// that lambda; module-level globals are never captured.
+    fn record_capture(&mut self, name: &str, symbol: SymbolId) {
+        if self.capture_frames.is_empty() {
             return;
-        };
+        }
         if !matches!(
             self.symbols[symbol.0].kind,
-            SymbolKind::Local | SymbolKind::Parameter | SymbolKind::Binding
+            SymbolKind::Local | SymbolKind::Parameter
         ) {
             return;
         }
-        let defining_scope = self
+        let Some(defining_scope) = self
             .scopes
             .iter()
-            .position(|scope| scope.values().any(|id| *id == symbol));
-        if defining_scope.is_some_and(|index| index < floor) {
+            .position(|scope| scope.values().any(|id| *id == symbol))
+        else {
+            return;
+        };
+        for (floor, frame) in self
+            .lambda_floors
+            .iter()
+            .zip(self.capture_frames.iter_mut())
+        {
+            if defining_scope < *floor && !frame.iter().any(|capture| capture.symbol == symbol) {
+                frame.push(LambdaCapture {
+                    name: name.to_owned(),
+                    symbol,
+                });
+            }
+        }
+    }
+    /// Rejects assignment to a binding that is defined outside the current
+    /// lambda; captured bindings are read-only (`specs/04` §46a).
+    fn check_capture_assignment(&mut self, name: &str, symbol: SymbolId, span: Span) {
+        if self.lambda_floors.is_empty() {
+            return;
+        }
+        if !matches!(
+            self.symbols[symbol.0].kind,
+            SymbolKind::Local | SymbolKind::Parameter
+        ) {
+            return;
+        }
+        let Some(defining_scope) = self
+            .scopes
+            .iter()
+            .position(|scope| scope.values().any(|id| *id == symbol))
+        else {
+            return;
+        };
+        if self
+            .lambda_floors
+            .iter()
+            .any(|floor| defining_scope < *floor)
+        {
             self.diagnostics.push(Diagnostic::error(
-                codes::E1013,
-                format!("lambda cannot capture `{name}`"),
+                codes::E1027,
+                format!("cannot assign to captured `{name}`"),
                 span,
-                "anonymous functions may only use their own parameters and locals",
+                "captured bindings are read-only inside a closure",
             ));
         }
     }
@@ -942,6 +1051,14 @@ impl Context<'_> {
             .map(String::as_str)
     }
     fn define(&mut self, name: &str, kind: SymbolKind, span: Span) -> SymbolId {
+        if name == "unit" {
+            self.diagnostics.push(Diagnostic::error(
+                codes::E2002,
+                "reserved unit literal",
+                span,
+                "`unit` denotes the single unit value and cannot be declared as a binding",
+            ));
+        }
         if let Some(previous) = self
             .scopes
             .last()
@@ -989,6 +1106,7 @@ fn allocate(
         target_module: None,
         receiver: None,
         is_static: false,
+        generic: false,
     });
     id
 }

@@ -43,7 +43,7 @@ fn run(source: &str) -> (Option<i32>, String) {
 
 #[test]
 fn array_sort_reverse_and_contains() {
-    let source = "fn main():\n  values = array(3, 1, 2)\n  out(\"contains=$(values.contains(2))\")\n  out(\"missing=$(values.contains(9))\")\n  values.reverse()\n  out(\"reversed=$values\")\n  values.sort()\n  out(\"sorted=$values\")\n";
+    let source = "fn main():\n  values = [3, 1, 2]\n  out(\"contains=$(values.contains(2))\")\n  out(\"missing=$(values.contains(9))\")\n  values.reverse()\n  out(\"reversed=$values\")\n  values.sort()\n  out(\"sorted=$values\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(
@@ -54,7 +54,7 @@ fn array_sort_reverse_and_contains() {
 
 #[test]
 fn array_to_list_produces_an_independent_list() {
-    let source = "fn main():\n  values = array(3, 1, 2)\n  values.sort()\n  items = values.to_list()\n  items.push(99)\n  out(\"list=$items\")\n  out(\"array=$values\")\n";
+    let source = "fn main():\n  values = [3, 1, 2]\n  values.sort()\n  items = values.to_list()\n  items.push(99)\n  out(\"list=$items\")\n  out(\"array=$values\")\n";
     let (code, stdout) = run(source);
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(stdout, "list=[1, 2, 3, 99]\narray=[1, 2, 3]\n");
@@ -62,9 +62,9 @@ fn array_to_list_produces_an_independent_list() {
 
 #[test]
 fn array_of_strings_sorts_and_converts() {
-    let source = "fn main():\n  words = array(\"b\", \"a\", \"c\")\n  words.sort()\n  out(\"words=$words\")\n  items = words.to_list()\n  out(\"items=$items\")\n";
+    let source = "fn main():\n  words = [\"b\", \"a\", \"c\"]\n  words.sort()\n  out(\"words=$words\")\n  items = words.to_list()\n  out(\"items=$items\")\n";
     let (code, stdout) = run(source);
-    // The `array(str, N)` local cleanup gap is tracked separately; only output
+    // The `[str, N]` local cleanup gap is tracked separately; only output
     // is asserted here.
     assert_eq!(
         stdout, "words=[\"a\", \"b\", \"c\"]\nitems=[\"a\", \"b\", \"c\"]\n",

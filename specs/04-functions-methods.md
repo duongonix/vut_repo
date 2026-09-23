@@ -240,8 +240,8 @@ Example:
 ```vut
 fn create_user(name: str, age: int) -> User:
   User(
-    name = name,
-    age = age
+    name: name,
+    age: age
   )
 
 user = create_user(
@@ -251,6 +251,8 @@ user = create_user(
 ```
 
 Named arguments improve clarity for functions with multiple parameters.
+
+Named arguments may appear in any order; each is matched to a parameter by name.
 
 ---
 
@@ -344,15 +346,25 @@ must fail.
 
 # 16. Default Parameters
 
-Default function parameter values are not part of the finalized MVP unless explicitly defined by another specification.
-
-Do not invent syntax such as:
+A trailing function parameter may declare a default value:
 
 ```vut
 fn connect(timeout: int = 10):
+  ...
 ```
 
-without a finalized specification.
+Rules:
+
+* Defaults are written as `name: Type = expression`.
+* A parameter with a default may be omitted by the caller; the default value is
+  materialized at the call site.
+* Required parameters must precede parameters with defaults (`E6015`).
+* A default expression is a constant expression evaluated in the callee's module
+  scope. It may reference module-level functions, types, and constants, but it
+  cannot reference another parameter or a local binding (`E2001`).
+* The default expression must be assignable to the parameter type (`E1003`).
+* Variadic parameters cannot declare defaults (`E6015`).
+* `extern` parameters cannot declare defaults (`E6015`).
 
 Named `data` fields may have defaults independently of function parameters.
 
@@ -881,8 +893,8 @@ Named `data` types have constructor syntax:
 
 ```vut
 User(
-  name = "Nam",
-  age = 20
+  name: "Nam",
+  age: 20
 )
 ```
 
@@ -906,7 +918,7 @@ data User:
   age: int = 0
 
 user = User(
-  name = "Nam"
+  name: "Nam"
 )
 ```
 
@@ -941,8 +953,8 @@ Users can use ordinary functions where needed:
 ```vut
 fn create_user(name: str) -> User:
   User(
-    name = name,
-    age = 0
+    name: name,
+    age: 0
   )
 ```
 
@@ -1044,14 +1056,14 @@ Resolver architecture should not unnecessarily depend on declaration order when 
 
 # 45. Function Values
 
-First-class function values are supported for non-capturing functions.
+First-class function values are supported, including capturing closures.
 
 Vut supports:
 
 ```text
 function references
 callbacks
-non-capturing anonymous functions (lambdas)
+anonymous functions (lambdas), capturing and non-capturing
 ```
 
 Function types are written as:
@@ -1124,26 +1136,83 @@ Rules:
 arrow lambda parameters have no type annotations
 fn lambda parameters may be annotated
 types may be inferred from an expected fn(...) -> ... type
-lambdas are non-capturing
+lambdas may capture enclosing locals and parameters by value
 ```
 
-Lambdas cannot reference locals or parameters of an enclosing function. Such
-a reference is a compile error (E1013). Capturing closures remain deferred.
+A lambda may reference locals or parameters of an enclosing scope. Each such
+reference is a **capture**. Capture semantics are defined in §46a.
+
+---
+
+# 46a. Capturing Closures
+
+A lambda that references a binding from an enclosing scope captures that
+binding. Capture is **by value** and happens when the lambda value is created.
+
+```vut
+fn main():
+  multiplier = 10
+  numbers = @[1, 2, 3]
+  scaled = numbers.map(x => x * multiplier)
+  out("$scaled")
+```
+
+Rules:
+
+1. The captured value is a snapshot taken at closure-creation time.
+2. Reassigning the outer binding after the closure is created does not change
+   the captured value, and mutating state through the captured copy is not
+   observable in the enclosing scope. This follows from Vut value semantics
+   (`specs/08`).
+3. Copy types are copied into the environment. A managed value is moved into the
+   environment at its last use; if the binding is still used after the closure,
+   the environment receives a duplicated (retained) value instead. A borrowed
+   value (a receiver, or an outer capture) is always retained.
+4. A move-only captured value may be moved into the environment but cannot also
+   be used afterwards; duplicating it is an error.
+5. Captured bindings are read-only inside the closure. Assigning to a captured
+   name is a compile error (`E1027`).
+6. The closure owns its environment. Managed captures are released exactly once
+   when the closure value is destroyed (`specs/08`, `specs/11`).
+7. A capturing closure and a non-capturing function value have the same
+   environment-erased type, `fn(...) -> ...`; the environment is an
+   implementation detail and is not written in source types.
+8. Capturing lambdas are supported for synchronous code. `async fn` lambdas and
+   Vutcon callbacks remain non-capturing (`specs/async/`).
+9. A Vut function used as an FFI callback must be non-capturing; a capturing
+   closure cannot cross the C ABI as a plain function pointer (`specs/ffi/`).
+10. Receiver functions may capture, but the receiver and the captures are
+    distinct concepts with separate ownership analysis (`specs/receiver/`).
+
+E1013 is retired. Diagnostics for invalid captures use the closure capture
+codes in `specs/22-error-codes.md`.
 
 ---
 
 # 47. Generic Functions
 
-Generic declarations use a parenthesized type-parameter list placed before the
+Generic declarations use a bracketed type-parameter list placed before the
 value-parameter list:
 
 ```vut
-fn identity(T)(value: T) -> T:
+fn identity[T](value: T) -> T:
   value
 ```
 
 Generic constraint semantics, including constraint-conditioned method access, are
 defined in `06-interfaces.md` §26.
+
+A generic function may be called with inferred type arguments, or with explicit
+type arguments written in square brackets before the value-argument list:
+
+```vut
+first(xs)             # type arguments inferred from the arguments
+first[int](xs)        # explicit type arguments
+convert[str, int](v)  # one type argument per generic parameter
+```
+
+Explicit and inferred calls produce the same specialization. See
+`21-grammar.md` §59 for how a `[...]` suffix is resolved.
 
 Do not invent angle-bracket syntax such as:
 
@@ -1151,8 +1220,8 @@ Do not invent angle-bracket syntax such as:
 fn identity<T>(...)
 ```
 
-because Vut already prefers parentheses for type application and generic
-declaration.
+because Vut already uses square brackets for generic declaration and type
+application.
 
 ---
 
@@ -1180,21 +1249,21 @@ Rules:
    (bounds-checked element access). It is not a general value and cannot be
    returned or stored.
 4. The representation is a contiguous element view (buffer pointer plus count);
-   it does not require a `list(T)` or `array(T, N)` and allocates no heap for the
+   it does not require a `list[T]` or `[T, N]` and allocates no heap for the
    arguments.
 5. Static checking is strict: `...values: int` rejects `str` arguments and
    `str` spreads.
 6. A call may spread a matching sequence as its final argument:
 
    ```vut
-   values = @(1, 2, 3)
+   values = @[1, 2, 3]
    sum(...values)
    ```
 
-   The spread must be `list(T)`, `array(T, N)`, or another variadic view with the
+   The spread must be `list[T]`, `[T, N]`, or another variadic view with the
    same element type, and must be the last argument.
-7. `...args: array(T, N)` declares a variadic parameter whose each argument is an
-   `array(T, N)`; it is not a variadic sequence of `T`.
+7. `...args: [T, N]` declares a variadic parameter whose each argument is an
+   `[T, N]`; it is not a variadic sequence of `T`.
 8. Extern (`extern "C"`) functions cannot be variadic; C varargs remain deferred
    (see the FFI specification).
 
@@ -1232,8 +1301,8 @@ Rules:
    function-typed locals all participate in chaining.
 5. This follows from ordinary call typing; there is no currying-specific rule.
 
-Anonymous functions currently may only reference their own parameters and
-locals; capturing enclosing bindings is not yet supported (`E1013`).
+Anonymous functions may reference their own parameters and locals and may
+capture enclosing bindings (§46a).
 
 ---
 
@@ -1304,8 +1373,8 @@ Example:
 ```vut
 fn create() -> User:
   User(
-    name = "Nam",
-    age = 20
+    name: "Nam",
+    age: 20
   )
 ```
 
@@ -1626,8 +1695,8 @@ fn User.birth_year(year: int) -> int:
 
 fn create_user(name: str, age: int) -> User:
   User(
-    name = name,
-    age = age
+    name: name,
+    age: age
   )
 
 fn main():
@@ -1934,7 +2003,7 @@ explicit return is supported
 named arguments are supported
 general overloading is not MVP
 static methods are deferred
-capturing closures are deferred
+capturing closures are supported
 non-capturing lambdas and function values are supported
 custom constructors are deferred
 ```

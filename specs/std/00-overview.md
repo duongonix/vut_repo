@@ -33,13 +33,13 @@ integers
 floats
 str
 bytes
-list(T)
-array(T, N)
-map(K, V)
-result(T, E)
+list[T]
+[T, N]
+map[K, V]
+result[T, E]
 optional
 dyn
-ptr(T)
+ptr[T]
 memory/drop primitives
 basic compiler/runtime intrinsics
 ```

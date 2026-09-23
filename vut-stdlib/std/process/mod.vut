@@ -1,115 +1,106 @@
-# Process identity, termination, and synchronous child execution.
-#
-# Child processes run synchronously; asynchronous handles and pipes are
-# deferred until the language has a managed native-resource type.
-import _internal.abi
+# Synchronous-first command builder. Process lifetime is independent of Child.
+import process._native as native
+import process._reply as reply
+import process._child as child
 
-@link_name("vut_rt_process_id_v1")
-extern "C" fn _native_id() -> u32
+type ProcessError = reply.ProcessError
+type ProcessErrorKind = reply.ProcessErrorKind
+type ExitStatus = reply.ExitStatus
+type Output = reply.Output
+type Child = child.Child
+type ChildStdin = child.ChildStdin
+type ChildStdout = child.ChildStdout
+type ChildStderr = child.ChildStderr
 
-@link_name("vut_rt_process_exit_v1")
-extern "C" fn _native_exit(code: i32)
+enum Stdio:
+  inherit
+  null_device
+  piped
 
-@link_name("vut_rt_process_status_v1")
-extern "C" fn _native_status(program: str, args: list(str), cwd: str) -> bytes
+fn _mode(mode: Stdio) -> usize:
+  match mode:
+    inherit: 0
+    null_device: 1
+    piped: 2
 
-@link_name("vut_rt_process_output_v1")
-extern "C" fn _native_output(program: str, args: list(str), cwd: str) -> bytes
+data Command:
+  program: str
+  _arguments: list[str] = @[]
+  _environment: list[str] = @[]
+  _removed: list[str] = @[]
+  _cwd: str = ""
+  _stdin: usize = 3
+  _stdout: usize = 3
+  _stderr: usize = 3
 
-fn _id() -> u32:
+fn Command.arg(value: str):
+  self._arguments.push(value)
+
+fn Command.args(values: list[str]):
+  for value in values:
+    self._arguments.push(value)
+
+fn Command.env(name: str, value: str):
+  retained: list[str] = @[]
+  for key in self._removed:
+    if key != name:
+      retained.push(key)
+  self._removed = retained
+  self._environment.push(name)
+  self._environment.push(value)
+
+fn Command.env_remove(name: str):
+  retained: list[str] = @[]
+  keep = false
+  for value, index in self._environment:
+    if index % 2 == 0:
+      keep = value != name
+    if keep:
+      retained.push(value)
+  self._environment = retained
+  self._removed.push(name)
+
+fn Command.current_dir(location: str):
+  self._cwd = location
+
+fn Command.stdin(mode: Stdio):
+  self._stdin = _mode(mode)
+
+fn Command.stdout(mode: Stdio):
+  self._stdout = _mode(mode)
+
+fn Command.stderr(mode: Stdio):
+  self._stderr = _mode(mode)
+
+fn Command.spawn() -> result[Child, ProcessError]:
   unsafe:
-    _native_id()
+    child.opened(native.command_spawn(self.program, self._arguments, self._environment, self._removed, self._cwd, self._stdin, self._stdout, self._stderr))
 
-fn _exit(code: i32):
+fn Command.status() -> result[ExitStatus, ProcessError]:
   unsafe:
-    _native_exit(code)
+    reply.status(native.command_status(self.program, self._arguments, self._environment, self._removed, self._cwd, self._stdin, self._stdout, self._stderr))
 
-fn _status(program: str, args: list(str), cwd: str) -> bytes:
+fn Command.output() -> result[Output, ProcessError]:
   unsafe:
-    _native_status(program, args, cwd)
+    reply.output(native.command_output(self.program, self._arguments, self._environment, self._removed, self._cwd, self._stdin, self._stdout, self._stderr))
 
-fn _output(program: str, args: list(str), cwd: str) -> bytes:
-  unsafe:
-    _native_output(program, args, cwd)
-
-enum ProcessErrorKind:
-  not_found
-  permission_denied
-  invalid_input
-  other
-
-data ProcessError:
-  kind: ProcessErrorKind
-  message: str
-
-data Output:
-  exit_code: int
-  stdout: str
-  stderr: str
-
-fn _kind(code: int) -> ProcessErrorKind:
-  kind: ProcessErrorKind = if code == 1:
-    ProcessErrorKind.not_found
-  elif code == 2:
-    ProcessErrorKind.permission_denied
-  elif code == 4:
-    ProcessErrorKind.invalid_input
-  else:
-    ProcessErrorKind.other
-  kind
-
-fn _error(code: int, raw: bytes) -> ProcessError:
-  ProcessError(kind = _kind(code), message = abi.message(raw))
-
-fn _decode_text(blob: bytes) -> str:
-  match blob.to_str():
-    ok(value): value
-    err(error): ""
-
-fn _build_output(payload: bytes) -> Output:
-  code = payload.read_i32_le(0)
-  length = payload.read_i32_le(4)
-  Output(
-    exit_code = code,
-    stdout = _decode_text(payload.slice(8, 8 + length)),
-    stderr = _decode_text(payload.slice(8 + length, payload.len()))
-  )
-
-fn _ok_output(payload: bytes) -> result(Output, ProcessError):
-  ok(_build_output(payload))
-
-fn _err_output(code: int, raw: bytes) -> result(Output, ProcessError):
-  err(_error(code, raw))
-
-fn _ok_status(code: int) -> result(int, ProcessError):
-  ok(code)
-
-fn _err_status(code: int, raw: bytes) -> result(int, ProcessError):
-  err(_error(code, raw))
-
-# The current process identifier.
 fn id() -> u32:
-  _id()
+  unsafe:
+    native.id()
 
-# Terminates the current process with `code`.
+# Explicit exit skips normal deterministic cleanup.
 fn exit(code: i32):
-  _exit(code)
+  unsafe:
+    native.exit(code)
 
-# Runs `program` with `args`, returning its exit code.
-fn status(program: str, args: list(str), cwd: str) -> result(int, ProcessError):
-  raw = _status(program, args, cwd)
-  value: result(int, ProcessError) = if abi.is_ok(raw):
-    _ok_status(abi.payload(raw).read_i32_le(0))
-  else:
-    _err_status(abi.status(raw), raw)
-  value
+fn status(program: str, args: list[str], cwd: str) -> result[ExitStatus, ProcessError]:
+  command = Command(program: program)
+  command.args(args)
+  command.current_dir(cwd)
+  command.status()
 
-# Runs `program` with `args`, capturing standard output and error.
-fn output(program: str, args: list(str), cwd: str) -> result(Output, ProcessError):
-  raw = _output(program, args, cwd)
-  value: result(Output, ProcessError) = if abi.is_ok(raw):
-    _ok_output(abi.payload(raw))
-  else:
-    _err_output(abi.status(raw), raw)
-  value
-
+fn output(program: str, args: list[str], cwd: str) -> result[Output, ProcessError]:
+  command = Command(program: program)
+  command.args(args)
+  command.current_dir(cwd)
+  command.output()

@@ -27,7 +27,7 @@ pub unsafe extern "C" fn vut_rt_vutcon_spawn_v1(
 ) -> *mut AsyncHandle {
     // SAFETY: the caller guarantees the callbacks and result layout.
     let handle = unsafe { vut_rt_task_new_v1(op, poll_fn, drop_fn, size, align) };
-    crate::executor::schedule(handle);
+    crate::scheduler::global().schedule(handle);
     handle
 }
 

@@ -142,7 +142,7 @@ age: int = 20
 Inline comma-separated values use one space after commas.
 
 ```vut
-@(1, 2, 3)
+@[1, 2, 3]
 ```
 
 ```vut
@@ -157,9 +157,9 @@ Long calls may be expanded.
 
 ```vut
 user = User(
-  name = "Ha",
-  age = 20,
-  active = true
+  name: "Ha",
+  age: 20,
+  active: true
 )
 ```
 
@@ -313,17 +313,17 @@ Exact grouping policy should remain simple.
 Short:
 
 ```vut
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 Long:
 
 ```vut
-numbers = @(
+numbers = @[
   10,
   20,
   30
-)
+]
 ```
 
 ---

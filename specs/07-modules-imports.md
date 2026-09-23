@@ -782,7 +782,7 @@ Example package:
 ```text
 math/
 └── src/
-    ├── lib.vut
+    ├── mod.vut
     └── vector.vut
 ```
 

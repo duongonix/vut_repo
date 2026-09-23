@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use vut_diagnostics::{Diagnostic, DiagnosticSink, codes};
 use vut_resolver::{
     DiscoverError, ModuleInput, Resolver, SymbolKind, load_source_file, load_source_root,
+    load_source_root_with_overlays,
 };
 use vut_source::{SourceError, SourceId};
 use vut_types::{Analyzer, Type};
 
 use super::permissions::restore_executable_permissions;
-use super::{BuildMode, CheckedProgram, CompileError, CompilerSession};
+use super::{CheckedProgram, CompileError, CompilerSession};
 
 /// Locates the official Vut standard library source root.
 ///
@@ -54,6 +55,35 @@ impl CompilerSession {
     #[must_use]
     pub fn config(&self) -> &super::CompilerConfig {
         &self.config
+    }
+
+    /// The MIR optimization level for the configured build. An explicit
+    /// `optimization` wins; otherwise Debug maps to the reference path (`-O0`)
+    /// and Release maps to `-O2` (`vut build --release`).
+    #[must_use]
+    fn optimization_level(&self) -> vut_mir::OptimizationLevel {
+        self.config
+            .optimization
+            .unwrap_or(match self.config.build_mode {
+                super::BuildMode::Debug => vut_mir::OptimizationLevel::O0,
+                super::BuildMode::Release => vut_mir::OptimizationLevel::O2,
+            })
+    }
+
+    /// Verifies the compiler and the runtime the program will link against agree
+    /// on the ABI revision.
+    ///
+    /// The vendored-constant check is a compile-time sanity check; the installed
+    /// distribution's `manifest.json:abi_version` describes the actual runtime
+    /// archive. A mismatch fails early with a clear diagnostic instead of
+    /// linking an incompatible runtime.
+    fn check_runtime_abi() -> Result<(), CompileError> {
+        vut_codegen::verify_runtime_abi(vut_runtime::abi::VERSION)
+            .map_err(CompileError::Codegen)?;
+        if let Some(error) = super::runtime_abi_mismatch(vut_paths::installed_abi_version()) {
+            return Err(error);
+        }
+        Ok(())
     }
     #[must_use]
     pub fn sources(&self) -> &vut_source::SourceManager {
@@ -194,12 +224,9 @@ impl CompilerSession {
         let mut resolution = Resolver::new(modules.to_vec()).resolve();
         resolution.diagnostics.sort_deterministically();
         let hir = vut_hir::lower(&resolution);
-        let mut semantics = Analyzer::new(&resolution).analyze();
-        let mut mir = vut_mir::lower(
-            &hir,
-            &semantics,
-            vut_codegen::pointer_bytes_for_target(&self.config.target),
-        );
+        let pointer_bytes = vut_codegen::pointer_bytes_for_target(&self.config.target);
+        let mut semantics = Analyzer::for_target(&resolution, pointer_bytes).analyze();
+        let mut mir = vut_mir::lower(&hir, &semantics, pointer_bytes);
         semantics
             .diagnostics
             .extend(std::mem::take(&mut mir.diagnostics));
@@ -231,8 +258,7 @@ impl CompilerSession {
         output: &Path,
     ) -> Result<(), CompileError> {
         use vut_linker::NativeLinker;
-        vut_codegen::verify_runtime_abi(vut_runtime::abi::VERSION)
-            .map_err(CompileError::Codegen)?;
+        Self::check_runtime_abi()?;
         let mut checked = self
             .check_source_file(source)
             .map_err(CompileError::Discover)?;
@@ -255,12 +281,25 @@ impl CompilerSession {
         &mut self,
         roots: &[(PathBuf, Vec<String>)],
     ) -> Result<CheckedProgram, DiscoverError> {
+        self.check_source_roots_with_overlays(roots, &BTreeMap::new())
+    }
+
+    /// Runs the canonical frontend over project/dependency roots with editor overlays.
+    /// Path-backed source IDs remain stable for the lifetime of this session.
+    ///
+    /// # Errors
+    /// Returns source discovery errors for any root.
+    pub fn check_source_roots_with_overlays(
+        &mut self,
+        roots: &[(PathBuf, Vec<String>)],
+        overlays: &BTreeMap<PathBuf, String>,
+    ) -> Result<CheckedProgram, DiscoverError> {
         let mut modules = Vec::new();
         let mut discovery_diagnostics = DiagnosticSink::new();
         let mut local_namespaces = BTreeMap::new();
         let mut dependency_namespaces = BTreeSet::new();
         for (root, prefix) in roots {
-            let loaded = load_source_root(root, prefix, &mut self.sources)?;
+            let loaded = load_source_root_with_overlays(root, prefix, &mut self.sources, overlays)?;
             if let Some(namespace) = prefix.first() {
                 dependency_namespaces.insert(namespace.clone());
             } else {
@@ -314,8 +353,7 @@ impl CompilerSession {
     /// Returns discovery or native backend errors. Language diagnostics remain
     /// available in the returned frontend stages through `check_source_root`.
     pub fn emit_object(&mut self, root: &Path, prefix: &[String]) -> Result<Vec<u8>, CompileError> {
-        vut_codegen::verify_runtime_abi(vut_runtime::abi::VERSION)
-            .map_err(CompileError::Codegen)?;
+        Self::check_runtime_abi()?;
         let roots = [(root.to_owned(), prefix.to_vec())];
         let cache = vut_incremental::ArtifactCache::new(
             self.config
@@ -330,8 +368,8 @@ impl CompilerSession {
         let mut checked = self
             .check_source_root(root, prefix)
             .map_err(CompileError::Discover)?;
-        if self.config.build_mode == BuildMode::Release {
-            vut_mir::optimize(&mut checked.mir);
+        if self.optimization_level().is_optimizing() {
+            vut_mir::optimize(&mut checked.mir, self.optimization_level());
         }
         let object = self.emit_checked_object(&checked)?;
         cache.put(&key, &object).map_err(CompileError::Cache)?;
@@ -361,8 +399,7 @@ impl CompilerSession {
         output: &Path,
     ) -> Result<(), CompileError> {
         use vut_linker::NativeLinker;
-        vut_codegen::verify_runtime_abi(vut_runtime::abi::VERSION)
-            .map_err(CompileError::Codegen)?;
+        Self::check_runtime_abi()?;
         let cache_root = self.config.output_dir.clone().unwrap_or_else(|| {
             output
                 .parent()
@@ -419,6 +456,7 @@ impl CompilerSession {
             static_libraries,
             system_libraries: self.config.system_libraries.clone(),
             frameworks: Vec::new(),
+            search_paths: self.config.library_search_paths.clone(),
             runtime: self.config.runtime_library.clone(),
             startup: self.config.startup_object.clone(),
             output: output.to_owned(),
@@ -459,14 +497,12 @@ impl CompilerSession {
         {
             return Err(CompileError::InvalidEntry);
         }
-        if self.config.build_mode == BuildMode::Release {
-            vut_mir::optimize(&mut checked.mir);
+        if self.optimization_level().is_optimizing() {
+            vut_mir::optimize(&mut checked.mir, self.optimization_level());
         }
-        vut_codegen::CraneliftBackend::with_optimization(
-            vut_codegen::Target {
-                triple: self.config.target.clone(),
-            },
-            self.config.build_mode == BuildMode::Release,
+        vut_codegen::CraneliftBackend::with_level(
+            self.config.codegen_target(),
+            self.optimization_level(),
         )
         .compile_executable_module_with_memory_check(
             &checked.mir,
@@ -482,11 +518,9 @@ impl CompilerSession {
         {
             return Err(self.language_error(checked));
         }
-        vut_codegen::CraneliftBackend::with_optimization(
-            vut_codegen::Target {
-                triple: self.config.target.clone(),
-            },
-            self.config.build_mode == BuildMode::Release,
+        vut_codegen::CraneliftBackend::with_level(
+            self.config.codegen_target(),
+            self.optimization_level(),
         )
         .compile_module(&checked.mir)
         .map_err(CompileError::Codegen)
@@ -503,7 +537,10 @@ impl CompilerSession {
             .field("compiler", env!("CARGO_PKG_VERSION"))
             .field("language", "vut-mvp-1")
             .field("target", &self.config.target)
+            .field("target-cpu", format!("{:?}", self.config.target_cpu))
+            .field("target-features", self.config.target_features.join(","))
             .field("mode", format!("{:?}", self.config.build_mode))
+            .field("optimization", format!("{:?}", self.optimization_level()))
             .field("runtime-abi", vut_runtime::abi::VERSION.to_le_bytes());
         if let Some(runtime_library) = &self.config.runtime_library {
             key = key.field(

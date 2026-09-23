@@ -156,6 +156,50 @@ pub unsafe extern "C" fn vut_rt_map_release_v1(map: *mut ManagedMap) {
     }
 }
 
+/// Returns a map whose storage is unique to the caller.
+///
+/// If the map is already uniquely referenced it is returned unchanged (the fast
+/// path). Otherwise the entries are copied with every managed value retained,
+/// one reference to the shared original is released, and the copy is returned.
+///
+/// # Safety
+/// `map` must be null or a live managed-map handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vut_rt_map_make_unique_v1(map: *mut ManagedMap) -> *mut ManagedMap {
+    if map.is_null() {
+        return map;
+    }
+    let source = unsafe { &*map };
+    if source.references.load(Ordering::Acquire) == 1 {
+        return map;
+    }
+    let copy = ManagedMap::allocate(
+        source.key_size,
+        source.key_align,
+        source.value_size,
+        source.value_align,
+        source.key_kind,
+        source
+            .value_retain
+            .map_or(std::ptr::null(), |retain| retain as *const ()),
+        source
+            .value_release
+            .map_or(std::ptr::null(), |release| release as *const ()),
+        source.entries.len(),
+    );
+    if copy.is_null() {
+        return map;
+    }
+    for (key, value) in &source.entries {
+        unsafe { (*copy).retain_value(value.as_ptr()) };
+        unsafe { (*copy).entries.insert(key.clone(), value.clone()) };
+    }
+    // The caller's binding is replaced by the copy, so the shared original
+    // loses exactly one reference.
+    unsafe { vut_rt_map_release_v1(map) };
+    copy
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `map` must be null or a live managed-map handle.
@@ -218,6 +262,19 @@ pub unsafe extern "C" fn vut_rt_map_get_v1(
     unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), out, map_ref.value_size) };
     unsafe { map_ref.retain_value(out) };
     1
+}
+
+#[unsafe(no_mangle)]
+/// Strict map lookup used by indexing syntax. Writes the mapped value or traps
+/// through Vut's canonical panic path when the key is absent.
+///
+/// # Safety
+/// `map` must be live, `key` readable for key size, and `out` writable for value size.
+pub unsafe extern "C" fn vut_rt_map_at_v1(map: *const ManagedMap, key: *const u8, out: *mut u8) {
+    if unsafe { vut_rt_map_get_v1(map, key, out) } == 0 {
+        let message = "map index: key not found";
+        unsafe { super::vut_rt_panic_v1(message.as_ptr(), message.len()) };
+    }
 }
 
 #[unsafe(no_mangle)]

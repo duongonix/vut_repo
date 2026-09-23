@@ -17,11 +17,11 @@ MVP key types:
 Managed values and nested maps are valid type-system shapes:
 
 ```vut
-map(str, map(str, i32))
-list(map(str, User))
-result(map(str, User), Error)
+map[str, map[str, i32]]
+list[map[str, User]]
+result[map[str, User], Error]
 ```
 
-`map(K,V)` is managed and `needs_drop = true`. Maps inside `data` fields participate in aggregate ownership metadata.
+`map[K,V]` is managed and `needs_drop = true`. Maps inside `data` fields participate in aggregate ownership metadata.
 
-FFI v1 does not treat `map(K,V)` as C-safe directly. Extern parameters or returns containing map must be rejected unless an explicit C-compatible wrapper is introduced.
+FFI v1 does not treat `map[K,V]` as C-safe directly. Extern parameters or returns containing map must be rejected unless an explicit C-compatible wrapper is introduced.

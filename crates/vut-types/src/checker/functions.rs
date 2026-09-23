@@ -10,6 +10,23 @@ impl Analyzer<'_> {
         for (name, symbol) in &module.symbols {
             root.insert(name.clone(), self.symbol_type(*symbol));
         }
+        // Module-level bindings are declarations. The resolver pre-declares their
+        // names with an unknown type, so infer the real type first (so functions
+        // and later items see it) and skip the declaration in the item pass.
+        self.module_constants.clear();
+        for item in &module.file.items {
+            if let Item::Statement(Stmt::Binding {
+                target: Expr::Name(name),
+                annotation,
+                value,
+                ..
+            }) = item
+            {
+                self.module_constants
+                    .insert(name.text.clone(), value.clone());
+                self.module_binding(module, name, annotation.as_ref(), value, &mut root);
+            }
+        }
         for item in &module.file.items {
             match item {
                 Item::Function(value) => self.function(
@@ -44,6 +61,11 @@ impl Analyzer<'_> {
                         root.clone(),
                     );
                 }
+                // Module-level name bindings were declared in the pass above.
+                Item::Statement(Stmt::Binding {
+                    target: Expr::Name(_),
+                    ..
+                }) => {}
                 Item::Statement(stmt) => {
                     let mut context = Context::new(root.clone());
                     self.statement(module, stmt, &mut context, None);
@@ -74,6 +96,37 @@ impl Analyzer<'_> {
                 _ => {}
             }
         }
+        self.module_constants.clear();
+    }
+    /// Checks a module-level `name = value` declaration and records its type so
+    /// later items resolve the name to the real type instead of the resolver's
+    /// unknown placeholder.
+    fn module_binding(
+        &mut self,
+        module: &Module,
+        name: &vut_ast::Name,
+        annotation: Option<&TypeExpr>,
+        value: &Expr,
+        root: &mut HashMap<String, TypeId>,
+    ) {
+        let expected = annotation.map(|ty| self.resolve_type(module, ty));
+        let mut context = Context::new(root.clone());
+        if let Some(scope) = context.scopes.last_mut() {
+            scope.remove(&name.text);
+        }
+        let actual = self.expr(module, value, &mut context, expected);
+        if let Some(expected) = expected {
+            self.compatible(
+                actual,
+                expected,
+                value.span(),
+                codes::E1003,
+                "assignment type mismatch",
+            );
+        }
+        let ty = expected.unwrap_or(actual);
+        self.expression_types.insert(name.span, ty);
+        root.insert(name.text.clone(), ty);
     }
     #[expect(
         clippy::too_many_arguments,
@@ -82,7 +135,7 @@ impl Analyzer<'_> {
     pub(super) fn function(
         &mut self,
         module: &Module,
-        _symbol: Option<SymbolId>,
+        symbol: Option<SymbolId>,
         receiver: Option<TypeId>,
         is_async: bool,
         parameters: &[vut_ast::Parameter],
@@ -90,9 +143,28 @@ impl Analyzer<'_> {
         body: &Block,
         root: HashMap<String, TypeId>,
     ) {
+        // Defaults are constant expressions evaluated at the call site, so they
+        // are checked against the module scope only: a default cannot reference
+        // other parameters or locals.
+        let mut defaults_context = Context::new(root.clone());
+        for parameter in parameters {
+            let Some(default) = &parameter.default else {
+                continue;
+            };
+            let expected = self.resolve_type(module, &parameter.ty);
+            let actual = self.expr(module, default, &mut defaults_context, Some(expected));
+            self.compatible(
+                actual,
+                expected,
+                default.span(),
+                codes::E1003,
+                "parameter default type mismatch",
+            );
+        }
         let mut context = Context::new(root);
         context.function = true;
         context.in_async = is_async;
+        context.current_function = symbol;
         if let Some(receiver) = receiver {
             context
                 .scopes
@@ -188,6 +260,7 @@ impl Analyzer<'_> {
     }
     #[expect(
         clippy::too_many_arguments,
+        clippy::too_many_lines,
         reason = "lambda checking threads module, body, async flag, span, context, and expectation"
     )]
     pub(super) fn lambda(
@@ -243,8 +316,10 @@ impl Analyzer<'_> {
         let saved_function = context.function;
         let saved_return = context.return_type;
         let saved_async = context.in_async;
+        let saved_current = context.current_function;
         context.function = true;
         context.in_async = is_async;
+        context.current_function = self.resolution.lambda_symbols.get(&span).copied();
         let result = match body {
             LambdaBody::Expression(value) => self.expr(module, value, context, expected_result),
             LambdaBody::Block(block) => {
@@ -262,6 +337,30 @@ impl Analyzer<'_> {
         context.function = saved_function;
         context.return_type = saved_return;
         context.in_async = saved_async;
+        context.current_function = saved_current;
+        // Record capture types for the closure, resolved from the enclosing
+        // scopes. The lambda's own scope is on top and must be excluded.
+        if let Some(lambda) = self
+            .resolution
+            .lambdas
+            .iter()
+            .find(|lambda| lambda.span == span)
+            .cloned()
+        {
+            let enclosing = context.scopes.len().saturating_sub(1);
+            let mut captures = Vec::new();
+            for capture in &lambda.captures {
+                let ty = context.scopes[..enclosing]
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(&capture.name).copied())
+                    .unwrap_or_else(|| self.intern(Type::Error));
+                captures.push((capture.name.clone(), ty));
+            }
+            if !captures.is_empty() {
+                self.closure_captures.insert(span, captures);
+            }
+        }
         context.scopes.pop();
         let Some(symbol) = self.resolution.lambda_symbols.get(&span).copied() else {
             return self.intern(Type::Error);
@@ -378,6 +477,15 @@ impl Analyzer<'_> {
                 } else if let Expr::Member { object, member, .. } = target {
                     let owner = self.expr(module, object, context, None);
                     self.field(module.id, owner, member, Some(actual));
+                } else if let Expr::Subscript { .. } = target {
+                    let element = self.expr(module, target, context, Some(actual));
+                    self.compatible(
+                        actual,
+                        element,
+                        value.span(),
+                        codes::E1003,
+                        "indexed assignment type mismatch",
+                    );
                 }
                 self.intern(Type::Void)
             }

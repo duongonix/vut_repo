@@ -42,7 +42,10 @@ impl Parser<'_> {
         if self.take(TokenKind::Equal).is_some() {
             let value = self.expression_or_block();
             let span = self.span_from(target.span().start(), value.span().end());
-            if !matches!(target, Expr::Name(_) | Expr::Member { .. }) {
+            if !matches!(
+                target,
+                Expr::Name(_) | Expr::Member { .. } | Expr::Subscript { .. }
+            ) {
                 self.error(codes::E0101, target.span(), "invalid assignment target");
             }
             // An indented block already consumed its terminating dedent.

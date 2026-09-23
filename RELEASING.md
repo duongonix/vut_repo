@@ -1,7 +1,13 @@
 # Releasing Vut
 
-This procedure applies to the private `vut_repo` (source of truth). Artifacts
-are published to the public `duongonix/vut` repository.
+Vut uses two repositories:
+
+- **`duongonix/vut_repo`** (this repository) — source of truth: compiler,
+  runtime, stdlib, tests, specs and GitHub Actions. All builds run here from
+  source.
+- **`duongonix/vut`** — public distribution repository: README, LICENSE,
+  installers, `releases.json`, end-user `docs/`, `benchmarks/`, `examples/`, and
+  GitHub Releases. It never receives compiler/runtime source or `specs/`.
 
 ## One-time setup
 
@@ -9,6 +15,9 @@ are published to the public `duongonix/vut` repository.
    **only** `duongonix/vut`.
 2. Add it to `vut_repo` as the secret `VUT_RELEASE_TOKEN`.
 3. Enable release immutability in `duongonix/vut`.
+4. Ensure GitHub artifact attestations are enabled for `vut_repo`
+   (`actions/attest-build-provenance` needs `id-token: write` and
+   `attestations: write`, granted by the workflow).
 
 ## Prepare
 
@@ -29,16 +38,34 @@ are published to the public `duongonix/vut` repository.
 1. Commit, then tag `vX.Y.Z` matching the root version and push the tag.
 2. The `Release` workflow:
    * validates `tag == v<root version>`;
-   * builds the six Tier-1 distributions;
-   * assembles and verifies each artifact with `vut-dist`;
-   * publishes one release with all archives and `SHA256SUMS` to
-     `duongonix/vut`.
-3. If the workflow fails before publishing, fix and push a new commit; the
-   workflow can be re-run with `workflow_dispatch` for the tag.
+   * builds the eight supported targets from source;
+   * assembles each artifact with `vut-dist assemble` (manifest, `version.json`,
+     LICENSE, notices, runtime, stdlib, startup object, archive, checksum);
+   * merges the per-target manifests into `releases.json` with
+     `vut-dist release-manifest`;
+   * attests each artifact's build provenance and uploads the bundles;
+   * publishes one release (archives, `*.manifest.json`, `releases.json`,
+     `SHA256SUMS`, `*.sigstore.json`) to `duongonix/vut`;
+   * syncs the public distribution files (`install.sh`, `install.ps1`,
+     `releases.json`, README, LICENSE, CHANGELOG, SECURITY, CONTRIBUTING, `docs/`,
+     `benchmarks/`, `examples/`) to `duongonix/vut@main`;
+   * verifies a clean install of the published artifact on every supported OS.
+3. If the workflow fails before publishing, fix and push a new commit; re-run
+   with `workflow_dispatch` for the tag.
+
+## Supported targets
+
+```text
+x86_64-pc-windows-msvc        aarch64-pc-windows-msvc
+x86_64-unknown-linux-gnu      aarch64-unknown-linux-gnu
+x86_64-unknown-linux-musl     aarch64-unknown-linux-musl
+x86_64-apple-darwin           aarch64-apple-darwin
+```
 
 ## After release
 
-1. Verify the release assets on `duongonix/vut` (archives + `SHA256SUMS`).
+1. Verify the release assets on `duongonix/vut` (archives, `releases.json`,
+   `SHA256SUMS`, attestation bundles).
 2. Smoke-test the installer on each OS:
 
    ```sh
@@ -46,6 +73,14 @@ are published to the public `duongonix/vut` repository.
    ```
 
 3. Announce. Do not modify a published release; cut a new version instead.
+
+## Verifying provenance
+
+```sh
+gh attestation verify <archive> \
+  --bundle <archive>.sigstore.json \
+  --signer-workflow duongonix/vut_repo/.github/workflows/release.yml
+```
 
 ## Rollback
 

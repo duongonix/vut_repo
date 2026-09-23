@@ -18,6 +18,10 @@ use super::{Function, LayoutTable, Program};
 pub(super) struct Instances {
     pub functions: Vec<Function>,
     pub call_sites: HashMap<vut_source::Span, SymbolId>,
+    /// Maps each concrete specialization symbol back to its generic template.
+    /// Call sites target instances, but parameter names and defaults are keyed by
+    /// the template.
+    pub templates: HashMap<SymbolId, SymbolId>,
     pub diagnostics: vut_diagnostics::DiagnosticSink,
 }
 
@@ -116,11 +120,16 @@ pub(super) fn lower_instances(
             resolved_references: hir.resolved_references.clone(),
             lambda_symbols: hir.lambda_symbols.clone(),
         };
+        let instance_templates: HashMap<SymbolId, SymbolId> = symbols
+            .iter()
+            .map(|((template, _), instance)| (*instance, *template))
+            .collect();
         let program = super::lower::lower_program(
             &instance_hir,
             &instance_semantics,
             pointer_size,
             &call_sites,
+            &instance_templates,
         );
         let mut lowered = program.functions;
         functions.append(&mut lowered);
@@ -133,6 +142,10 @@ pub(super) fn lower_instances(
     Instances {
         functions,
         call_sites: base_call_sites,
+        templates: symbols
+            .iter()
+            .map(|((template, _), instance)| (*instance, *template))
+            .collect(),
         diagnostics,
     }
 }
@@ -172,7 +185,20 @@ fn instance_call_sites(
     next_symbol: &mut usize,
     substitution: &HashMap<TypeId, TypeId>,
 ) -> HashMap<vut_source::Span, SymbolId> {
-    let mut call_sites = semantics.call_targets.clone();
+    // Constructors must use the specialization's concrete data/enum symbol.
+    // Keeping the template target here would override substitute_semantics'
+    // retargeting and emit values against a zero-sized type-parameter layout.
+    let template_instances = concrete_instances(semantics, substitution);
+    let mut call_sites: HashMap<_, _> = semantics
+        .call_targets
+        .iter()
+        .map(|(span, symbol)| {
+            (
+                *span,
+                template_instances.get(symbol).copied().unwrap_or(*symbol),
+            )
+        })
+        .collect();
     for call in &semantics.generic_function_calls {
         let concrete: Vec<TypeId> = call
             .arguments
@@ -387,11 +413,8 @@ pub(super) fn substitute_semantics(
     resolve_bound_calls(base, substitution, &mut call_targets);
     SemanticResult {
         types: base.types.clone(),
-        expression_types: base
-            .expression_types
-            .iter()
-            .map(|(span, ty)| (*span, map(*ty)))
-            .collect(),
+        type_aliases: remap_types(&base.type_aliases, substitution),
+        expression_types: remap_types(&base.expression_types, substitution),
         diagnostics: vut_diagnostics::DiagnosticSink::new(),
         interface_shapes: base.interface_shapes.clone(),
         interface_satisfaction: base.interface_satisfaction.clone(),
@@ -412,7 +435,11 @@ pub(super) fn substitute_semantics(
             })
             .collect(),
         data_field_defaults: base.data_field_defaults.clone(),
+        parameter_defaults: base.parameter_defaults.clone(),
+        subscripts: base.subscripts.clone(),
+        closure_captures: base.closure_captures.clone(),
         opaque_data: base.opaque_data.clone(),
+        constant_references: base.constant_references.clone(),
         function_signatures: base
             .function_signatures
             .iter()
@@ -479,4 +506,14 @@ impl Program {
         self.functions.extend(instances.functions);
         self.diagnostics.extend(instances.diagnostics);
     }
+}
+
+fn remap_types<K: Copy + Eq + std::hash::Hash>(
+    values: &HashMap<K, TypeId>,
+    substitution: &HashMap<TypeId, TypeId>,
+) -> HashMap<K, TypeId> {
+    values
+        .iter()
+        .map(|(key, ty)| (*key, substitution.get(ty).copied().unwrap_or(*ty)))
+        .collect()
 }

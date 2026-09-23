@@ -17,9 +17,16 @@ export const docGroups = [
       ['Types', 'language/types'],
       ['Operators', 'language/operators'],
       ['Functions', 'language/functions'],
+      ['Data and methods', 'language/data'],
+      ['Enums and patterns', 'language/enums'],
+      ['Generics', 'language/generics'],
+      ['Functions as values', 'language/closures'],
       ['Control flow', 'language/control-flow'],
       ['Loops', 'language/loops'],
       ['Collections', 'language/collections'],
+      ['Lists and arrays', 'language/lists-arrays'],
+      ['Maps', 'language/maps'],
+      ['Strings and bytes', 'language/strings-bytes'],
       ['Modules', 'language/modules'],
       ['Optional values', 'language/optional'],
       ['Result', 'language/result'],
@@ -32,6 +39,10 @@ export const docGroups = [
     pages: [
       ['Concurrency', 'advanced/concurrency'],
       ['Vutcon', 'advanced/vutcon'],
+      ['Channels', 'advanced/channels'],
+      ['Receiver functions', 'advanced/receivers'],
+      ['Memory and ownership', 'advanced/memory'],
+      ['Attributes', 'advanced/attributes'],
       ['Vutcom', 'advanced/vutcom'],
       ['FFI', 'advanced/ffi'],
       ['Native libraries', 'advanced/native-libraries']
@@ -52,10 +63,15 @@ export const docGroups = [
     title: 'Standard library',
     pages: [
       ['Standard library', 'stdlib/overview'],
+      ['Input and output', 'stdlib/io'],
       ['Filesystem', 'stdlib/fs'],
       ['Paths', 'stdlib/path'],
       ['Operating system', 'stdlib/os'],
-      ['Time', 'stdlib/time']
+      ['Time', 'stdlib/time'],
+      ['Environment', 'stdlib/env'],
+      ['Processes', 'stdlib/process'],
+      ['HTTP', 'stdlib/http'],
+      ['JSON', 'stdlib/json']
     ]
   },
   {
@@ -74,7 +90,8 @@ export const docGroups = [
       ['Keywords', 'reference/keywords'],
       ['Operator reference', 'reference/operators'],
       ['Built-in types', 'reference/builtin-types'],
-      ['Built-in functions', 'reference/builtin-functions']
+      ['Built-in functions', 'reference/builtin-functions'],
+      ['Source compatibility', 'reference/source-compatibility']
     ]
   }
 ];

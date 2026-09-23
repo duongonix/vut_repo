@@ -44,6 +44,7 @@ pub const BUILTIN_TYPE_NAMES: &[&str] = &[
     "ptr",
     "Utf8Error",
     "vutcon",
+    "channel",
     "resource",
     "future",
 ];
@@ -96,8 +97,8 @@ pub fn builtin_methods(kind: BuiltinKind) -> &'static [(&'static str, &'static s
             ("last", "last() -> u8"),
             ("slice", "slice(start: int, end: int) -> bytes"),
             ("clear", "clear() -> void"),
-            ("to_list", "to_list() -> list(u8)"),
-            ("to_str", "to_str() -> result(str, Utf8Error)"),
+            ("to_list", "to_list() -> list[u8]"),
+            ("to_str", "to_str() -> result[str, Utf8Error]"),
         ],
         BuiltinKind::List => &[
             ("len", "len() -> int"),
@@ -110,9 +111,9 @@ pub fn builtin_methods(kind: BuiltinKind) -> &'static [(&'static str, &'static s
             ("insert", "insert(index: int, value: T) -> void"),
             ("remove", "remove(index: int) -> T"),
             ("clear", "clear() -> void"),
-            ("slice", "slice(start: int, end: int) -> list(T)"),
+            ("slice", "slice(start: int, end: int) -> list[T]"),
             ("contains", "contains(value: T) -> bool"),
-            ("to_bytes", "to_bytes() -> bytes  # list(u8) only"),
+            ("to_bytes", "to_bytes() -> bytes  # list[u8] only"),
         ],
         BuiltinKind::Map => &[
             ("len", "len() -> int"),

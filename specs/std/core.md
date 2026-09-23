@@ -155,7 +155,7 @@ Use panic for unrecoverable programming/runtime failure.
 Expected failures should use:
 
 ```text
-result(T, E)
+result[T, E]
 ```
 
 ### Runtime bounds panic (implementation contract)

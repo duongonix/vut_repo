@@ -91,7 +91,7 @@ fn prepare_and_run(
         case.join("vpm.toml"),
         format!("[package]\nname = \"test_{index}\"\nversion = \"0.1.0\"\n\n[dependencies]\n"),
     )?;
-    std::fs::write(case.join("vpm.lock"), "lock-version = 1\npackage = []\n")?;
+    std::fs::write(case.join("vpm.lock"), "lock-version = 2\n")?;
     let mode = if release {
         BuildMode::Release
     } else {

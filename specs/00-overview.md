@@ -25,8 +25,8 @@ fn User.greet():
   print("Hello " + self.name)
 
 user = User(
-  name = "Ha",
-  age = 20
+  name: "Ha",
+  age: 20
 )
 
 user.greet()
@@ -393,7 +393,7 @@ Vut avoids square-bracket collection syntax.
 List:
 
 ```vut
-numbers = @(1, 2, 3)
+numbers = @[1, 2, 3]
 ```
 
 Named structured data:
@@ -403,7 +403,7 @@ data Config:
   host: str
   port: int
 
-config = Config(host = "localhost", port = 8080)
+config = Config(host: "localhost", port: 8080)
 ```
 
 Vut does not have anonymous records or tuples.
@@ -520,9 +520,9 @@ Example:
 ```text
 nam/abc/
 └── math/
-    ├── v0.1.0/
-    ├── v0.1.1/
-    └── v1.0.0/
+    ├── 0.1.0/
+    ├── 0.1.1/
+    └── 1.0.0/
 ```
 
 Install:
@@ -539,19 +539,19 @@ Each version directory contains a complete package.
 
 Package versions use semantic versioning.
 
-Remote version directories use:
+Version directories use:
 
 ```text
-v<major>.<minor>.<patch>
+<major>.<minor>.<patch>
 ```
 
 Examples:
 
 ```text
-v0.1.0
-v0.1.1
-v1.0.0
-v2.3.4
+0.1.0
+0.1.1
+1.0.0
+2.3.4
 ```
 
 A version can be selected explicitly:

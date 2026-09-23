@@ -13,6 +13,23 @@ The standard-library architecture assigns OS integration to `os`, while file acc
 
 Platform-specific capabilities must be exposed honestly. A cross-platform surface must not silently equate Windows and Unix semantics.
 
-## Reference status
+## Platform queries
 
-Release-verified signatures and examples for this module are pending. This page does not fabricate environment queries or promise APIs that have not been confirmed against a distributed standard library.
+```vut
+import os
+
+fn main():
+  out(os.name(), os.arch(), os.family())
+  out(os.cpu_count())
+  match os.current_dir():
+    ok(directory): out(directory)
+    err(error): out(error.message)
+```
+
+`name()`, `arch()`, and `family()` return strings. `cpu_count()` returns `usize`. Do not equate a CPU count with a guarantee that every task runs simultaneously.
+
+## Paths and working directory
+
+`home_dir()`, `temp_dir()`, `current_dir()`, and `current_exe()` return `result[str, OsError]`. `set_current_dir(path: str)` returns `result[unit, OsError]`.
+
+Changing the working directory affects relative-path resolution for the process; prefer explicit paths when independent components run concurrently. Failure to query a directory is an error, not a fabricated empty path.

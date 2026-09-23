@@ -1,9 +1,16 @@
-//! Vutcon task storage: result buffer, completion flag, and executor slot.
+//! Vutcon task storage: result buffer, completion flag, and scheduler identity.
 //!
 //! A Vutcon is a poll task (see [`crate::async_handle`]) that additionally owns
-//! the storage for its result and the executor slot it was scheduled into. This
-//! module owns that task-specific state; the poll/wake representation itself
-//! lives in `async_handle`.
+//! the storage for its result and the scheduler identity it was scheduled with.
+//! This module owns that task-specific state; the poll/wake representation
+//! itself lives in `async_handle`.
+//!
+//! The scheduler uses two per-task guards:
+//!
+//! * `queued` — the task has an entry in the scheduler ready queue, so a wake
+//!   must not enqueue a second copy.
+//! * `running` — a worker is currently polling the task, so no other worker may
+//!   poll it and a concurrent drop must defer its destructor.
 use std::alloc::{Layout, alloc, dealloc};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -12,14 +19,21 @@ use crate::async_handle::{
     ASYNC_CANCELLED, ASYNC_PENDING, ASYNC_READY, AsyncDropFn, AsyncHandle, AsyncPollFn, new_handle,
 };
 
+/// Sentinel for "not scheduled yet".
+const NO_ID: usize = usize::MAX;
+
 /// Result storage owned by a Vutcon task. Native operations have none.
 pub(crate) struct TaskStorage {
     buffer: *mut u8,
     size: usize,
     align: usize,
     pub(crate) completed: AtomicBool,
-    /// Executor slot, assigned when the task is scheduled.
-    index: AtomicUsize,
+    /// Global scheduler id, assigned when the task is scheduled.
+    pub(crate) id: AtomicUsize,
+    /// `true` while the task has an entry in the scheduler ready queue.
+    pub(crate) queued: AtomicBool,
+    /// `true` while a worker is polling the task.
+    pub(crate) running: AtomicBool,
 }
 
 fn result_layout(size: usize, align: usize) -> Layout {
@@ -54,7 +68,9 @@ pub unsafe extern "C" fn vut_rt_task_new_v1(
             size,
             align,
             completed: AtomicBool::new(false),
-            index: AtomicUsize::new(usize::MAX),
+            id: AtomicUsize::new(NO_ID),
+            queued: AtomicBool::new(false),
+            running: AtomicBool::new(false),
         }),
     )
 }
@@ -73,17 +89,18 @@ pub fn task_completed(handle: &AsyncHandle) -> bool {
         .is_some_and(|task| task.completed.load(Ordering::Acquire))
 }
 
-pub(crate) fn task_index(handle: *mut AsyncHandle) -> Option<usize> {
+/// The scheduler id of a task, or `None` before it is scheduled.
+pub(crate) fn task_id(handle: *mut AsyncHandle) -> Option<usize> {
     // SAFETY: the handle is live for the caller's duration.
     let task = unsafe { &*handle }.task()?;
-    let index = task.index.load(Ordering::Relaxed);
-    (index != usize::MAX).then_some(index)
+    let id = task.id.load(Ordering::Relaxed);
+    (id != NO_ID).then_some(id)
 }
 
-pub(crate) fn set_task_index(handle: *mut AsyncHandle, index: usize) {
+pub(crate) fn set_task_id(handle: *mut AsyncHandle, id: usize) {
     // SAFETY: the handle is live for the caller's duration.
     if let Some(task) = unsafe { &*handle }.task() {
-        task.index.store(index, Ordering::Relaxed);
+        task.id.store(id, Ordering::Relaxed);
     }
 }
 

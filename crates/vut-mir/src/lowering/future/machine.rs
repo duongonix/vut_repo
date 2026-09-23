@@ -21,6 +21,8 @@ struct AwaitSite {
     block: usize,
     index: usize,
     result: ValueId,
+    /// The presence flag produced by a channel `recv`; `None` for `await`.
+    present: Option<ValueId>,
     handle: ValueId,
     result_type: TypeId,
 }
@@ -69,19 +71,33 @@ fn plan(function: &Function, awaits: &[AwaitLive], spilled: bool) -> Option<Plan
     let mut sites = Vec::new();
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (index, instruction) in block.instructions.iter().enumerate() {
-            if let Instruction::AwaitFuture {
-                value,
-                handle,
-                result_type,
-            } = instruction
-            {
-                sites.push(AwaitSite {
+            match instruction {
+                Instruction::AwaitFuture {
+                    value,
+                    handle,
+                    result_type,
+                } => sites.push(AwaitSite {
                     block: block_index,
                     index,
                     result: *value,
+                    present: None,
                     handle: *handle,
                     result_type: *result_type,
-                });
+                }),
+                Instruction::AwaitChannelRecv {
+                    value,
+                    present,
+                    handle,
+                    result_type,
+                } => sites.push(AwaitSite {
+                    block: block_index,
+                    index,
+                    result: *value,
+                    present: Some(*present),
+                    handle: *handle,
+                    result_type: *result_type,
+                }),
+                _ => {}
             }
         }
     }
@@ -178,6 +194,7 @@ fn assemble(function: &Function, plan: &Plan, next: usize) -> Vec<BasicBlock> {
                 literal: 0,
             },
             Instruction::Binary {
+                operand_type: None,
                 value: not_started,
                 op: BinaryOp::NotEqual,
                 left: state,
@@ -209,13 +226,23 @@ fn push_await_blocks(
         let site = &plan.sites[k];
         let ready = ValueId(*values);
         *values += 1;
-        out[layout.poll(k).0] = Some(BasicBlock {
-            instructions: vec![Instruction::PollFuture {
+        let poll = match site.present {
+            Some(present) => Instruction::PollChannelRecv {
+                value: site.result,
+                present,
+                ready,
+                frame: plan.frame,
+                result_type: site.result_type,
+            },
+            None => Instruction::PollFuture {
                 value: Some(site.result),
                 ready,
                 frame: plan.frame,
                 result_type: site.result_type,
-            }],
+            },
+        };
+        out[layout.poll(k).0] = Some(BasicBlock {
+            instructions: vec![poll],
             terminator: Terminator::Branch {
                 condition: ready,
                 then_block: layout.cont(k),
@@ -256,6 +283,7 @@ fn push_dispatch_blocks(
                     literal: i64::try_from(j + 1).unwrap_or(i64::MAX),
                 },
                 Instruction::Binary {
+                    operand_type: None,
                     value: matches,
                     op: BinaryOp::Equal,
                     left: state,

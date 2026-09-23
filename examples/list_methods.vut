@@ -1,5 +1,10 @@
 fn main():
-  items = @(1, 2, 3)
+  items = @[1, 2, 3]
+  b = items
+  b.push(43)
+
+  out(items)
+  out(b)
 
   items.reserve(8)
   items.push(4)

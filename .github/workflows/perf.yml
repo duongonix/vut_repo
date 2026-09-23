@@ -1,0 +1,41 @@
+name: Performance
+
+# Wall-clock performance runs nightly / on demand only. They are intentionally
+# NOT triggered on pull requests: shared runners are too noisy to fail a PR.
+# Deterministic structural metrics (allocation/RC/bounds/frame/instruction
+# counts) are the PR-appropriate signal and are covered by the unit and
+# differential test suites in `ci.yml`.
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    name: ${{ matrix.os }} / benchmark corpus
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build runtime
+        run: cargo build -p vut-runtime
+      - name: Benchmark harness self-test
+        run: cargo test -p vut-bench
+      - name: Run the corpus at O0-O3
+        run: cargo run -p vut-bench -- run --levels 0,1,2,3 --iterations 20 --warmup 3 --out target/vut-bench/report.json
+      - name: Compare against the committed baseline
+        # Informational: prints per-workload deltas; does not fail the job.
+        run: cargo run -p vut-bench -- compare benchmarks/baseline.json target/vut-bench/report.json --threshold 15
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vut-bench-${{ matrix.os }}
+          path: target/vut-bench/report.json

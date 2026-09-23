@@ -46,7 +46,7 @@ Không silently cho raw FFI call trong safe code.
 Raw layer:
 
 ```vut
-extern "C" fn _engine_create() -> ptr(NativeEngine)
+extern "C" fn _engine_create() -> ptr[NativeEngine]
 ```
 
 Public wrapper:
@@ -56,7 +56,7 @@ fn create_engine() -> Engine:
   unsafe:
     handle = _engine_create()
 
-  Engine(_handle = handle)
+  Engine(_handle: handle)
 ```
 
 User bình thường không cần làm việc trực tiếp với raw pointer.
@@ -194,7 +194,7 @@ Invalid:
 ```vut
 @repr(C)
 data Bad:
-  items: list(i32)
+  items: list[i32]
 ```
 
 must report exact incompatible field.
@@ -205,7 +205,7 @@ Example:
 error: field `items` is not FFI-safe
 
 type:
-  list(i32)
+  list[i32]
 ```
 
 ---
@@ -237,14 +237,14 @@ must fail because opaque data has no visible layout.
 Compiler must distinguish:
 
 ```text
-ptr(Window)
-ptr(Device)
-ptr(Engine)
+ptr[Window]
+ptr[Device]
+ptr[Engine]
 ```
 
 No implicit conversion between unrelated pointer pointee types.
 
-Explicit `ptr(void)` conversion may be allowed only under well-defined rules.
+Explicit `ptr[void]` conversion may be allowed only under well-defined rules.
 
 Do not add unrestricted pointer casts by default.
 
@@ -255,7 +255,7 @@ Do not add unrestricted pointer casts by default.
 If native function may return null:
 
 ```vut
-extern "C" fn create() -> ptr(NativeObject)
+extern "C" fn create() -> ptr[NativeObject]
 ```
 
 FFI layer cannot pretend result is guaranteed valid.
@@ -479,10 +479,10 @@ Vut raw bindings:
 ```vut
 opaque data Counter
 
-extern "C" fn counter_create() -> ptr(Counter)
-extern "C" fn counter_destroy(counter: ptr(Counter))
-extern "C" fn counter_inc(counter: ptr(Counter))
-extern "C" fn counter_get(counter: ptr(Counter)) -> i32
+extern "C" fn counter_create() -> ptr[Counter]
+extern "C" fn counter_destroy(counter: ptr[Counter])
+extern "C" fn counter_inc(counter: ptr[Counter])
+extern "C" fn counter_get(counter: ptr[Counter]) -> i32
 ```
 
 Build end-to-end.
@@ -599,7 +599,7 @@ FFI implementation must not break:
 normal fn
 data
 methods
-list literal @(...)
+list literal @[...]
 attributes
 module resolution
 native package download
@@ -609,7 +609,7 @@ existing linker flow
 Specially ensure:
 
 ```vut
-@(1, 2, 3)
+@[1, 2, 3]
 ```
 
 continues to parse as list literal.
@@ -696,7 +696,7 @@ and:
 ```text
 @repr(C)
 opaque data
-ptr(T)
+ptr[T]
 @link_name
 callbacks
 unsafe
@@ -737,7 +737,7 @@ The following are intentionally not implemented in FFI v1 and must not be
 silently substituted:
 
 ```text
-by-value repr(C) struct arguments/returns   (E8004; pass ptr(T))
+by-value repr(C) struct arguments/returns   (E8004; pass ptr[T])
 raw pointer dereference                     (no source syntax yet)
 raw pointer arithmetic                      (no source syntax yet)
 pointer-from-integer construction           (no cast syntax yet)
@@ -757,4 +757,9 @@ E8004  invalid / non-FFI-safe type across the boundary
 E8005  unknown ABI
 E8006  invalid external declaration or attribute
 E8007  external function has a body
+E8013  capturing closure used as an FFI callback
+E8014  invalid @repr(C) field (managed handle / resource / non-FFI-safe)
 ```
+
+The normative Public Native ABI v1 and the Vut-internal Runtime Handle ABI are
+specified in `specs/ffi/06-native-abi-v1.md`.

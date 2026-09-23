@@ -239,7 +239,7 @@ execution units:
 
 ```text
 vut(<callable>)      spawn and schedule a Vutcon
-vutcon(T)             typed handle for the Vutcon's logical result
+vutcon[T]             typed handle for the Vutcon's logical result
 await handle          suspend until the Vutcon completes; yields T
 ```
 

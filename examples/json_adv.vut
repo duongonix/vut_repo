@@ -12,23 +12,23 @@ data User:
 
 # --- typed decode -----------------------------------------------------------
 
-fn read_str(value: Value, key: str) -> result(str, Error):
+fn read_str(value: Value, key: str) -> result[str, Error]:
   match value.get(key):
     ok(field): field.as_str()
     err(error): err(error)
 
-fn read_int(value: Value, key: str) -> result(int, Error):
+fn read_int(value: Value, key: str) -> result[int, Error]:
   match value.get(key):
     ok(field): field.as_int()
     err(error): err(error)
 
-fn build_user(name: str, value: Value) -> result(User, Error):
+fn build_user(name: str, value: Value) -> result[User, Error]:
   age_result = read_int(value, "age")
   match age_result:
-    ok(age): ok(User(name = name, age = age))
+    ok(age): ok(User(name: name, age: age))
     err(error): err(error)
 
-static fn User.from_json(value: Value) -> result(User, Error):
+static fn User.from_json(value: Value) -> result[User, Error]:
   name_result = read_str(value, "name")
   match name_result:
     ok(name): build_user(name, value)
@@ -37,7 +37,7 @@ static fn User.from_json(value: Value) -> result(User, Error):
 # --- typed encode -----------------------------------------------------------
 
 fn User.to_json() -> Value:
-  entries: map(str, Value) = map()
+  entries: map[str, Value] = ()
   entries.set("name", json.value_str(value = self.name))
   entries.set("age", json.value_int(value = self.age))
   json.value_object(value = entries)
@@ -65,7 +65,7 @@ fn inspect(source: str):
     err(error): out("parse error at $(error.line):$(error.column): $(error.message)")
 
 fn decode_user(source: str):
-  parsed: result(User, Error) = json.decode(source)
+  parsed: result[User, Error] = json.decode(source)
   match parsed:
     ok(user): out("decoded: $(user.name), $(user.age)")
     err(error): out("decode error: $(error.message)")
@@ -76,9 +76,9 @@ fn main():
   decode_user("{\"name\":\"Nam\",\"age\":20}")
   decode_user("{\"name\":\"Nam\"}")
 
-  user = User(name = "Linh", age = 30)
+  user = User(name: "Linh", age: 30)
   out("encoded: $(json.encode(user))")
 
-  pretty_user = User(name = "Mai", age = 25)
+  pretty_user = User(name: "Mai", age: 25)
   out("encoded pretty:")
   out(json.encode_pretty(pretty_user))

@@ -1,14 +1,13 @@
 //! Linker backend selection and platform diagnostics.
 //!
 //! A backend turns a [`LinkPlan`](crate::LinkPlan) into a native executable.
-//! During migration the default remains `rustc`; the standalone system/lld
-//! backends are selected with `VUT_LINKER`. Production release linking must not
-//! depend on `rustc` once M-LINK.6 completes.
+//! Selection is delegated to [`crate::resolver`], which is environment-driven and
+//! identical for Debug, Release, and installed Vut.
 pub mod rustc;
 pub mod system;
 
 use crate::error::LinkError;
-use crate::plan::LinkPlan;
+use crate::resolver::{self, ResolvedLinker};
 use crate::target::{Flavor, TargetProfile};
 
 /// Concrete linker backend family.
@@ -33,7 +32,7 @@ pub trait LinkerBackend {
     fn link(&self, plan: &LinkPlan) -> Result<(), LinkError>;
 }
 
-/// Linker program a backend uses for a target.
+/// Linker program name a backend uses for a target.
 #[must_use]
 pub fn driver_program(profile: &TargetProfile, kind: BackendKind) -> &'static str {
     match kind {
@@ -55,7 +54,8 @@ pub fn driver_program(profile: &TargetProfile, kind: BackendKind) -> &'static st
 pub fn toolchain_hint(profile: &TargetProfile) -> &'static str {
     match profile.flavor() {
         Flavor::Msvc => {
-            "install Visual Studio Build Tools with the C++ workload and the Windows SDK"
+            "install Visual Studio Build Tools with the C++ workload and the Windows SDK, \
+             or install a Vut distribution that bundles its linker"
         }
         Flavor::Darwin => "install the Xcode Command Line Tools with `xcode-select --install`",
         Flavor::Gnu | Flavor::Musl if !profile.is_windows() => {
@@ -65,83 +65,32 @@ pub fn toolchain_hint(profile: &TargetProfile) -> &'static str {
     }
 }
 
-/// Selects the backend for a target.
-///
-/// `VUT_LINKER` (`rustc`, `system`/`cc`/`cl`, `lld`) is a development override.
-/// The default is [`BackendKind::Rustc`] until M-LINK.6 flips production to the
-/// standalone backends.
+/// Selects the backend for a target by resolving the linker.
 ///
 /// # Errors
-/// Returns [`LinkError`] when the target triple cannot be parsed.
+/// Returns [`LinkError`] when the target is malformed or no linker can be found.
 pub fn select(target: &str) -> Result<Box<dyn LinkerBackend>, LinkError> {
     let profile = TargetProfile::parse(target)?;
-    let kind = requested_kind();
-    Ok(match kind {
-        BackendKind::Rustc => Box::new(rustc::RustcBackend),
+    let resolved = resolver::resolve(&profile)?;
+    Ok(backend_for(resolved, profile))
+}
+
+/// Builds the backend for an already-resolved linker.
+#[must_use]
+pub fn backend_for(resolved: ResolvedLinker, profile: TargetProfile) -> Box<dyn LinkerBackend> {
+    match resolved.kind {
+        BackendKind::Rustc => Box::new(rustc::RustcBackend::new(resolved)),
         BackendKind::System | BackendKind::Lld => {
-            Box::new(system::SystemBackend::new(kind, profile))
+            Box::new(system::SystemBackend::new(resolved, profile))
         }
-    })
-}
-
-/// Reads the `VUT_LINKER` development override.
-///
-/// Accepted values: `rustc`, `system`/`cc`/`cl`, `lld`/`lld-link`. When unset,
-/// [`default_kind`] applies.
-#[must_use]
-pub fn requested_kind() -> BackendKind {
-    match std::env::var("VUT_LINKER")
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "rustc" => BackendKind::Rustc,
-        "system" | "cc" | "cl" => BackendKind::System,
-        "lld" | "lld-link" => BackendKind::Lld,
-        _ => default_kind(),
     }
 }
 
-/// Default backend for unattended builds.
-///
-/// Release artifacts link with the platform toolchain and must **not** require
-/// `rustc`. Development builds keep the `rustc` fallback so `cargo test` runs
-/// without a platform SDK on `PATH`; `VUT_LINKER` overrides either choice.
-#[must_use]
-pub fn default_kind() -> BackendKind {
-    if cfg!(debug_assertions) {
-        BackendKind::Rustc
-    } else {
-        BackendKind::System
-    }
-}
+use crate::plan::LinkPlan;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn selection_parses_the_target_and_defaults_to_the_build_default() {
-        if std::env::var_os("VUT_LINKER").is_none() {
-            assert_eq!(requested_kind(), default_kind());
-        }
-        assert!(select("x86_64-unknown-linux-gnu").is_ok());
-    }
-
-    #[test]
-    fn release_builds_default_to_the_platform_linker() {
-        // `default_kind` must not require rustc in release artifacts.
-        if cfg!(debug_assertions) {
-            assert_eq!(default_kind(), BackendKind::Rustc);
-        } else {
-            assert_eq!(default_kind(), BackendKind::System);
-        }
-    }
-
-    #[test]
-    fn selection_rejects_malformed_targets() {
-        assert!(select("nonsense").is_err());
-    }
 
     #[test]
     fn driver_programs_follow_flavor_and_backend() {
@@ -164,5 +113,10 @@ mod tests {
         assert!(toolchain_hint(&msvc).contains("Windows SDK"));
         let darwin = TargetProfile::parse("aarch64-apple-darwin").unwrap();
         assert!(toolchain_hint(&darwin).contains("Xcode"));
+    }
+
+    #[test]
+    fn selection_rejects_malformed_targets() {
+        assert!(select("nonsense").is_err());
     }
 }

@@ -29,6 +29,8 @@ pub const UNEXPECTED_EOF: i32 = 10;
 pub const INVALID_DATA: i32 = 11;
 pub const BROKEN_PIPE: i32 = 12;
 pub const TIMED_OUT: i32 = 13;
+pub const INVALID_NAME: i32 = 14;
+pub const INVALID_VALUE: i32 = 15;
 pub const OTHER: i32 = 99;
 
 /// Builds an envelope from a status code and raw payload.

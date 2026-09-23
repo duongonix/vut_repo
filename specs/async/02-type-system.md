@@ -44,10 +44,10 @@ value = foo()
 creates an internal awaitable value. Conceptually:
 
 ```text
-foo() : internal future(int)
+foo() : internal future[int]
 ```
 
-where `future(T)` is a compiler-internal type, not writable in Vut source.
+where `future[T]` is a compiler-internal type, not writable in Vut source.
 
 Calling is distinct from computing:
 
@@ -75,7 +75,7 @@ awaitable values meaningful.
 Conceptually the compiler has an internal type constructor:
 
 ```text
-future(T)
+future[T]
 ```
 
 Properties:
@@ -89,7 +89,7 @@ no public operations other than `await`
 ```
 
 In this phase the compiler may track awaitable origin structurally (the call
-target is `async`) rather than materializing a distinct `future(T)` type.
+target is `async`) rather than materializing a distinct `future[T]` type.
 Either representation is internal and must not appear in source syntax.
 
 ---
@@ -99,7 +99,7 @@ Either representation is internal and must not appear in source syntax.
 Rule:
 
 ```text
-async_fn_call : future(T)
+async_fn_call : future[T]
 ----------------------------
 await async_fn_call : T
 ```
@@ -190,7 +190,7 @@ normal return-type check and is diagnosed as an async return problem:
 
 ```vut
 async fn bad() -> int:
-  read()        # read() : future(int), not int
+  read()        # read() : future[int], not int
 ```
 
 with a help to add `await`.
@@ -263,7 +263,7 @@ await
 Given:
 
 ```vut
-async fn read_async() -> result(bytes, FsError):
+async fn read_async() -> result[bytes, FsError]:
   ...
 ```
 
@@ -276,13 +276,13 @@ data = await read_async()
 has type:
 
 ```text
-result(bytes, FsError)
+result[bytes, FsError]
 ```
 
 and:
 
 ```vut
-async fn load() -> result(bytes, FsError):
+async fn load() -> result[bytes, FsError]:
   data = await read_async()?
   ok(data)
 ```
@@ -290,13 +290,13 @@ async fn load() -> result(bytes, FsError):
 type-checks as follows:
 
 ```text
-read_async()          : future(result(bytes, FsError))
-await read_async()    : result(bytes, FsError)
+read_async()          : future[result[bytes, FsError]]
+await read_async()    : result[bytes, FsError]
 await read_async()?   : bytes
 ```
 
 `?` uses the existing rule: the enclosing function must return a compatible
-`result(_, E)`.
+`result[_, E]`.
 
 The two mechanisms must not be merged. `await` never propagates errors, and `?`
 never waits for a computation.
@@ -308,8 +308,8 @@ never waits for a computation.
 Because `await operation()?` parses as `(await operation())?`:
 
 ```text
-operation()          : future(result(T, E))
-await operation()    : result(T, E)
+operation()          : future[result[T, E]]
+await operation()    : result[T, E]
 await operation()?   : T
 ```
 
@@ -362,7 +362,7 @@ Each `await` drives the newly created awaitable value.
 
 1. `async fn` exposes a logical result type.
 2. The call result is an internal awaitable type.
-3. `future(T)` is not source-nameable.
+3. `future[T]` is not source-nameable.
 4. `await` requires an awaitable operand and yields the logical result.
 5. `await` is valid only in async bodies.
 6. `await` and `?` are independent.

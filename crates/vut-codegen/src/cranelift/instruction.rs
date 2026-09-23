@@ -5,7 +5,8 @@ use super::managed::{
     optional_from_presence, optional_payload_offset, stack_slot_for_type, zero_stack_value,
 };
 use super::signatures::{
-    c_call_conv, coerce_integer, copy_aggregate, indirect_signature, machine_type, runtime_function,
+    c_call_conv, coerce_integer, copy_aggregate, indirect_signature, indirect_signature_with_env,
+    machine_type, runtime_function,
 };
 use cranelift_codegen::ir::{
     AbiParam, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind,
@@ -16,7 +17,7 @@ use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::{DataId, FuncId, Module};
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
-use vut_mir::{BinaryOp, Instruction, LayoutTable, ValueId, ValueRepr};
+use vut_mir::{BinaryOp, ClosureLayout, Instruction, LayoutTable, ValueId, ValueRepr};
 
 #[expect(
     clippy::too_many_arguments,
@@ -40,6 +41,8 @@ pub(super) fn lower_instruction(
     vtables: &HashMap<(usize, Option<vut_mir::SymbolId>), DataId>,
     frames: &HashMap<vut_mir::SymbolId, vut_mir::FrameLayout>,
     future_thunks: &HashMap<vut_mir::SymbolId, (FuncId, FuncId)>,
+    closures: &HashMap<vut_mir::SymbolId, ClosureLayout>,
+    closure_drops: &HashMap<vut_mir::SymbolId, FuncId>,
     next_data: &mut usize,
 ) -> Result<(), CodegenError> {
     let pair = match instruction {
@@ -49,8 +52,19 @@ pub(super) fn lower_instruction(
         Instruction::ConstBool { value, literal } => {
             Some((*value, builder.ins().iconst(types::I8, i64::from(*literal))))
         }
-        Instruction::ConstFloat { value, literal } => {
-            Some((*value, builder.ins().f64const(*literal)))
+        Instruction::ConstFloat { value, literal, ty } => {
+            let narrow = ty.is_some_and(|ty| machine_type(layouts, ty) == types::F32);
+            let constant = if narrow {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "contextual f32 literals use IEEE binary32 rounding"
+                )]
+                let literal = *literal as f32;
+                builder.ins().f32const(literal)
+            } else {
+                builder.ins().f64const(*literal)
+            };
+            Some((*value, constant))
         }
         Instruction::ConstString { value, literal } => Some((
             *value,
@@ -101,7 +115,7 @@ pub(super) fn lower_instruction(
                         })?;
                     let destination = builder.ins().iadd_imm_u(slot, delta);
                     copy_aggregate(builder, layouts, *inner, operand, destination)?;
-                } else {
+                } else if layouts.types[inner.0].size != 0 {
                     builder
                         .ins()
                         .store(MemFlagsData::trusted(), operand, slot, offset);
@@ -128,7 +142,9 @@ pub(super) fn lower_instruction(
                             "optional payload offset exceeds backend limit".into(),
                         )
                     })?;
-                if layouts.is_aggregate(*inner) {
+                if layouts.types[inner.0].size == 0 {
+                    builder.ins().iconst(types::I64, 0)
+                } else if layouts.is_aggregate(*inner) {
                     builder.ins().iadd_imm_u(operand, i64::from(offset))
                 } else {
                     builder.ins().load(
@@ -167,27 +183,37 @@ pub(super) fn lower_instruction(
             ty,
             unsigned,
         } => {
-            let (name, parameter) = if layouts.types[ty.0].repr == ValueRepr::Float {
-                (vut_runtime::abi::FORMAT_F64, types::F64)
-            } else {
-                (vut_runtime::abi::FORMAT_I64, types::I64)
-            };
-            let target = runtime_function(module, name, &[parameter], &[types::I64])?;
-            let reference = module.declare_func_in_func(target, builder.func);
             let operand = values.get(operand).copied().ok_or_else(|| {
                 CodegenError::Backend(format!(
                     "invalid typed MIR: formatted value {} was not produced",
                     operand.0
                 ))
             })?;
-            let argument = if *unsigned
-                && builder.func.dfg.value_type(operand).is_int()
-                && builder.func.dfg.value_type(operand).bits() < parameter.bits()
-            {
-                builder.ins().uextend(parameter, operand)
+            let operand_machine = builder.func.dfg.value_type(operand);
+            let (name, parameter, argument) = if layouts.types[ty.0].repr == ValueRepr::Float {
+                // The float formatter is f64-based; widen f32 operands.
+                let argument = if operand_machine == types::F32 {
+                    builder.ins().fpromote(types::F64, operand)
+                } else {
+                    operand
+                };
+                (vut_runtime::abi::FORMAT_F64, types::F64, argument)
+            } else if *unsigned {
+                let argument = if operand_machine.bits() < 64 {
+                    builder.ins().uextend(types::I64, operand)
+                } else {
+                    operand
+                };
+                (vut_runtime::abi::FORMAT_U64, types::I64, argument)
             } else {
-                coerce_integer(builder, operand, parameter)
+                (
+                    vut_runtime::abi::FORMAT_I64,
+                    types::I64,
+                    coerce_integer(builder, operand, types::I64),
+                )
             };
+            let target = runtime_function(module, name, &[parameter], &[types::I64])?;
+            let reference = module.declare_func_in_func(target, builder.func);
             let call = builder.ins().call(reference, &[argument]);
             Some((*value, builder.inst_results(call)[0]))
         }
@@ -314,6 +340,7 @@ pub(super) fn lower_instruction(
             None
         }
         Instruction::Binary {
+            operand_type,
             value,
             op,
             left,
@@ -321,6 +348,13 @@ pub(super) fn lower_instruction(
         } => {
             let mut a = values[left];
             let mut b = values[right];
+            if let Some(ty) = operand_type {
+                let machine = machine_type(layouts, *ty);
+                if machine.is_int() {
+                    a = coerce_integer(builder, a, machine);
+                    b = coerce_integer(builder, b, machine);
+                }
+            }
             let a_type = builder.func.dfg.value_type(a);
             let b_type = builder.func.dfg.value_type(b);
             if a_type.is_int() && b_type.is_int() && a_type != b_type {
@@ -332,7 +366,12 @@ pub(super) fn lower_instruction(
                 a = coerce_integer(builder, a, target);
                 b = coerce_integer(builder, b, target);
             }
-            let float = builder.func.dfg.value_type(a) == types::F64;
+            let operand_machine = builder.func.dfg.value_type(a);
+            let float = matches!(operand_machine, types::F64 | types::F32);
+            let unsigned = operand_type
+                .as_ref()
+                .or_else(|| value_types.get(left))
+                .is_some_and(|ty| layouts.unsigned.contains(ty));
             let result = if float {
                 match op {
                     BinaryOp::Add => builder.ins().fadd(a, b),
@@ -340,6 +379,17 @@ pub(super) fn lower_instruction(
                     BinaryOp::Multiply => builder.ins().fmul(a, b),
                     BinaryOp::Divide => builder.ins().fdiv(a, b),
                     BinaryOp::Modulo => {
+                        // The runtime helper is f64; promote narrow floats and
+                        // demote the result back.
+                        let (x, y, narrow) = if operand_machine == types::F32 {
+                            (
+                                builder.ins().fpromote(types::F64, a),
+                                builder.ins().fpromote(types::F64, b),
+                                true,
+                            )
+                        } else {
+                            (a, b, false)
+                        };
                         let target = runtime_function(
                             module,
                             vut_runtime::abi::F64_MOD,
@@ -347,8 +397,13 @@ pub(super) fn lower_instruction(
                             &[types::F64],
                         )?;
                         let reference = module.declare_func_in_func(target, builder.func);
-                        let call = builder.ins().call(reference, &[a, b]);
-                        builder.inst_results(call)[0]
+                        let call = builder.ins().call(reference, &[x, y]);
+                        let remainder = builder.inst_results(call)[0];
+                        if narrow {
+                            builder.ins().fdemote(types::F32, remainder)
+                        } else {
+                            remainder
+                        }
                     }
                     BinaryOp::Equal => builder.ins().fcmp(FloatCC::Equal, a, b),
                     BinaryOp::NotEqual => builder.ins().fcmp(FloatCC::NotEqual, a, b),
@@ -370,13 +425,25 @@ pub(super) fn lower_instruction(
                     BinaryOp::Add => builder.ins().iadd(a, b),
                     BinaryOp::Subtract => builder.ins().isub(a, b),
                     BinaryOp::Multiply => builder.ins().imul(a, b),
+                    BinaryOp::Divide if unsigned => builder.ins().udiv(a, b),
                     BinaryOp::Divide => builder.ins().sdiv(a, b),
+                    BinaryOp::Modulo if unsigned => builder.ins().urem(a, b),
                     BinaryOp::Modulo => builder.ins().srem(a, b),
                     BinaryOp::Equal => builder.ins().icmp(IntCC::Equal, a, b),
                     BinaryOp::NotEqual => builder.ins().icmp(IntCC::NotEqual, a, b),
+                    BinaryOp::Less if unsigned => builder.ins().icmp(IntCC::UnsignedLessThan, a, b),
                     BinaryOp::Less => builder.ins().icmp(IntCC::SignedLessThan, a, b),
+                    BinaryOp::LessEqual if unsigned => {
+                        builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, a, b)
+                    }
                     BinaryOp::LessEqual => builder.ins().icmp(IntCC::SignedLessThanOrEqual, a, b),
+                    BinaryOp::Greater if unsigned => {
+                        builder.ins().icmp(IntCC::UnsignedGreaterThan, a, b)
+                    }
                     BinaryOp::Greater => builder.ins().icmp(IntCC::SignedGreaterThan, a, b),
+                    BinaryOp::GreaterEqual if unsigned => {
+                        builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, a, b)
+                    }
                     BinaryOp::GreaterEqual => {
                         builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, a, b)
                     }
@@ -395,7 +462,12 @@ pub(super) fn lower_instruction(
             let operand = values[operand];
             let result = match op {
                 vut_ast::UnaryOp::Not => builder.ins().icmp_imm_s(IntCC::Equal, operand, 0),
-                vut_ast::UnaryOp::Negate if builder.func.dfg.value_type(operand) == types::F64 => {
+                vut_ast::UnaryOp::Negate
+                    if matches!(
+                        builder.func.dfg.value_type(operand),
+                        types::F64 | types::F32
+                    ) =>
+                {
                     builder.ins().fneg(operand)
                 }
                 vut_ast::UnaryOp::Negate => builder.ins().ineg(operand),
@@ -419,6 +491,35 @@ pub(super) fn lower_instruction(
             ));
             value_types.insert(*value, *ty);
             Some((*value, builder.ins().stack_addr(types::I64, slot, 0)))
+        }
+        Instruction::LoadRaw {
+            value,
+            pointer,
+            offset,
+            ty,
+        } => {
+            let memory = machine_type(layouts, *ty);
+            let offset = i32::try_from(*offset).unwrap_or(0);
+            let result =
+                builder
+                    .ins()
+                    .load(memory, MemFlagsData::trusted(), values[pointer], offset);
+            value_types.insert(*value, *ty);
+            Some((*value, result))
+        }
+        Instruction::StoreRaw {
+            pointer,
+            offset,
+            value,
+            ty,
+        } => {
+            let memory = machine_type(layouts, *ty);
+            let offset = i32::try_from(*offset).unwrap_or(0);
+            let operand = coerce_integer(builder, values[value], memory);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), operand, values[pointer], offset);
+            None
         }
         Instruction::Construct { value, ty, fields } => {
             let mut address = values[value];
@@ -450,6 +551,9 @@ pub(super) fn lower_instruction(
             }
             for (fallback_index, (name, field_value)) in fields.iter().enumerate() {
                 let field = layouts.field(*ty, name);
+                if field.is_some_and(|field| layouts.types[field.ty.0].size == 0) {
+                    continue;
+                }
                 let offset_value = field
                     .map_or((fallback_index + 1) * layouts.pointer_size, |field| {
                         field.offset
@@ -468,12 +572,16 @@ pub(super) fn lower_instruction(
                     let destination = builder.ins().iadd_imm_u(address, delta);
                     copy_aggregate(builder, layouts, field.ty, values[field_value], destination)?;
                 } else {
-                    builder.ins().store(
-                        MemFlagsData::trusted(),
-                        values[field_value],
-                        address,
-                        offset,
-                    );
+                    let stored = field.map_or(values[field_value], |field| {
+                        coerce_integer(
+                            builder,
+                            values[field_value],
+                            machine_type(layouts, field.ty),
+                        )
+                    });
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), stored, address, offset);
                 }
             }
             value_types.insert(*value, *ty);
@@ -489,6 +597,9 @@ pub(super) fn lower_instruction(
             debug_assert_eq!(length, elements.len());
             let address = values[value];
             for (index, element) in elements.iter().enumerate() {
+                if stride == 0 {
+                    continue;
+                }
                 let offset = i32::try_from(index.saturating_mul(stride)).map_err(|_| {
                     CodegenError::Backend("array element offset exceeds backend limit".into())
                 })?;
@@ -530,6 +641,9 @@ pub(super) fn lower_instruction(
             ));
             let address = builder.ins().stack_addr(types::I64, slot, 0);
             for (index, element_value) in elements.iter().enumerate() {
+                if stride == 0 {
+                    continue;
+                }
                 let position = index.saturating_mul(stride);
                 if layouts.is_aggregate(*element) {
                     let delta = i64::try_from(position).map_err(|_| {
@@ -569,14 +683,17 @@ pub(super) fn lower_instruction(
             len,
             index,
             element,
+            in_bounds,
         } => {
             let data = values[data];
             let len = values[len];
             let index = values[index];
-            let valid = builder.ins().icmp(IntCC::UnsignedLessThan, index, len);
-            builder
-                .ins()
-                .trapz(valid, cranelift_codegen::ir::TrapCode::unwrap_user(2));
+            if !in_bounds {
+                let valid = builder.ins().icmp(IntCC::UnsignedLessThan, index, len);
+                builder
+                    .ins()
+                    .trapz(valid, cranelift_codegen::ir::TrapCode::unwrap_user(2));
+            }
             let stride = layouts.element_storage_size(*element);
             let offset = builder.ins().imul_imm_u(
                 index,
@@ -586,7 +703,9 @@ pub(super) fn lower_instruction(
             );
             let address = builder.ins().iadd(data, offset);
             value_types.insert(*value, *element);
-            if layouts.is_aggregate(*element) {
+            if stride == 0 {
+                Some((*value, builder.ins().iconst(types::I64, 0)))
+            } else if layouts.is_aggregate(*element) {
                 Some((*value, address))
             } else {
                 Some((
@@ -630,7 +749,9 @@ pub(super) fn lower_instruction(
             })?;
             // Aggregate payloads are stored inline so their bytes survive the
             // producing frame; scalars/managed handles are stored by value.
-            if layouts.is_aggregate(payload_ty) {
+            if layouts.types[payload_ty.0].size == 0 {
+                // The unit payload has no bytes to store.
+            } else if layouts.is_aggregate(payload_ty) {
                 let delta = i64::try_from(payload_offset).map_err(|_| {
                     CodegenError::Backend("result payload offset exceeds backend limit".into())
                 })?;
@@ -669,16 +790,12 @@ pub(super) fn lower_instruction(
         }
         Instruction::Spawn {
             value,
+            start,
             callable,
             result_type,
-            ..
         } => {
             let layout = layouts.types[result_type.0];
-            let size = if layout.repr == ValueRepr::Void {
-                0
-            } else {
-                layout.size
-            };
+            let size = if layout.size == 0 { 0 } else { layout.size };
             let align = layout.alignment.max(1);
             let pointer = module.target_config().pointer_type();
             let (poll, drop) = future_thunks.get(callable).copied().ok_or_else(|| {
@@ -687,6 +804,12 @@ pub(super) fn lower_instruction(
                     callable.0
                 ))
             })?;
+            // A capturing callable is a tagged closure value whose environment
+            // (captures) lives inside the reference-counted closure block. The
+            // spawned task must own that block so the captures outlive the
+            // parent scope.
+            let captures = closures.contains_key(callable);
+            let start_value = values[start];
             let op = if let Some(frame_layout) = frames.get(callable) {
                 // Async callable: allocate its frame and poll the frame-based body.
                 let allocate = runtime_function(
@@ -709,7 +832,34 @@ pub(super) fn lower_instruction(
                     })?,
                 );
                 let allocation = builder.ins().call(allocate, &[frame_size, frame_align]);
-                builder.inst_results(allocation)[0]
+                let frame = builder.inst_results(allocation)[0];
+                if captures {
+                    // The environment is the body's hidden leading parameter, so
+                    // it occupies frame parameter slot 0. Storing `base + 32`
+                    // there lets the body read its captures and lets the drop
+                    // thunk recover the tagged closure to release.
+                    let slot = frame_layout.parameters.first().ok_or_else(|| {
+                        CodegenError::Backend(
+                            "capturing async callable has no environment slot".into(),
+                        )
+                    })?;
+                    let base = builder.ins().band_imm_u(start_value, i64::MAX);
+                    let environment = builder.ins().iadd_imm_u(base, 32_i64);
+                    let offset = i32::try_from(slot.offset).map_err(|_| {
+                        CodegenError::Backend(
+                            "closure environment offset exceeds backend limit".into(),
+                        )
+                    })?;
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), environment, frame, offset);
+                }
+                frame
+            } else if captures {
+                // Sync capturing callable: transfer the tagged closure to the
+                // task; the poll thunk derives the environment and the drop
+                // thunk releases the block.
+                start_value
             } else {
                 builder.ins().iconst(types::I64, 0)
             };
@@ -741,6 +891,11 @@ pub(super) fn lower_instruction(
                 .call(reference, &[op, poll_address, drop_address, size, align]);
             Some((*value, builder.inst_results(call)[0]))
         }
+        Instruction::AwaitChannelRecv { .. } => {
+            return Err(CodegenError::Backend(
+                "channel recv suspension was not rewritten by the async pass".into(),
+            ));
+        }
         Instruction::AwaitFuture {
             value,
             handle,
@@ -766,7 +921,7 @@ pub(super) fn lower_instruction(
             let layout = layouts.types[result_type.0];
             if layouts.is_aggregate(*result_type) {
                 Some((*value, destination))
-            } else if layout.repr == ValueRepr::Void {
+            } else if layout.size == 0 {
                 Some((*value, builder.ins().iconst(types::I64, 0)))
             } else {
                 Some((
@@ -815,7 +970,12 @@ pub(super) fn lower_instruction(
             );
             None
         }
-        Instruction::FieldStore { base, name, value } => {
+        Instruction::FieldStore {
+            base,
+            name,
+            value,
+            release,
+        } => {
             let base_ty = local_types[base.0].ok_or_else(|| {
                 CodegenError::Backend("field assignment on an untyped local".into())
             })?;
@@ -836,16 +996,18 @@ pub(super) fn lower_instruction(
                 *base,
             )?;
             let stored = values[value];
-            if layouts.is_aggregate(field.ty) {
+            if layouts.types[field.ty.0].size == 0 {
+                // No storage for unit fields.
+            } else if layouts.is_aggregate(field.ty) {
                 let address = builder
                     .ins()
                     .iadd_imm_u(base_value, frame_offset_i64(field.offset)?);
-                if layouts.types[field.ty.0].needs_drop {
+                if *release && layouts.types[field.ty.0].needs_drop {
                     manage_value(builder, module, layouts, field.ty, address, false)?;
                 }
                 copy_aggregate(builder, layouts, field.ty, stored, address)?;
             } else {
-                if layouts.types[field.ty.0].needs_drop {
+                if *release && layouts.types[field.ty.0].needs_drop {
                     let old = builder.ins().load(
                         machine_type(layouts, field.ty),
                         MemFlagsData::trusted(),
@@ -955,7 +1117,7 @@ pub(super) fn lower_instruction(
                 let layout = layouts.types[result_type.0];
                 let produced = if layouts.is_aggregate(*result_type) {
                     destination
-                } else if layout.repr == ValueRepr::Void {
+                } else if layout.size == 0 {
                     builder.ins().iconst(types::I64, 0)
                 } else {
                     builder.ins().load(
@@ -968,6 +1130,85 @@ pub(super) fn lower_instruction(
                 values.insert(*id, produced);
             }
             None
+        }
+        Instruction::PollChannelRecv {
+            value,
+            present,
+            ready,
+            frame,
+            result_type,
+        } => {
+            let _ = frame_local;
+            let pointer = frame_pointer(builder, variables, Some(*frame))?;
+            let slot = builder
+                .ins()
+                .iadd_imm_u(pointer, frame_offset_i64(vut_mir::FRAME_CHILD_OFFSET)?);
+            // The recv op writes the received value at offset 0 and a presence
+            // byte right after it, so the destination must cover both.
+            let element_size = layouts.element_storage_size(*result_type);
+            let layout = layouts.types[result_type.0];
+            let align = layout.alignment.max(1);
+            let total = element_size + 1;
+            let rounded = total.div_ceil(align) * align;
+            let slot_size = u32::try_from(rounded.max(1)).map_err(|_| {
+                CodegenError::Backend("channel recv value exceeds backend limit".into())
+            })?;
+            let align_shift = u8::try_from(align.trailing_zeros())
+                .map_err(|_| CodegenError::Backend("invalid channel recv alignment".into()))?;
+            let buffer = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                slot_size,
+                align_shift,
+            ));
+            let destination = builder.ins().stack_addr(types::I64, buffer, 0);
+            // Zero the buffer so an absent value reads as a defined zero.
+            let zero = builder.ins().iconst(types::I8, 0);
+            for offset in 0..i32::try_from(rounded).unwrap_or(i32::MAX) {
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), zero, destination, offset);
+            }
+            let target = runtime_function(
+                module,
+                vut_runtime::abi::ASYNC_AWAIT_CHILD,
+                &[types::I64, types::I64],
+                &[types::I32],
+            )?;
+            let reference = module.declare_func_in_func(target, builder.func);
+            let call = builder.ins().call(reference, &[slot, destination]);
+            let status = builder.inst_results(call)[0];
+            let ready_value = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+            values.insert(*ready, ready_value);
+            value_types.insert(*value, *result_type);
+            values.insert(*value, destination);
+            let presence = builder.ins().load(
+                types::I8,
+                MemFlagsData::trusted(),
+                destination,
+                i32::try_from(element_size).map_err(|_| {
+                    CodegenError::Backend("channel recv element exceeds backend limit".into())
+                })?,
+            );
+            values.insert(*present, presence);
+            None
+        }
+        Instruction::OptionalFromValue {
+            value,
+            present,
+            payload,
+            ty,
+            inner,
+        } => {
+            value_types.insert(*value, *ty);
+            let result = optional_from_presence(
+                builder,
+                layouts,
+                *ty,
+                *inner,
+                values[present],
+                values[payload],
+            )?;
+            Some((*value, result))
         }
         Instruction::ResultPayload { value, source, ok } => {
             let ty = value_types.get(source).ok_or_else(|| {
@@ -983,7 +1224,9 @@ pub(super) fn lower_instruction(
                 layout.err_offset
             };
             value_types.insert(*value, payload_ty);
-            if layouts.is_aggregate(payload_ty) {
+            if layouts.types[payload_ty.0].size == 0 {
+                Some((*value, builder.ins().iconst(types::I64, 0)))
+            } else if layouts.is_aggregate(payload_ty) {
                 // Inline aggregate payload: its value is the payload address.
                 let delta = i64::try_from(offset).map_err(|_| {
                     CodegenError::Backend("result payload offset exceeds backend limit".into())
@@ -1134,25 +1377,22 @@ pub(super) fn lower_instruction(
                 CodegenError::Backend(format!("missing aggregate type for field `{name}`"))
             })?;
             let field = layouts.field(*ty, name).ok_or_else(|| {
-                CodegenError::Backend(format!("missing layout for field `{name}`"))
+                CodegenError::Backend(format!(
+                    "missing layout for field `{name}` on {ty:?} in {}",
+                    builder.func.name
+                ))
             })?;
             let field_ty = layouts
                 .types
                 .get(field.ty.0)
                 .ok_or_else(|| CodegenError::Backend("missing field type layout".into()))?;
-            let machine_ty = if field_ty.size == 1 {
-                types::I8
-            } else if field_ty.size == 2 {
-                types::I16
-            } else if field_ty.size == 4 {
-                types::I32
-            } else {
-                types::I64
-            };
+            let machine_ty = machine_type(layouts, field.ty);
             let offset = i32::try_from(field.offset)
                 .map_err(|_| CodegenError::Backend("field offset exceeds backend limit".into()))?;
             value_types.insert(*value, field.ty);
-            if layouts.is_aggregate(field.ty) {
+            if field_ty.size == 0 {
+                Some((*value, builder.ins().iconst(types::I64, 0)))
+            } else if layouts.is_aggregate(field.ty) {
                 // The field is stored inline; its value is the field address.
                 let delta = i64::try_from(field.offset).map_err(|_| {
                     CodegenError::Backend("field offset exceeds backend limit".into())
@@ -1198,6 +1438,9 @@ pub(super) fn lower_instruction(
                 .get(*variant_index)
                 .ok_or_else(|| CodegenError::Backend("missing enum variant layout".into()))?;
             for (index, field) in variant.fields.iter().enumerate() {
+                if layouts.types[field.ty.0].size == 0 {
+                    continue;
+                }
                 let Some(field_value) = payload.get(index) else {
                     continue;
                 };
@@ -1262,7 +1505,9 @@ pub(super) fn lower_instruction(
                 .get(*field_index)
                 .ok_or_else(|| CodegenError::Backend("missing enum field layout".into()))?;
             value_types.insert(*value, field.ty);
-            if layouts.is_aggregate(field.ty) {
+            if layouts.types[field.ty.0].size == 0 {
+                Some((*value, builder.ins().iconst(types::I64, 0)))
+            } else if layouts.is_aggregate(field.ty) {
                 let delta = i64::try_from(field.offset).map_err(|_| {
                     CodegenError::Backend("enum payload offset exceeds backend limit".into())
                 })?;
@@ -1403,6 +1648,56 @@ pub(super) fn lower_instruction(
             let pointer = module.target_config().pointer_type();
             Some((*value, builder.ins().func_addr(pointer, reference)))
         }
+        Instruction::MakeClosure {
+            value,
+            symbol,
+            captures,
+        } => {
+            let layout = closures.get(symbol).ok_or_else(|| {
+                CodegenError::Backend(format!(
+                    "invalid typed MIR: closure {} has no environment layout",
+                    symbol.0
+                ))
+            })?;
+            let env_size = i64::try_from(layout.size).map_err(|_| {
+                CodegenError::Backend("closure environment exceeds backend limit".into())
+            })?;
+            let target = runtime_function(
+                module,
+                vut_runtime::abi::CLOSURE_NEW,
+                &[types::I64],
+                &[types::I64],
+            )?;
+            let reference = module.declare_func_in_func(target, builder.func);
+            let size_value = builder.ins().iconst(types::I64, env_size);
+            let call = builder.ins().call(reference, &[size_value]);
+            let base = builder.inst_results(call)[0];
+            let (id, _) = declarations.get(symbol).ok_or_else(|| {
+                CodegenError::Backend(format!(
+                    "invalid typed MIR: closure {} has no declaration",
+                    symbol.0
+                ))
+            })?;
+            let func_ref = module.declare_func_in_func(*id, builder.func);
+            let pointer = module.target_config().pointer_type();
+            let code = builder.ins().func_addr(pointer, func_ref);
+            builder.ins().store(MemFlagsData::trusted(), code, base, 16);
+            if let Some(drop_id) = closure_drops.get(symbol) {
+                let drop_ref = module.declare_func_in_func(*drop_id, builder.func);
+                let drop = builder.ins().func_addr(pointer, drop_ref);
+                builder.ins().store(MemFlagsData::trusted(), drop, base, 24);
+            }
+            for (capture, capture_value) in layout.captures.iter().zip(captures.iter()) {
+                let memory = machine_type(layouts, capture.ty);
+                let operand = coerce_integer(builder, values[capture_value], memory);
+                let offset = i32::try_from(32 + capture.offset).unwrap_or(32);
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), operand, base, offset);
+            }
+            let tagged = builder.ins().bor_imm_u(base, i64::MIN);
+            Some((*value, tagged))
+        }
         Instruction::CallIndirect {
             value,
             result_type,
@@ -1410,7 +1705,8 @@ pub(super) fn lower_instruction(
             callee,
             arguments,
         } => {
-            let signature = indirect_signature(module, layouts, *callable_ty)?;
+            let pointer = module.target_config().pointer_type();
+            let callee_value = values[callee];
             let aggregate_return = callable_ty
                 .and_then(|ty| layouts.callables.get(&ty))
                 .map(|(_, result)| *result)
@@ -1418,34 +1714,95 @@ pub(super) fn lower_instruction(
             let destination = aggregate_return
                 .map(|ty| stack_slot_for_type(builder, layouts, ty))
                 .transpose()?;
-            let mut args = Vec::with_capacity(arguments.len() + usize::from(destination.is_some()));
-            if let Some(destination) = destination {
-                args.push(destination);
+            let result_machine = callable_ty
+                .and_then(|ty| layouts.callables.get(&ty))
+                .map(|(_, result)| *result)
+                .filter(|result| layouts.types[result.0].repr != ValueRepr::Void)
+                .map(|result| machine_type(layouts, result));
+            let plain_signature = indirect_signature(module, layouts, *callable_ty)?;
+            let env_signature = indirect_signature_with_env(module, layouts, *callable_ty)?;
+
+            let is_closure = builder
+                .ins()
+                .icmp_imm_u(IntCC::SignedLessThan, callee_value, 0_i64);
+            let closure_block = builder.create_block();
+            let plain_block = builder.create_block();
+            let join_block = builder.create_block();
+            if let Some(machine) = result_machine {
+                builder.append_block_param(join_block, machine);
             }
-            args.extend(
+            builder
+                .ins()
+                .brif(is_closure, closure_block, &[], plain_block, &[]);
+
+            // Untagged: a plain code pointer called without an environment.
+            builder.switch_to_block(plain_block);
+            let sret_plain = usize::from(destination.is_some());
+            let mut plain_args = Vec::with_capacity(arguments.len() + sret_plain);
+            if let Some(destination) = destination {
+                plain_args.push(destination);
+            }
+            plain_args.extend(
                 arguments
                     .iter()
-                    .zip(
-                        signature
-                            .params
-                            .iter()
-                            .skip(usize::from(destination.is_some())),
-                    )
+                    .zip(plain_signature.params.iter().skip(sret_plain))
                     .map(|(id, parameter)| {
                         coerce_integer(builder, values[id], parameter.value_type)
                     }),
             );
-            let signature_ref = builder.func.import_signature(signature);
-            let call = builder
+            let plain_signature_ref = builder.func.import_signature(plain_signature);
+            let plain_call =
+                builder
+                    .ins()
+                    .call_indirect(plain_signature_ref, callee_value, &plain_args);
+            let plain_result: Vec<_> = result_machine
+                .map(|_| builder.inst_results(plain_call)[0])
+                .into_iter()
+                .map(cranelift_codegen::ir::BlockArg::Value)
+                .collect();
+            builder.ins().jump(join_block, &plain_result);
+
+            // Tagged: a capturing closure; load its code and environment.
+            builder.switch_to_block(closure_block);
+            let base = builder.ins().band_imm_u(callee_value, i64::MAX);
+            let code = builder
                 .ins()
-                .call_indirect(signature_ref, values[callee], &args);
+                .load(pointer, MemFlagsData::trusted(), base, 16);
+            let environment = builder.ins().iadd_imm_u(base, 32_i64);
+            let sret_env = usize::from(destination.is_some());
+            let mut env_args = Vec::with_capacity(arguments.len() + sret_env + 1);
+            if let Some(destination) = destination {
+                env_args.push(destination);
+            }
+            env_args.push(environment);
+            env_args.extend(
+                arguments
+                    .iter()
+                    .zip(env_signature.params.iter().skip(sret_env + 1))
+                    .map(|(id, parameter)| {
+                        coerce_integer(builder, values[id], parameter.value_type)
+                    }),
+            );
+            let env_signature_ref = builder.func.import_signature(env_signature);
+            let env_call = builder
+                .ins()
+                .call_indirect(env_signature_ref, code, &env_args);
+            let env_result: Vec<_> = result_machine
+                .map(|_| builder.inst_results(env_call)[0])
+                .into_iter()
+                .map(cranelift_codegen::ir::BlockArg::Value)
+                .collect();
+            builder.ins().jump(join_block, &env_result);
+
+            builder.switch_to_block(join_block);
             if let Some((id, ty)) = value.zip(*result_type) {
                 value_types.insert(id, ty);
             }
             if let Some(destination) = destination {
                 value.map(|id| (id, destination))
             } else {
-                value.map(|id| (id, builder.inst_results(call)[0]))
+                let joined = result_machine.map(|_| builder.block_params(join_block)[0]);
+                value.zip(joined)
             }
         }
         Instruction::RuntimeCall {
@@ -1457,10 +1814,43 @@ pub(super) fn lower_instruction(
             if let Some((id, ty)) = value.zip(*result_type) {
                 value_types.insert(id, ty);
             }
+            if *function == vut_mir::BuiltinFunction::ChannelSend {
+                let channel = values[&arguments[0]];
+                let channel_ty = value_types[&arguments[0]];
+                let element = *layouts
+                    .channels
+                    .get(&channel_ty)
+                    .ok_or_else(|| CodegenError::Backend("missing channel element type".into()))?;
+                let element_ptr =
+                    element_pointer(builder, layouts, element, values[&arguments[1]])?;
+                let target = runtime_function(
+                    module,
+                    vut_runtime::abi::CHANNEL_SEND,
+                    &[types::I64, types::I64],
+                    &[types::I64],
+                )?;
+                let reference = module.declare_func_in_func(target, builder.func);
+                let call = builder.ins().call(reference, &[channel, element_ptr]);
+                if let Some(id) = value {
+                    values.insert(*id, builder.inst_results(call)[0]);
+                }
+                return Ok(());
+            }
+            if let vut_mir::BuiltinFunction::NumericCast { from, to } = function {
+                let operand = values[&arguments[0]];
+                let pointer = module.target_config().pointer_type();
+                let converted =
+                    super::numeric::numeric_cast(builder, module, pointer, *from, *to, operand)?;
+                if let Some(id) = value {
+                    values.insert(*id, converted);
+                }
+                return Ok(());
+            }
             if matches!(
                 function,
                 vut_mir::BuiltinFunction::ArrayLen
                     | vut_mir::BuiltinFunction::ArrayAt
+                    | vut_mir::BuiltinFunction::ArrayAtUnchecked
                     | vut_mir::BuiltinFunction::ArraySet
                     | vut_mir::BuiltinFunction::ArrayFirst
                     | vut_mir::BuiltinFunction::ArrayLast
@@ -1487,31 +1877,40 @@ pub(super) fn lower_instruction(
                             CodegenError::Backend("array length exceeds target".into())
                         })?,
                     )),
-                    vut_mir::BuiltinFunction::ArrayAt | vut_mir::BuiltinFunction::ArraySet => {
-                        let index = values[&arguments[1]];
-                        let op = if *function == vut_mir::BuiltinFunction::ArrayAt {
-                            vut_runtime::abi::bounds_op::ARRAY_AT
-                        } else {
-                            vut_runtime::abi::bounds_op::ARRAY_SET
-                        };
-                        let target = runtime_function(
-                            module,
-                            vut_runtime::abi::BOUNDS_CHECK,
-                            &[types::I64, types::I64, types::I64],
-                            &[types::I64],
-                        )?;
-                        let reference = module.declare_func_in_func(target, builder.func);
-                        let op_value = builder.ins().iconst(types::I64, op);
-                        let length_value = builder.ins().iconst(
-                            types::I64,
-                            i64::try_from(length).map_err(|_| {
-                                CodegenError::Backend("array length exceeds target".into())
-                            })?,
+                    vut_mir::BuiltinFunction::ArrayAt
+                    | vut_mir::BuiltinFunction::ArrayAtUnchecked
+                    | vut_mir::BuiltinFunction::ArraySet => {
+                        let is_read = matches!(
+                            *function,
+                            vut_mir::BuiltinFunction::ArrayAt
+                                | vut_mir::BuiltinFunction::ArrayAtUnchecked
                         );
-                        let call = builder
-                            .ins()
-                            .call(reference, &[op_value, index, length_value]);
-                        let index = builder.inst_results(call)[0];
+                        let mut index = values[&arguments[1]];
+                        if *function != vut_mir::BuiltinFunction::ArrayAtUnchecked {
+                            let op = if is_read {
+                                vut_runtime::abi::bounds_op::ARRAY_AT
+                            } else {
+                                vut_runtime::abi::bounds_op::ARRAY_SET
+                            };
+                            let target = runtime_function(
+                                module,
+                                vut_runtime::abi::BOUNDS_CHECK,
+                                &[types::I64, types::I64, types::I64],
+                                &[types::I64],
+                            )?;
+                            let reference = module.declare_func_in_func(target, builder.func);
+                            let op_value = builder.ins().iconst(types::I64, op);
+                            let length_value = builder.ins().iconst(
+                                types::I64,
+                                i64::try_from(length).map_err(|_| {
+                                    CodegenError::Backend("array length exceeds target".into())
+                                })?,
+                            );
+                            let call = builder
+                                .ins()
+                                .call(reference, &[op_value, index, length_value]);
+                            index = builder.inst_results(call)[0];
+                        }
                         let offset = builder.ins().imul_imm_u(
                             index,
                             i64::try_from(stride).map_err(|_| {
@@ -1519,7 +1918,7 @@ pub(super) fn lower_instruction(
                             })?,
                         );
                         let address = builder.ins().iadd(receiver, offset);
-                        if *function == vut_mir::BuiltinFunction::ArrayAt {
+                        if is_read {
                             Some(read_owned_array_element(
                                 builder, module, layouts, element_ty, address,
                             )?)
@@ -1538,7 +1937,7 @@ pub(super) fn lower_instruction(
                                     address,
                                 )?;
                                 manage_value(builder, module, layouts, element_ty, address, true)?;
-                            } else {
+                            } else if stride != 0 {
                                 let stored = coerce_integer(
                                     builder,
                                     values[&arguments[2]],
@@ -1614,7 +2013,7 @@ pub(super) fn lower_instruction(
                                     true,
                                 )?;
                             }
-                        } else {
+                        } else if stride != 0 {
                             let stored =
                                 coerce_integer(builder, values[&arguments[1]], element_machine_ty);
                             for index in 0..length {
@@ -2151,6 +2550,7 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::ListReserve
                     | vut_mir::BuiltinFunction::ListPush
                     | vut_mir::BuiltinFunction::ListAt
+                    | vut_mir::BuiltinFunction::ListAtUnchecked
                     | vut_mir::BuiltinFunction::ListSet
                     | vut_mir::BuiltinFunction::ListInsert
                     | vut_mir::BuiltinFunction::ListRemove
@@ -2256,7 +2656,9 @@ pub(super) fn lower_instruction(
                             Some(builder.inst_results(call)[0])
                         }
                     }
-                    vut_mir::BuiltinFunction::ListAt | vut_mir::BuiltinFunction::ListRemove => {
+                    vut_mir::BuiltinFunction::ListAt
+                    | vut_mir::BuiltinFunction::ListAtUnchecked
+                    | vut_mir::BuiltinFunction::ListRemove => {
                         let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {
                             CodegenError::Backend("missing list receiver type".into())
                         })?;
@@ -2265,10 +2667,12 @@ pub(super) fn lower_instruction(
                         })?;
                         let out = stack_slot_for_type(builder, layouts, element_ty)?;
                         zero_stack_value(builder, layouts, element_ty, out);
-                        let name = if *function == vut_mir::BuiltinFunction::ListAt {
-                            vut_runtime::abi::LIST_AT
-                        } else {
-                            vut_runtime::abi::LIST_REMOVE
+                        let name = match *function {
+                            vut_mir::BuiltinFunction::ListAt => vut_runtime::abi::LIST_AT,
+                            vut_mir::BuiltinFunction::ListAtUnchecked => {
+                                vut_runtime::abi::LIST_AT_UNCHECKED
+                            }
+                            _ => vut_runtime::abi::LIST_REMOVE,
                         };
                         let target = runtime_function(
                             module,
@@ -2524,7 +2928,14 @@ pub(super) fn lower_instruction(
                             element_pointer(builder, layouts, key_ty, values[&arguments[1]])?;
                         let out = stack_slot_for_type(builder, layouts, value_ty)?;
                         zero_stack_value(builder, layouts, value_ty, out);
-                        let name = if *function == vut_mir::BuiltinFunction::MapGet {
+                        let result_ty = (*result_type).ok_or_else(|| {
+                            CodegenError::Backend("map lookup without a result type".into())
+                        })?;
+                        let strict =
+                            *function == vut_mir::BuiltinFunction::MapGet && result_ty == value_ty;
+                        let name = if strict {
+                            vut_runtime::abi::MAP_AT
+                        } else if *function == vut_mir::BuiltinFunction::MapGet {
                             vut_runtime::abi::MAP_GET
                         } else {
                             vut_runtime::abi::MAP_REMOVE
@@ -2533,27 +2944,24 @@ pub(super) fn lower_instruction(
                             module,
                             name,
                             &[types::I64, types::I64, types::I64],
-                            &[types::I8],
+                            if strict { &[] } else { &[types::I8] },
                         )?;
                         let reference = module.declare_func_in_func(target, builder.func);
                         let call = builder
                             .ins()
                             .call(reference, &[values[&arguments[0]], key_ptr, out]);
-                        let present = builder.inst_results(call)[0];
-                        let optional_ty = (*result_type).ok_or_else(|| {
-                            CodegenError::Backend(
-                                "map lookup without an optional result type".into(),
-                            )
-                        })?;
-                        let result = optional_from_presence(
-                            builder,
-                            layouts,
-                            optional_ty,
-                            value_ty,
-                            present,
-                            out,
-                        )?;
-                        Some(result)
+                        if strict {
+                            if let Some(id) = value {
+                                value_types.insert(*id, value_ty);
+                            }
+                            Some(element_value(builder, layouts, value_ty, out))
+                        } else {
+                            let present = builder.inst_results(call)[0];
+                            let result = optional_from_presence(
+                                builder, layouts, result_ty, value_ty, present, out,
+                            )?;
+                            Some(result)
+                        }
                     }
                     vut_mir::BuiltinFunction::MapGetOr => {
                         let receiver_ty = *value_types.get(&arguments[0]).ok_or_else(|| {
@@ -2592,14 +3000,39 @@ pub(super) fn lower_instruction(
                 }
                 return Ok(());
             }
+            // Scalar float operations with an exact native instruction are
+            // lowered directly; `round` is intentionally excluded because
+            // `nearest` rounds half to even, not half away from zero.
             if matches!(
                 function,
                 vut_mir::BuiltinFunction::FloatAbs
                     | vut_mir::BuiltinFunction::FloatFloor
                     | vut_mir::BuiltinFunction::FloatCeil
-                    | vut_mir::BuiltinFunction::FloatRound
                     | vut_mir::BuiltinFunction::FloatTrunc
                     | vut_mir::BuiltinFunction::FloatSqrt
+                    | vut_mir::BuiltinFunction::FloatFma
+                    | vut_mir::BuiltinFunction::FloatCopysign
+            ) {
+                let args: Vec<_> = arguments.iter().map(|id| values[id]).collect();
+                let result = match function {
+                    vut_mir::BuiltinFunction::FloatAbs => builder.ins().fabs(args[0]),
+                    vut_mir::BuiltinFunction::FloatFloor => builder.ins().floor(args[0]),
+                    vut_mir::BuiltinFunction::FloatCeil => builder.ins().ceil(args[0]),
+                    vut_mir::BuiltinFunction::FloatTrunc => builder.ins().trunc(args[0]),
+                    vut_mir::BuiltinFunction::FloatSqrt => builder.ins().sqrt(args[0]),
+                    vut_mir::BuiltinFunction::FloatFma => {
+                        builder.ins().fma(args[0], args[1], args[2])
+                    }
+                    _ => builder.ins().fcopysign(args[0], args[1]),
+                };
+                if let Some(id) = value {
+                    values.insert(*id, result);
+                }
+                return Ok(());
+            }
+            if matches!(
+                function,
+                vut_mir::BuiltinFunction::FloatRound
                     | vut_mir::BuiltinFunction::FloatPow
                     | vut_mir::BuiltinFunction::FloatMin
                     | vut_mir::BuiltinFunction::FloatMax
@@ -2609,23 +3042,8 @@ pub(super) fn lower_instruction(
                     | vut_mir::BuiltinFunction::FloatIsFinite
             ) {
                 let (name, returns) = match function {
-                    vut_mir::BuiltinFunction::FloatAbs => {
-                        (vut_runtime::abi::F64_ABS, &[types::F64][..])
-                    }
-                    vut_mir::BuiltinFunction::FloatFloor => {
-                        (vut_runtime::abi::F64_FLOOR, &[types::F64][..])
-                    }
-                    vut_mir::BuiltinFunction::FloatCeil => {
-                        (vut_runtime::abi::F64_CEIL, &[types::F64][..])
-                    }
                     vut_mir::BuiltinFunction::FloatRound => {
                         (vut_runtime::abi::F64_ROUND, &[types::F64][..])
-                    }
-                    vut_mir::BuiltinFunction::FloatTrunc => {
-                        (vut_runtime::abi::F64_TRUNC, &[types::F64][..])
-                    }
-                    vut_mir::BuiltinFunction::FloatSqrt => {
-                        (vut_runtime::abi::F64_SQRT, &[types::F64][..])
                     }
                     vut_mir::BuiltinFunction::FloatPow => {
                         (vut_runtime::abi::F64_POW, &[types::F64][..])
@@ -2658,6 +3076,15 @@ pub(super) fn lower_instruction(
                 return Ok(());
             }
             let (name, returns) = match function {
+                vut_mir::BuiltinFunction::ChannelNew => {
+                    (vut_runtime::abi::CHANNEL_NEW, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::ChannelRecv => {
+                    (vut_runtime::abi::CHANNEL_RECV, &[types::I64][..])
+                }
+                vut_mir::BuiltinFunction::ChannelClose => {
+                    (vut_runtime::abi::CHANNEL_CLOSE, &[][..])
+                }
                 vut_mir::BuiltinFunction::Print => (vut_runtime::abi::PRINT, &[][..]),
                 vut_mir::BuiltinFunction::Out => (vut_runtime::abi::OUT, &[][..]),
                 vut_mir::BuiltinFunction::Input => (vut_runtime::abi::INPUT, &[types::I64][..]),
@@ -2807,6 +3234,11 @@ pub(super) fn lower_instruction(
                     let argument = values[&arguments[0]];
                     if builder.func.dfg.value_type(argument).is_float() {
                         (vut_runtime::abi::FORMAT_F64, &[types::I64][..])
+                    } else if value_types
+                        .get(&arguments[0])
+                        .is_some_and(|ty| layouts.unsigned.contains(ty))
+                    {
+                        (vut_runtime::abi::FORMAT_U64, &[types::I64][..])
                     } else {
                         (vut_runtime::abi::FORMAT_I64, &[types::I64][..])
                     }
@@ -2897,7 +3329,13 @@ pub(super) fn lower_instruction(
                 | vut_mir::BuiltinFunction::ListAll
                 | vut_mir::BuiltinFunction::ListFold
                 | vut_mir::BuiltinFunction::ListFindIndexBy
-                | vut_mir::BuiltinFunction::ListSortBy => unreachable!(),
+                | vut_mir::BuiltinFunction::ListSortBy
+                | vut_mir::BuiltinFunction::ChannelSend
+                | vut_mir::BuiltinFunction::ListAtUnchecked
+                | vut_mir::BuiltinFunction::ArrayAtUnchecked
+                | vut_mir::BuiltinFunction::FloatFma
+                | vut_mir::BuiltinFunction::FloatCopysign
+                | vut_mir::BuiltinFunction::NumericCast { .. } => unreachable!(),
             };
             let parameters = if *function == vut_mir::BuiltinFunction::NumericToStr
                 && builder
@@ -2914,7 +3352,29 @@ pub(super) fn lower_instruction(
             let reference = module.declare_func_in_func(target, builder.func);
             let args: Vec<_> = arguments
                 .iter()
-                .map(|id| coerce_integer(builder, values[id], types::I64))
+                .map(|id| {
+                    let value = values[id];
+                    let machine = builder.func.dfg.value_type(value);
+                    if *function == vut_mir::BuiltinFunction::NumericToStr {
+                        if machine.is_float() {
+                            if machine == types::F32 {
+                                builder.ins().fpromote(types::F64, value)
+                            } else {
+                                value
+                            }
+                        } else if value_types
+                            .get(id)
+                            .is_some_and(|ty| layouts.unsigned.contains(ty))
+                            && machine.bits() < 64
+                        {
+                            builder.ins().uextend(types::I64, value)
+                        } else {
+                            coerce_integer(builder, value, types::I64)
+                        }
+                    } else {
+                        coerce_integer(builder, value, types::I64)
+                    }
+                })
                 .collect();
             let call = builder.ins().call(reference, &args);
             value.map(|id| (id, builder.inst_results(call)[0]))
@@ -2941,6 +3401,25 @@ pub(super) fn lower_instruction(
         Instruction::Release { value, ty } => {
             manage_value(builder, module, layouts, *ty, values[value], false)?;
             None
+        }
+        Instruction::MakeUnique { value, operand, ty } => {
+            // Managed collections copy on write; other types pass through.
+            value_types.insert(*value, *ty);
+            let name = match layouts.types[ty.0].ownership {
+                vut_mir::OwnershipKind::RcList => Some(vut_runtime::abi::LIST_MAKE_UNIQUE),
+                vut_mir::OwnershipKind::RcMap => Some(vut_runtime::abi::MAP_MAKE_UNIQUE),
+                vut_mir::OwnershipKind::RcBytes => Some(vut_runtime::abi::BYTES_MAKE_UNIQUE),
+                _ => None,
+            };
+            match name {
+                Some(name) => {
+                    let target = runtime_function(module, name, &[types::I64], &[types::I64])?;
+                    let reference = module.declare_func_in_func(target, builder.func);
+                    let call = builder.ins().call(reference, &[values[operand]]);
+                    Some((*value, builder.inst_results(call)[0]))
+                }
+                None => Some((*value, values[operand])),
+            }
         }
         Instruction::ConstructInterface {
             value,
@@ -3158,6 +3637,9 @@ fn local_read(
         vut_mir::LocalStorage::Frame(offset) => {
             let pointer = frame_pointer(builder, variables, frame_local)?;
             match local_types[local.0] {
+                Some(ty) if layouts.types[ty.0].size == 0 => {
+                    Ok(builder.ins().iconst(types::I64, 0))
+                }
                 Some(ty) if layouts.is_aggregate(ty) => {
                     Ok(builder.ins().iadd_imm_u(pointer, frame_offset_i64(offset)?))
                 }
@@ -3205,6 +3687,7 @@ fn local_write(
         vut_mir::LocalStorage::Frame(offset) => {
             let pointer = frame_pointer(builder, variables, frame_local)?;
             match local_types[local.0] {
+                Some(ty) if layouts.types[ty.0].size == 0 => Ok(()),
                 Some(ty) if layouts.is_aggregate(ty) => {
                     let destination = builder.ins().iadd_imm_u(pointer, frame_offset_i64(offset)?);
                     copy_aggregate(builder, layouts, ty, value, destination)

@@ -5,4 +5,4 @@ fn Counter.get() -> int:
   self.value
 
 fn main():
-  out("value=$(Counter(value = 1).get())")
+  out("value=$(Counter(value: 1).get())")

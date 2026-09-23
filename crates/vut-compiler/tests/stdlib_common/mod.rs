@@ -34,13 +34,19 @@ fn unique_root(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("vut-stdlib-{name}-{nonce}-{sequence}"))
 }
 
+pub fn scratch(name: &str) -> Scratch {
+    let root = unique_root(name);
+    fs::create_dir_all(&root).expect("create scratch root");
+    Scratch { root }
+}
+
 /// Compiles `source` (with the stdlib available) into an executable.
 ///
 /// Returns the scratch project root (kept alive by the caller, removed on drop)
 /// and the executable path.
 pub fn build(name: &str, source: &str) -> (Scratch, PathBuf) {
-    let root = unique_root(name);
-    fs::create_dir_all(&root).expect("create project root");
+    let scratch = scratch(name);
+    let root = &scratch.root;
     fs::write(root.join("main.vut"), source).expect("write source");
     let executable = root.join(if cfg!(windows) {
         "program.exe"
@@ -51,10 +57,19 @@ pub fn build(name: &str, source: &str) -> (Scratch, PathBuf) {
         runtime_library: Some(runtime_library()),
         ..CompilerConfig::default()
     };
-    CompilerSession::new(config)
-        .emit_executable(&root, &[], &executable)
+    let mut session = CompilerSession::new(config);
+    let checked = session
+        .check_source_file(&root.join("main.vut"))
+        .expect("check source");
+    let diagnostics = session.render_diagnostics(&checked);
+    assert!(
+        !checked.resolution.diagnostics.has_errors() && !checked.semantics.diagnostics.has_errors(),
+        "{diagnostics}"
+    );
+    session
+        .emit_executable(root, &[], &executable)
         .expect("emit executable");
-    (Scratch { root }, executable)
+    (scratch, executable)
 }
 
 /// Compiles and runs `source`, returning `(exit code, stdout, stderr)`.

@@ -129,7 +129,6 @@ Examples include currently deferred areas such as:
 thread model
 channel syntax
 atomic API
-capturing closures
 generic function syntax
 payload enum syntax
 static method syntax

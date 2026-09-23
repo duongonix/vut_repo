@@ -108,8 +108,8 @@ Core APIs should remain especially stable.
 Collection support includes:
 
 ```text
-list(T)
-map(K, V)
+list[T]
+map[K, V]
 bytes
 ```
 
@@ -117,7 +117,7 @@ Collection APIs should follow consistent naming and behavior.
 
 Do not introduce multiple unrelated APIs for equivalent operations.
 
-The standard `list(T)` operations (`map`, `filter`, `fold`, `any`, `all`,
+The standard `list[T]` operations (`map`, `filter`, `fold`, `any`, `all`,
 `find_index`, `sort_by`, `join`, ...) are **builtins of the compiler**, not
 standard-library free functions, so no `import collections` is required. See
 `specs/collections.md` for the two implementation tiers (native runtime
@@ -241,8 +241,8 @@ opaque handles). Arguments are formatted with the compiler-generated display
 conversion (see `specs/display.md`) and joined by single spaces.
 
 ```vut
-out(User(a = 1))          # data
-out(@(1, 2, 3))           # list
+out(User(a: 1))          # data
+out(@[1, 2, 3])           # list
 out(1, true, "x")         # 1 true x
 out()                     # a single newline
 out("user=$user")         # interpolation uses the same conversion
@@ -331,7 +331,7 @@ Expected recoverable failures should use typed Result-style values.
 Conceptually:
 
 ```text
-result(T, E)
+result[T, E]
 ```
 
 A successful operation contains `T`.
@@ -519,7 +519,7 @@ Do not use `dyn` merely to simplify library implementation when a generic or typ
 Example:
 
 ```text
-list(int)
+list[int]
 ```
 
 should retain integer specialization rather than internally forcing every element into a dynamic object at the language level.

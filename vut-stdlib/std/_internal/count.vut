@@ -1,0 +1,10 @@
+opaque data Handle
+
+@link_name("vut_rt_count_ok_v1")
+extern "C" fn valid(handle: ptr[Handle]) -> usize
+
+@link_name("vut_rt_count_value_v1")
+extern "C" fn value(handle: ptr[Handle]) -> u64
+
+@link_name("vut_rt_count_error_v1")
+extern "C" fn error(handle: ptr[Handle]) -> bytes

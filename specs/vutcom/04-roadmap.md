@@ -78,12 +78,12 @@ must create distinct domains.
 
 ---
 
-# Phase 2 — `vutcom(D)` Type
+# Phase 2 — `vutcom[D]` Type
 
 Implement generic composition type syntax:
 
 ```vut
-vutcom(UI)
+vutcom[UI]
 ```
 
 Requirements:
@@ -98,7 +98,7 @@ Requirements:
 Reject:
 
 ```vut
-vutcom(int)
+vutcom[int]
 ```
 
 unless the argument resolves to a composition domain.
@@ -110,7 +110,7 @@ unless the argument resolves to a composition domain.
 Support:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   ...
 ```
 
@@ -132,7 +132,7 @@ Implement:
 
 ```vut
 Column():
-  Text(value = "Hello")
+  Text(value: "Hello")
 ```
 
 Parser must support:
@@ -172,8 +172,8 @@ Canonical model:
 
 ```vut
 fn Card(
-  children: vutcom(UI)
-) -> vutcom(UI):
+  children: vutcom[UI]
+) -> vutcom[UI]:
   ...
 ```
 
@@ -181,7 +181,7 @@ Usage:
 
 ```vut
 Card():
-  Text(value = "Hello")
+  Text(value: "Hello")
 ```
 
 The trailing block conceptually supplies `children`.
@@ -195,14 +195,14 @@ No public `children(D)` type.
 Given:
 
 ```vut
-fn Text(value: str) -> vutcom(UI):
+fn Text(value: str) -> vutcom[UI]:
   ...
 ```
 
 reject:
 
 ```vut
-Text(value = "Hello"):
+Text(value: "Hello"):
   Other()
 ```
 
@@ -236,7 +236,7 @@ Design the internal representation to avoid mandatory list/heap allocation.
 Support:
 
 ```vut
-fn Card(children: vutcom(UI)) -> vutcom(UI):
+fn Card(children: vutcom[UI]) -> vutcom[UI]:
   Panel():
     children
 ```
@@ -270,8 +270,8 @@ ui.run(BuildProject())
 Expected style:
 
 ```text
-expected `vutcom(UI)`
-found `vutcom(Build)`
+expected `vutcom[UI]`
+found `vutcom[Build]`
 ```
 
 No runtime string domain checks.
@@ -285,8 +285,8 @@ Support APIs such as:
 ```vut
 fn Route(
   path: str,
-  page: vutcom(UI)
-) -> vutcom(Route):
+  page: vutcom[UI]
+) -> vutcom[Route]:
   ...
 ```
 
@@ -294,8 +294,8 @@ Allow:
 
 ```vut
 Route(
-  path = "/",
-  page = Home()
+  path: "/",
+  page: Home()
 )
 ```
 
@@ -317,14 +317,14 @@ Verify composition-producing functions support normal Vut code:
 Example:
 
 ```vut
-fn Home(user: User) -> vutcom(UI):
+fn Home(user: User) -> vutcom[UI]:
   title = user.name
 
   fn click():
     out(title)
 
-  Button(onclick = click):
-    Text(value = title)
+  Button(onclick: click):
+    Text(value: title)
 ```
 
 Do not create a restricted Vutcom-only function body language.
@@ -362,7 +362,7 @@ Support:
 ```vut
 Column():
   for user in users:
-    UserCard(user = user)
+    UserCard(user: user)
 ```
 
 Requirements:
@@ -471,7 +471,7 @@ Avoid scattering Vutcom-specific transformations across unrelated codegen paths.
 
 # Phase 19 — Ownership Integration
 
-Integrate `vutcom(D)` with Vut's ownership system.
+Integrate `vutcom[D]` with Vut's ownership system.
 
 Requirements:
 
@@ -518,10 +518,10 @@ Support generic functions producing Vutcom.
 Example:
 
 ```vut
-fn ListView(T)(
-  items: list(T),
-  render: fn(T) -> vutcom(UI)
-) -> vutcom(UI):
+fn ListView[T](
+  items: list[T],
+  render: fn(T) -> vutcom[UI]
+) -> vutcom[UI]:
   Column():
     for item in items:
       render(item)
@@ -538,7 +538,7 @@ Do not add runtime dictionaries specifically for Vutcom.
 Verify Vutcom can be passed to ordinary functions:
 
 ```vut
-fn run(root: vutcom(UI)):
+fn run(root: vutcom[UI]):
   ...
 ```
 
@@ -567,7 +567,7 @@ Optimize:
 ui.run(Home())
 ```
 
-so an unnecessary materialized intermediate `vutcom(UI)` can be eliminated when safe.
+so an unnecessary materialized intermediate `vutcom[UI]` can be eliminated when safe.
 
 Target:
 
@@ -604,8 +604,8 @@ Ensure composition-producing functions participate in:
 Example:
 
 ```vut
-fn Label(value: str) -> vutcom(UI):
-  Text(value = value)
+fn Label(value: str) -> vutcom[UI]:
+  Text(value: value)
 ```
 
 should not create an unavoidable runtime abstraction layer.
@@ -620,8 +620,8 @@ Example:
 
 ```vut
 Column():
-  Text(value = "Vut")
-  Text(value = name)
+  Text(value: "Vut")
+  Text(value: name)
 ```
 
 The compiler may identify:
@@ -833,24 +833,24 @@ composition Route
 and:
 
 ```vut
-fn Home() -> vutcom(UI):
+fn Home() -> vutcom[UI]:
   Column():
-    Text(value = "Users")
+    Text(value: "Users")
 
     if logged_in:
       Profile()
 
     for user in users:
-      UserCard(user = user)
+      UserCard(user: user)
 ```
 
 and generic composition works:
 
 ```vut
-fn ListView(T)(
-  items: list(T),
-  render: fn(T) -> vutcom(UI)
-) -> vutcom(UI):
+fn ListView[T](
+  items: list[T],
+  render: fn(T) -> vutcom[UI]
+) -> vutcom[UI]:
   Column():
     for item in items:
       render(item)
@@ -859,7 +859,7 @@ fn ListView(T)(
 and cross-domain safety works:
 
 ```text
-vutcom(UI) != vutcom(Build) != vutcom(Route)
+vutcom[UI] != vutcom[Build] != vutcom[Route]
 ```
 
 and external libraries can define new domains without compiler modification.
@@ -877,12 +877,12 @@ The completed system must preserve:
                               │
              typed declarative composition
                               │
-                         vutcom(D)
+                         vutcom[D]
                               │
           ┌───────────────────┼───────────────────┐
           │                   │                   │
           ▼                   ▼                   ▼
-     vutcom(UI)         vutcom(Build)       vutcom(Route)
+     vutcom[UI]         vutcom[Build]       vutcom[Route]
           │                   │                   │
           ▼                   ▼                   ▼
       UI Library          Build Library       Route Library
@@ -893,7 +893,7 @@ The compiler understands:
 ```text
 composition
 domain
-vutcom(D)
+vutcom[D]
 children
 composition control flow
 ownership

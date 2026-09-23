@@ -1,0 +1,215 @@
+# Vut standard math library.
+#
+# Scalar `float` (`float` is IEEE-754 binary64) math with no heap allocation.
+# Integer algorithms (`gcd`, `lcm`, `is_power_of_two`) are pure Vut. The integer
+# scalar helpers (`abs`, `min`, `max`, `clamp`, `pow`) are the existing numeric
+# methods — `x.abs()`, `a.min(b)`, `x.clamp(low, high)`, `x.pow(n)` — because Vut
+# has no overloading and a single `math.abs` cannot accept both `int` and
+# `float`.
+#
+# Floating-point behavior follows IEEE-754 and the platform libm consistently:
+# domain errors yield NaN, overflow yields ±Inf, and underflow yields 0.
+#
+# Randomness is pseudo-random and **not** cryptographically secure.
+import math._float as float_math
+import math._integer as integer_math
+import math._native as native
+
+# Constants (IEEE-754 binary64).
+PI = 3.141592653589793
+TAU = 6.283185307179586
+E = 2.718281828459045
+SQRT_2 = 1.4142135623730951
+FRAC_1_PI = 0.3183098861837907
+FRAC_2_PI = 0.6366197723675814
+FRAC_PI_2 = 1.5707963267948966
+FRAC_PI_3 = 1.0471975511965976
+FRAC_PI_4 = 0.7853981633974483
+LN_2 = 0.6931471805599453
+LN_10 = 2.302585092994046
+LOG2_E = 1.4426950408889634
+LOG10_E = 0.4342944819032518
+
+# Basic.
+fn abs(value: float) -> float:
+  value.abs()
+
+fn min(left: float, right: float) -> float:
+  left.min(right)
+
+fn max(left: float, right: float) -> float:
+  left.max(right)
+
+fn clamp(value: float, low: float, high: float) -> float:
+  value.clamp(low, high)
+
+fn sign(value: float) -> float:
+  float_math.sign(value)
+
+# Rounding.
+fn floor(value: float) -> float:
+  value.floor()
+
+fn ceil(value: float) -> float:
+  value.ceil()
+
+fn round(value: float) -> float:
+  value.round()
+
+fn trunc(value: float) -> float:
+  value.trunc()
+
+fn fract(value: float) -> float:
+  float_math.fract(value)
+
+# Angles.
+fn radians(degrees: float) -> float:
+  float_math.radians(degrees)
+
+fn degrees(radians: float) -> float:
+  float_math.degrees(radians)
+
+# Float classification.
+fn is_inf(value: float) -> bool:
+  float_math.is_inf(value)
+
+fn is_nan(value: float) -> bool:
+  value.is_nan()
+
+fn is_finite(value: float) -> bool:
+  value.is_finite()
+
+# Powers and roots.
+fn sqrt(value: float) -> float:
+  value.sqrt()
+
+fn cbrt(value: float) -> float:
+  unsafe:
+    native.cbrt(value.to_f64()).to_float()
+
+fn pow(base: float, exponent: float) -> float:
+  base.pow(exponent)
+
+fn powi(base: float, exponent: int) -> float:
+  float_math.powi(base, exponent)
+
+fn copysign(magnitude: float, sign: float) -> float:
+  magnitude.copysign(sign)
+
+fn hypot(left: float, right: float) -> float:
+  unsafe:
+    native.hypot(left.to_f64(), right.to_f64()).to_float()
+
+fn fma(a: float, b: float, c: float) -> float:
+  a.fma(b, c)
+
+# Exponential and logarithm.
+fn exp(value: float) -> float:
+  unsafe:
+    native.exp(value.to_f64()).to_float()
+
+fn exp2(value: float) -> float:
+  unsafe:
+    native.exp2(value.to_f64()).to_float()
+
+fn log(value: float) -> float:
+  unsafe:
+    native.log(value.to_f64()).to_float()
+
+fn log2(value: float) -> float:
+  unsafe:
+    native.log2(value.to_f64()).to_float()
+
+fn log10(value: float) -> float:
+  unsafe:
+    native.log10(value.to_f64()).to_float()
+
+# Trigonometry (radians).
+fn sin(value: float) -> float:
+  unsafe:
+    native.sin(value.to_f64()).to_float()
+
+fn cos(value: float) -> float:
+  unsafe:
+    native.cos(value.to_f64()).to_float()
+
+fn tan(value: float) -> float:
+  unsafe:
+    native.tan(value.to_f64()).to_float()
+
+fn asin(value: float) -> float:
+  unsafe:
+    native.asin(value.to_f64()).to_float()
+
+fn acos(value: float) -> float:
+  unsafe:
+    native.acos(value.to_f64()).to_float()
+
+fn atan(value: float) -> float:
+  unsafe:
+    native.atan(value.to_f64()).to_float()
+
+fn atan2(y: float, x: float) -> float:
+  unsafe:
+    native.atan2(y.to_f64(), x.to_f64()).to_float()
+
+# Hyperbolic.
+fn sinh(value: float) -> float:
+  unsafe:
+    native.sinh(value.to_f64()).to_float()
+
+fn cosh(value: float) -> float:
+  unsafe:
+    native.cosh(value.to_f64()).to_float()
+
+fn tanh(value: float) -> float:
+  unsafe:
+    native.tanh(value.to_f64()).to_float()
+
+# Integer algorithms.
+fn gcd(a: int, b: int) -> int:
+  integer_math.gcd(a, b)
+
+fn lcm(a: int, b: int) -> int:
+  integer_math.lcm(a, b)
+
+fn is_power_of_two(value: int) -> bool:
+  integer_math.is_power_of_two(value)
+
+# Randomness (pseudo-random; **not** cryptographically secure).
+data Rng:
+  _handle: resource[native.RngHandle]
+
+fn rng(seed: int) -> Rng:
+  unsafe:
+    Rng(_handle: native.rng_new(seed.to_i64()))
+
+fn Rng.random() -> float:
+  unsafe:
+    native.rng_float(self._handle).to_float()
+
+fn Rng.random_int(min: int, max: int) -> int:
+  unsafe:
+    native.rng_int(self._handle, min.to_i64(), max.to_i64()).to_int()
+
+fn Rng.random_float(min: float, max: float) -> float:
+  min + self.random() * (max - min)
+
+fn Rng.random_bool() -> bool:
+  unsafe:
+    native.rng_bool(self._handle) != 0
+
+fn random() -> float:
+  unsafe:
+    native.random_float().to_float()
+
+fn random_int(min: int, max: int) -> int:
+  unsafe:
+    native.random_int(min.to_i64(), max.to_i64()).to_int()
+
+fn random_float(min: float, max: float) -> float:
+  min + random() * (max - min)
+
+fn random_bool() -> bool:
+  unsafe:
+    native.random_bool() != 0

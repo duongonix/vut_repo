@@ -3,6 +3,7 @@ use vut_runtime::abi;
 #[test]
 fn versioned_string_abi_obeys_null_and_ownership_contracts() {
     assert_eq!(abi::VERSION, 13);
+    assert_eq!(abi::vut_rt_abi_version_v1(), abi::VERSION);
     let baseline = abi::live_string_allocations();
 
     // SAFETY: handles are created by the runtime, remain live while borrowed,

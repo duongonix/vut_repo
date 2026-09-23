@@ -43,7 +43,11 @@
     };
   });
   function keydown(event: KeyboardEvent) {
-    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && results.length) {
+    if (event.key === 'Escape') {
+      // Search inputs can consume Escape to clear text before dialog cancellation.
+      event.preventDefault();
+      open = false;
+    } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && results.length) {
       event.preventDefault();
       selected =
         (selected + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
@@ -106,7 +110,7 @@
         {#each results as result, index}<a
             role="option"
             aria-selected={selected === index}
-            tabindex="-1"
+            tabindex={selected === index ? 0 : -1}
             id={`search-result-${index}`}
             class:selected={selected === index}
             href={result.url}

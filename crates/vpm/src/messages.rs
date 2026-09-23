@@ -105,6 +105,43 @@ pub fn updated(style: Style, count: usize) -> String {
     format!("{} {count} package(s)", style.success("updated"))
 }
 
+pub fn global_installed(style: Style, name: &str, bins: &[String]) -> String {
+    if bins.is_empty() {
+        format!("{} `{name}`", style.success("installed"))
+    } else {
+        format!(
+            "{} `{name}` ({})",
+            style.success("installed"),
+            bins.join(", ")
+        )
+    }
+}
+
+pub fn uninstalled(style: Style, name: &str) -> String {
+    format!("{} `{name}`", style.success("uninstalled"))
+}
+
+pub fn published(
+    style: Style,
+    package: &str,
+    version: &str,
+    registry: &str,
+    files: usize,
+    dry_run: bool,
+) -> String {
+    if dry_run {
+        format!(
+            "{} `{package}` {version} ({files} file(s)) for `{registry}`",
+            style.success("publish dry run")
+        )
+    } else {
+        format!(
+            "{} `{package}` {version} to `{registry}`",
+            style.success("published")
+        )
+    }
+}
+
 pub fn built(style: Style, path: &str, release: bool) -> String {
     let mode = if release { "release" } else { "debug" };
     format!("{} {path} ({mode})", style.success("built"))

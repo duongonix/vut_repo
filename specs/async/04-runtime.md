@@ -38,28 +38,48 @@ signals/wakes the executor. The executor never busy-waits.
 
 ---
 
-## 3. Single-Thread Executor
+## 3. Scheduler
 
-The executor owns:
+The scheduler owns:
 
 ```text
-a ready queue of resumable futures
-the currently running future
+a ready queue of resumable tasks (shared across workers)
+the worker pool that polls ready tasks
 a wake mechanism
 ```
 
-Conceptually:
+Conceptually each worker runs:
 
 ```text
 loop:
-  pop next ready future
-  resume it once
+  pop next ready task
+  poll it once
   if Pending, leave it suspended
-  if Ready(value), complete it and wake its parent
-  stop when the root future completes
+  if Ready(value), complete it and wake its awaiter
+  stop when the root task completes
 ```
 
-The executor never starts worker threads and never runs two futures in parallel.
+M2.2 replaces the earlier single-thread executor with an M:N scheduler: many
+tasks are multiplexed onto `M` worker OS threads, where the caller thread is
+worker 0 and `M` is `VUT_MAXPROCS` (default `available_parallelism()`, never
+zero). Tasks are polled by whichever worker pops them, so ready tasks can run in
+parallel on multiple cores.
+
+Each worker has a local ready queue and the scheduler has a global injector;
+workers pop their local queue last-in-first-out, drain the injector
+first-in-first-out, and steal from other workers' local queues. There is no
+preemption; a task only yields at `await`.
+
+Blocking native calls (filesystem, process, stdio) are offloaded to a blocking
+pool through the runtime's `blocking::run` helper. While a worker waits on a
+blocking call the scheduler may start a bounded replacement worker, so the
+requested number of workers stays available.
+
+The wake seam is thread-safe: a native completion on any thread enqueues the
+task and wakes a parked worker. No scheduler lock is held across a poll, so a
+polled task may spawn, wake, or drop tasks re-entrantly.
+
+The scheduler is process-global; a single program run drives it at a time.
 
 ---
 
@@ -119,20 +139,32 @@ The user never calls an executor API.
 
 ---
 
-## 7. No Threads
+## 7. Worker Pool (M:N)
 
-This phase must not:
+M2.2 multiplexes tasks onto `M` worker OS threads:
 
 ```text
-spawn OS threads
-spawn worker threads
-use a thread pool
-run futures in parallel
-require synchronization primitives between futures
+spawn M-1 worker threads; the caller thread is worker 0
+M = VUT_MAXPROCS, else available_parallelism(), never zero
+ready tasks may run in parallel on multiple cores
 ```
 
-Runtime structures may be designed so a future multi-thread extension is
-possible, but no threading is implemented here.
+Constraints that still hold:
+
+```text
+no reactor / async I/O integration
+no preemption; a task yields only at `await`
+no user-visible synchronization primitives (channels, mutex, atomics)
+task memory is reclaimed at shutdown, not per task
+```
+
+`VUT_MAXPROCS` values below `1` or invalid fall back to the default, so a run
+always has at least one worker. The scheduler is process-global and serializes
+`run`/`drain`, so one program run drives it at a time.
+
+Workers use per-worker local queues plus a global injector, and steal from each
+other. Blocking native calls are offloaded to a blocking pool; a bounded
+replacement worker keeps the pool's parallelism while a worker is blocked.
 
 ---
 
@@ -176,9 +208,9 @@ vut_async_drop(handle)
 ```
 
 Native libraries may perform work on their own threads (for example an I/O
-backend) and then **signal/wake** the executor; the executor itself never spawns
-threads and never runs Vut tasks in parallel. A wake from another thread only
-enqueues the task and notifies the executor (no busy-wait).
+backend) and then **signal/wake** the scheduler; the wake enqueues the task and
+wakes a parked worker (no busy-wait). Native work is never executed by a
+scheduler worker itself.
 
 The exact symbols and struct layouts are not finalized in this phase.
 
@@ -197,8 +229,8 @@ event loops / reactors
 epoll / kqueue / IOCP / io_uring integration
 async filesystem
 async networking
-thread pools
-work stealing
+preemption
+per-task reclamation (task memory is freed at shutdown)
 ```
 
 They must be defined by later specifications.
@@ -215,10 +247,10 @@ The async runtime is linked/emitted only when async is used.
 
 ## 12. Runtime Principles
 
-1. Execution is single-threaded.
-2. The executor is minimal and deterministic.
-3. The wake mechanism is internal.
+1. Execution is M:N: many tasks on `M` worker threads.
+2. The scheduler is minimal and deterministic for a given worker count.
+3. The wake mechanism is internal and thread-safe.
 4. `async main` is driven automatically by the runtime.
-5. No threads, pools, or parallel execution exist in this phase.
+5. Workers steal work; blocking calls are offloaded to a blocking pool.
 6. The native boundary remains a stable C ABI.
 7. Async runtime cost is paid only by programs that use async.

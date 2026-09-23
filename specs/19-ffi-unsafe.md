@@ -78,15 +78,15 @@ Unsafe only permits explicitly designated operations that cannot be statically p
 The intended raw pointer type syntax is:
 
 ```text
-ptr(T)
+ptr[T]
 ```
 
 Examples:
 
 ```text
-ptr(u8)
-ptr(i32)
-ptr(void)
+ptr[u8]
+ptr[i32]
+ptr[void]
 ```
 
 Raw pointers are distinct from normal safe Vut values.
@@ -100,7 +100,7 @@ Raw pointer nullability semantics must be explicitly defined.
 Do not automatically equate:
 
 ```text
-ptr(T)
+ptr[T]
 ```
 
 with:
@@ -141,7 +141,7 @@ Conceptual syntax:
 
 ```vut
 extern "C":
-  fn malloc(size: u64) -> ptr(void)
+  fn malloc(size: u64) -> ptr[void]
 ```
 
 Foreign declarations have no Vut body.
@@ -195,21 +195,22 @@ Do not accept arbitrary ABI strings silently.
 
 Only explicitly defined FFI-safe types may cross a raw C ABI boundary directly.
 
-Candidates include fixed-width numeric types:
+Candidates include fixed-width numeric types and `bool` (target C `_Bool`):
 
 ```text
 i8 i16 i32 i64
 u8 u16 u32 u64
 f32 f64
-ptr(T)
+bool
+ptr[T]
 ```
 
 High-level Vut types such as:
 
 ```text
-str
-bytes
-list(T)
+map[K, V]
+result[T, E]
+T?
 data
 dyn
 interface
@@ -217,8 +218,10 @@ interface
 
 must not automatically be assumed C ABI-compatible.
 
-`bytes` is a managed type and is not FFI-safe in FFI v1. Raw C boundaries must
-use `ptr(u8)` plus an explicit length.
+`bytes`, `str`, and `list[T]` cross only through the **Vut-internal Runtime
+Handle ABI** (compiler/stdlib/official runtime). For arbitrary third-party C,
+raw boundaries must use `ptr[u8]` plus an explicit length. See
+`specs/ffi/06-native-abi-v1.md`.
 
 ---
 
@@ -461,7 +464,7 @@ Unsafe syntax exists to make this boundary visible.
 1. Normal Vut is safe by default.
 2. Low-level memory operations require explicit unsafe context.
 3. `unsafe` does not disable static typing.
-4. Raw pointer type uses `ptr(T)` direction.
+4. Raw pointer type uses `ptr[T]` direction.
 5. C ABI is the initial FFI priority.
 6. Fixed-width numeric types are preferred across FFI.
 7. `str`, `data`, lists and interfaces are not automatically C-compatible.

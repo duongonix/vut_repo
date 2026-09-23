@@ -71,6 +71,25 @@ mod tests {
     }
 
     #[test]
+    fn formatter_keeps_generic_collection_and_default_parameter_syntax() {
+        let input = "fn make(name: str,age: int=18) -> User:\n  User(\n    name: name,\n    age: age\n  )\n\nfn main():\n  xs: list[int]=@[1,2,3]\n  ys: array[int,3]=[1,2,3]\n  zs: map[str,int]=(\"a\":1)\n  out(xs[0])\n";
+        let formatted = format_source(input).unwrap();
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
+        assert!(formatted.contains("age: int = 18"), "{formatted:?}");
+        assert!(
+            formatted.contains("list[int] = @[1, 2, 3]"),
+            "{formatted:?}"
+        );
+        assert!(
+            formatted.contains("array[int, 3] = [1, 2, 3]"),
+            "{formatted:?}"
+        );
+        assert!(formatted.contains("xs[0]"), "{formatted:?}");
+        assert!(!formatted.contains("list("), "{formatted:?}");
+        assert!(!formatted.contains("@("), "{formatted:?}");
+    }
+
+    #[test]
     fn linter_reports_stable_warning_codes() {
         let source = "fn main():\n  unused = 1\n  if true:\n    return\n    out(\"never\")\n";
         let lints = lint_source(source).unwrap();

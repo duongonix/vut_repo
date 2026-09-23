@@ -156,7 +156,7 @@ impl PackageProvider for GitHubProvider {
         version: &Version,
     ) -> Result<PackageSnapshot, ProviderError> {
         let (owner, repo, path) = hosted(source, ProviderKind::GitHub)?;
-        let version_name = format!("v{version}");
+        let version_name = version.to_string();
         let content_url = format!("{}/repos/{owner}/{repo}/contents/{path}", self.api);
         let roots: Vec<GhContent> = checked(
             self.client
@@ -274,9 +274,14 @@ impl PackageProvider for GitLabProvider {
     ) -> Result<PackageSnapshot, ProviderError> {
         let (owner, repo, path) = hosted(source, ProviderKind::GitLab)?;
         let project = encode(&format!("{owner}/{repo}"));
-        let root = format!("{path}/v{version}");
-        let commit_url = format!("{}/projects/{project}/repository/commits/HEAD", self.api);
-        let revision: GlCommit = checked(
+        let root = format!("{path}/{version}");
+        // Pin the last commit that touched this version directory, not HEAD.
+        let commit_url = format!(
+            "{}/projects/{project}/repository/commits?path={}&per_page=1",
+            self.api,
+            encode(&root)
+        );
+        let commits: Vec<GlCommit> = checked(
             self.client
                 .get(commit_url)
                 .send()
@@ -284,6 +289,10 @@ impl PackageProvider for GitLabProvider {
         )?
         .json()
         .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let revision = commits
+            .into_iter()
+            .next()
+            .ok_or_else(|| ProviderError::NotFound(root.clone()))?;
         let url = format!(
             "{}/projects/{project}/repository/tree?path={}&recursive=true&per_page=100&ref={}",
             self.api,
@@ -364,14 +373,14 @@ mod tests {
                 String::from_utf8_lossy(&request[..count])
                     .contains("/repos/duongonix/vpm/contents/math")
             );
-            let body = r#"[{"name":"v0.9.0","type":"dir","sha":"a"},{"name":"README.md","type":"file","sha":"b"},{"name":"v0.10.0","type":"dir","sha":"c"}]"#;
+            let body = r#"[{"name":"0.9.0","type":"dir","sha":"a"},{"name":"README.md","type":"file","sha":"b"},{"name":"0.10.0","type":"dir","sha":"c"}]"#;
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         let provider = GitHubProvider::at(format!("http://{address}")).unwrap();
         let versions = provider
             .list_versions(&PackageSource::parse("math").unwrap())
             .unwrap();
-        assert_eq!(versions, ["v0.9.0", "v0.10.0"]);
+        assert_eq!(versions, ["0.9.0", "0.10.0"]);
         server.join().unwrap();
     }
     #[test]
@@ -386,12 +395,48 @@ mod tests {
                 String::from_utf8_lossy(&request[..count])
                     .contains("/projects/group%2Frepo/repository/tree")
             );
-            let body = r#"[{"name":"v1.0.0","path":"math/v1.0.0","type":"tree","id":"a"}]"#;
+            let body = r#"[{"name":"1.0.0","path":"math/1.0.0","type":"tree","id":"a"}]"#;
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         let provider = GitLabProvider::at(format!("http://{address}")).unwrap();
         let source = PackageSource::parse("gitlab:group/repo/math").unwrap();
-        assert_eq!(provider.list_versions(&source).unwrap(), ["v1.0.0"]);
+        assert_eq!(provider.list_versions(&source).unwrap(), ["1.0.0"]);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn gitlab_fetch_pins_the_version_directory_commit() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let count = stream.read(&mut request).unwrap();
+                let text = String::from_utf8_lossy(&request[..count]).to_string();
+                let (content_type, body) = if text.contains("/repository/commits?path=") {
+                    assert!(text.contains("path=math%2F"), "{text}");
+                    ("application/json", r#"[{"id":"deadbeef"}]"#.to_owned())
+                } else if text.contains("/repository/tree?") {
+                    assert!(text.contains("ref=deadbeef"), "{text}");
+                    (
+                        "application/json",
+                        r#"[{"name":"vpm.toml","path":"math/1.0.0/vpm.toml","type":"blob","id":"x"}]"#
+                            .to_owned(),
+                    )
+                } else {
+                    ("text/plain", "[package]\nname='math'\n".to_owned())
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let provider = GitLabProvider::at(format!("http://{address}")).unwrap();
+        let source = PackageSource::parse("gitlab:group/repo/math").unwrap();
+        let snapshot = provider
+            .fetch(&source, &Version::parse("1.0.0").unwrap())
+            .unwrap();
+        assert_eq!(snapshot.revision, "deadbeef");
+        assert!(snapshot.files.contains_key("vpm.toml"));
         server.join().unwrap();
     }
 }

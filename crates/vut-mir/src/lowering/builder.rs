@@ -1,22 +1,26 @@
 //! Expression/statement lowering builder.
 use std::collections::{HashMap, HashSet};
 
-use vut_ast::{BinaryOp, Expr, Stmt};
+use vut_ast::{Expr, Stmt};
 use vut_hir::TypeId;
 use vut_memory::LastUse;
 use vut_resolver::SymbolId;
 use vut_source::Span;
-use vut_types::{SemanticResult, Type};
+use vut_types::{SemanticResult, SubscriptKind, Type};
 
 use super::{
-    BasicBlock, BlockId, Instruction, LayoutTable, Local, LocalId, LocalStorage, Terminator,
-    ValueId,
+    BasicBlock, BlockId, BuiltinFunction, ClosureLayout, Instruction, LayoutTable, Local, LocalId,
+    LocalStorage, Terminator, ValueId,
 };
 
+mod branches;
+mod cleanup;
+mod coercion;
 mod collections;
 mod control;
 mod expression;
 mod interface;
+mod loops;
 
 /// The current function's variadic parameter: its source name and the two MIR
 /// locals holding the argument buffer pointer and element count.
@@ -54,6 +58,17 @@ pub(super) struct Builder<'a> {
     /// Default field expressions per data symbol (resolved and type-checked by
     /// the semantic layer), aligned with the data type's field order.
     pub(super) field_defaults: &'a HashMap<SymbolId, Vec<Option<vut_ast::Expr>>>,
+    /// Default parameter expressions per function/method symbol (resolved and
+    /// type-checked by the semantic layer), aligned with the callee's resolved
+    /// parameter order. A call that omits a trailing defaulted parameter
+    /// materializes the default at the call site.
+    pub(super) parameter_defaults: &'a HashMap<SymbolId, Vec<Option<vut_ast::Expr>>>,
+    /// Declared parameter names per function/method symbol, used to map named
+    /// call arguments to their declared position.
+    pub(super) parameter_names: &'a HashMap<SymbolId, Vec<String>>,
+    /// Maps a concrete specialization symbol to its generic template, whose
+    /// parameter names and defaults describe the call.
+    pub(super) instance_templates: &'a HashMap<SymbolId, SymbolId>,
     /// Call-site retargeting for monomorphized generic specializations.
     pub(super) call_instances: &'a HashMap<Span, SymbolId>,
     pub(super) loop_targets: Vec<LoopTarget>,
@@ -76,10 +91,28 @@ pub(super) struct Builder<'a> {
     /// Whether the pattern currently being lowered binds payloads of a
     /// borrowed scrutinee; such bindings are borrows and are not dropped.
     pub(super) pattern_borrowed: bool,
+    /// Closure capture locals. They alias a value owned by the closure
+    /// environment, so reads must retain a copy and cleanup must not release
+    /// them.
+    pub(super) borrowed_locals: HashSet<LocalId>,
     /// The current function's variadic parameter, if any.
     pub(super) variadic_param: Option<VariadicParam>,
+    /// Write-backs queued by a mutating subscript receiver (e.g. `a[0].push`).
+    /// Applied after the builtin call so the mutation reaches the parent.
+    pub(super) pending_writeback: Vec<WriteBack>,
     /// Ownership diagnostics discovered while lowering this function.
     pub(super) diagnostics: vut_diagnostics::DiagnosticSink,
+    /// Recursion depth while inlining a module-level constant reference.
+    pub(super) constant_depth: usize,
+}
+
+/// A queued write of a mutated collection element back into its parent.
+pub(super) struct WriteBack {
+    pub(super) function: BuiltinFunction,
+    pub(super) parent: ValueId,
+    pub(super) index: ValueId,
+    pub(super) element: ValueId,
+    pub(super) element_ty: TypeId,
 }
 impl Builder<'_> {
     fn emit(&mut self, instruction: Instruction) {
@@ -106,11 +139,19 @@ impl Builder<'_> {
     pub(super) fn lower_statements(&mut self, statements: &[Stmt]) -> Option<ValueId> {
         let narrowed_mark = self.narrowed.len();
         let mut value = None;
-        for statement in statements {
+        for (index, statement) in statements.iter().enumerate() {
             if self.is_terminated() {
                 break;
             }
-            let produced = self.statement(statement);
+            let mut produced = self.statement(statement);
+            if index + 1 < statements.len()
+                && let Stmt::Expression(expr) = statement
+                && let Some(current) = produced
+                && let Some(ty) = self.semantics.expression_types.get(&expr.span()).copied()
+            {
+                self.drop_ignored(current, ty, expr.span());
+                produced = None;
+            }
             if produced.is_some()
                 && let Stmt::Expression(expr) = statement
             {
@@ -125,46 +166,6 @@ impl Builder<'_> {
     /// in the current scope.
     pub(super) fn is_narrowed(&self, name: &str) -> bool {
         self.narrowed.iter().any(|(narrowed, _)| narrowed == name)
-    }
-    /// Narrows `name` to its optional's inner type for the current scope.
-    fn push_narrowing(&mut self, name: &str) {
-        let Some(local) = self.locals.get(name).copied() else {
-            return;
-        };
-        let Some(ty) = self.local_data[local.0].ty else {
-            return;
-        };
-        if let Type::Optional(inner) = self.semantics.types[ty.0] {
-            self.narrowed.push((name.to_string(), inner));
-        }
-    }
-    /// Recognizes `name == null` / `name != null` on an optional local. Returns
-    /// the name and whether the operator is `==` (`true`) or `!=` (`false`).
-    fn condition_narrowing(&self, condition: &Expr) -> Option<(String, bool)> {
-        let Expr::Binary {
-            left, op, right, ..
-        } = condition
-        else {
-            return None;
-        };
-        let is_eq = match op {
-            BinaryOp::Equal => true,
-            BinaryOp::NotEqual => false,
-            _ => return None,
-        };
-        let name = match (left.as_ref(), right.as_ref()) {
-            (Expr::Name(name), Expr::Null(_)) | (Expr::Null(_), Expr::Name(name)) => {
-                name.text.clone()
-            }
-            _ => return None,
-        };
-        let local = *self.locals.get(&name)?;
-        let ty = self.local_data[local.0].ty?;
-        if matches!(self.semantics.types[ty.0], Type::Optional(_)) {
-            Some((name, is_eq))
-        } else {
-            None
-        }
     }
     fn value(&mut self) -> ValueId {
         let value = ValueId(self.next_value);
@@ -201,6 +202,45 @@ impl Builder<'_> {
             storage: LocalStorage::Stack,
         });
         id
+    }
+    /// Adds one local per capture of a capturing closure body and loads each
+    /// capture from the hidden environment parameter (always local 0). Called
+    /// after the body's ordinary parameters so local indices stay aligned with
+    /// the ABI parameter list.
+    pub(super) fn setup_closure_captures(
+        &mut self,
+        layout: &ClosureLayout,
+        names: &[(String, TypeId)],
+        span: Span,
+    ) {
+        let env_value = self.value();
+        self.emit(Instruction::Copy {
+            value: env_value,
+            local: LocalId(0),
+        });
+        for (index, capture) in layout.captures.iter().enumerate() {
+            let capture_value = self.value();
+            self.emit(Instruction::LoadRaw {
+                value: capture_value,
+                pointer: env_value,
+                offset: i64::try_from(capture.offset).unwrap_or(0),
+                ty: capture.ty,
+            });
+            let name = names
+                .get(index)
+                .map_or_else(|| format!("$capture{index}"), |(name, _)| name.clone());
+            let capture_local = self.add_local(name, None, span);
+            self.initialized.insert(capture_local);
+            self.local_data[capture_local.0].ty = Some(capture.ty);
+            if self.layouts.types[capture.ty.0].needs_drop {
+                // The environment owns the value; the local only aliases it.
+                self.borrowed_locals.insert(capture_local);
+            }
+            self.emit(Instruction::Store {
+                local: capture_local,
+                value: capture_value,
+            });
+        }
     }
     #[expect(
         clippy::too_many_lines,
@@ -258,9 +298,38 @@ impl Builder<'_> {
                         base,
                         name: member.text.clone(),
                         value: value_id,
+                        release: true,
                     });
                 }
                 Some(value_id)
+            }
+            Stmt::Binding {
+                target:
+                    Expr::Subscript {
+                        object,
+                        index,
+                        span,
+                        ..
+                    },
+                value,
+                ..
+            } => {
+                if self.semantics.subscripts.get(span) == Some(&SubscriptKind::Generic) {
+                    return None;
+                }
+                let index = index.as_deref()?;
+                let element_ty = *self.semantics.expression_types.get(span)?;
+                let actual = self.semantics.expression_types.get(&value.span()).copied();
+                let raw = self.expr(value)?;
+                let stored = self.coerce_value(raw, actual, Some(element_ty));
+                self.lower_index_store(object, index, stored)?;
+                if self.layouts.types[element_ty.0].needs_drop {
+                    self.emit(Instruction::Release {
+                        value: stored,
+                        ty: element_ty,
+                    });
+                }
+                Some(stored)
             }
             Stmt::Expression(expr) => self.expr(expr),
             Stmt::Return {
@@ -327,76 +396,71 @@ impl Builder<'_> {
             Stmt::Binding { .. } => None,
         }
     }
-    fn lower_if(&mut self, statement: &vut_ast::If) {
-        let narrowing = self.condition_narrowing(&statement.condition);
-        let Some(condition) = self.expr(&statement.condition) else {
-            return;
+
+    /// Stores through an index and recursively writes modified aggregate
+    /// elements back through their parent index. This preserves value
+    /// semantics for chains such as `matrix[0][1] = value`.
+    fn lower_index_store(&mut self, object: &Expr, index: &Expr, stored: ValueId) -> Option<()> {
+        let collection_ty = *self.semantics.expression_types.get(&object.span())?;
+        let function = match self.semantics.types[collection_ty.0] {
+            Type::List(_) => BuiltinFunction::ListSet,
+            Type::Array(_, _) => BuiltinFunction::ArraySet,
+            Type::Map(_, _) => BuiltinFunction::MapSet,
+            _ => return None,
         };
-        let then_block = self.new_block();
-        let else_block = self.new_block();
-        let join = self.new_block();
-        self.terminate(Terminator::Branch {
-            condition,
-            then_block,
-            else_block,
+        let mut arguments = Vec::new();
+        let mut owned = Vec::new();
+        let nested = matches!(object, Expr::Subscript { .. });
+        if nested {
+            let collection = self.expr(object)?;
+            arguments.push(collection);
+            owned.push((collection, collection_ty));
+        } else {
+            self.lower_builtin_receiver(object, true, &mut arguments, &mut owned)?;
+        }
+        self.lower_builtin_value(index, &mut arguments, &mut owned)?;
+        arguments.push(stored);
+        let receiver = arguments[0];
+        self.emit(Instruction::RuntimeCall {
+            value: None,
+            result_type: None,
+            function,
+            arguments,
         });
-        self.switch_to(then_block);
-        self.conditional_depth += 1;
-        let then_narrowed = self.narrowed.len();
-        if let Some((name, false)) = &narrowing {
-            self.push_narrowing(name);
-        }
-        let then_mark = self.local_data.len();
-        self.lower_statements(&statement.body.statements);
-        self.narrowed.truncate(then_narrowed);
-        if !self.is_terminated() {
-            self.close_scope(then_mark);
-            self.terminate(Terminator::Jump(join));
-        }
-        self.switch_to(else_block);
-        if let Some((condition, body)) = statement.elifs.first() {
-            let nested = vut_ast::If {
-                condition: condition.clone(),
-                body: body.clone(),
-                elifs: statement.elifs[1..].to_vec(),
-                otherwise: statement.otherwise.clone(),
-                span: statement.span,
-            };
-            self.lower_if(&nested);
-        } else if let Some(body) = &statement.otherwise {
-            let else_narrowed = self.narrowed.len();
-            if let Some((name, true)) = &narrowing {
-                self.push_narrowing(name);
-            }
-            let else_mark = self.local_data.len();
-            self.lower_statements(&body.statements);
-            self.narrowed.truncate(else_narrowed);
-            if !self.is_terminated() {
-                self.close_scope(else_mark);
-            }
-        }
-        self.conditional_depth -= 1;
-        if !self.is_terminated() {
-            self.terminate(Terminator::Jump(join));
-        }
-        self.switch_to(join);
-        // `if value == null: <terminating>` leaves `value` present afterwards.
-        if let Some((name, true)) = &narrowing
-            && statement.elifs.is_empty()
-            && statement.otherwise.is_none()
-            && block_terminates(&statement.body)
+        if let Expr::Subscript {
+            object: parent,
+            index: parent_index,
+            ..
+        } = object
         {
-            self.push_narrowing(name);
+            let parent_index = parent_index.as_deref()?;
+            self.lower_index_store(parent, parent_index, receiver)?;
         }
+        for (owned_value, owned_ty) in owned {
+            self.emit(Instruction::Release {
+                value: owned_value,
+                ty: owned_ty,
+            });
+        }
+        Some(())
     }
     /// Lowers a builtin-call receiver as a borrow. Named locals and field
     /// projections of a local must not be moved or copied: a mutating builtin
     /// (`set`, `insert`, `push`) acts on the caller's storage, and an aggregate
     /// field receiver must be its address, not an owned copy. Only a true
     /// temporary receiver is owned and released after the call.
+    ///
+    /// When `mutating` is set and the receiver is a managed collection, the
+    /// handle is made unique first (copy-on-write) and written back, so a
+    /// mutation after a copy detaches from the shared storage.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "receiver lowering enumerates local, field, and subscript forms"
+    )]
     fn lower_builtin_receiver(
         &mut self,
         expression: &Expr,
+        mutating: bool,
         lowered: &mut Vec<ValueId>,
         owned: &mut Vec<(ValueId, TypeId)>,
     ) -> Option<()> {
@@ -404,6 +468,44 @@ impl Builder<'_> {
             Expr::Name(name) => {
                 if let Some(local) = self.locals.get(&name.text).copied() {
                     self.remaining_uses.consume(&name.text);
+                    let receiver_ty = self
+                        .semantics
+                        .expression_types
+                        .get(&expression.span())
+                        .copied();
+                    if mutating
+                        && !self.is_narrowed(&name.text)
+                        && self.receiver_local != Some(local)
+                        && self.is_cow_collection(receiver_ty)
+                    {
+                        let receiver_ty = receiver_ty?;
+                        let handle = self.value();
+                        self.emit(Instruction::Copy {
+                            value: handle,
+                            local,
+                        });
+                        // A capture local borrows the environment's reference;
+                        // retain it so the local can own the detached copy.
+                        if self.borrowed_locals.contains(&local) {
+                            self.emit(Instruction::Retain {
+                                value: handle,
+                                ty: receiver_ty,
+                            });
+                            self.borrowed_locals.remove(&local);
+                        }
+                        let unique = self.value();
+                        self.emit(Instruction::MakeUnique {
+                            value: unique,
+                            operand: handle,
+                            ty: receiver_ty,
+                        });
+                        self.emit(Instruction::Store {
+                            local,
+                            value: unique,
+                        });
+                        lowered.push(unique);
+                        return Some(());
+                    }
                     let value = self.value();
                     self.emit(Instruction::Borrow { value, local });
                     // A narrowed optional receiver borrows the optional storage
@@ -445,13 +547,117 @@ impl Builder<'_> {
                         base: base_value,
                         name: member.text.clone(),
                     });
+                    let field_ty = self
+                        .semantics
+                        .expression_types
+                        .get(&expression.span())
+                        .copied();
+                    if mutating && self.is_cow_collection(field_ty) {
+                        let field_ty = field_ty?;
+                        let unique = self.value();
+                        self.emit(Instruction::MakeUnique {
+                            value: unique,
+                            operand: value,
+                            ty: field_ty,
+                        });
+                        self.emit(Instruction::FieldStore {
+                            base,
+                            name: member.text.clone(),
+                            value: unique,
+                            release: false,
+                        });
+                        lowered.push(unique);
+                        return Some(());
+                    }
                     lowered.push(value);
                     return Some(());
                 }
             }
+            Expr::Subscript {
+                object,
+                index,
+                span,
+                ..
+            } if mutating => {
+                if self.semantics.subscripts.get(span) == Some(&SubscriptKind::Generic) {
+                    return self.lower_builtin_value(expression, lowered, owned);
+                }
+                let index = index.as_deref()?;
+                let collection_ty = *self.semantics.expression_types.get(&object.span())?;
+                let element_ty = *self.semantics.expression_types.get(span)?;
+                let (get, set) = match self.semantics.types[collection_ty.0] {
+                    Type::List(_) => (BuiltinFunction::ListAt, BuiltinFunction::ListSet),
+                    Type::Map(_, _) => (BuiltinFunction::MapGet, BuiltinFunction::MapSet),
+                    // Inline arrays have no shared storage; mutate a temporary.
+                    _ => return self.lower_builtin_value(expression, lowered, owned),
+                };
+                // The parent is an lvalue (made unique); the element is read as
+                // an owned reference, made unique, and written back after the
+                // call so the mutation reaches the parent.
+                let mut parent_args = Vec::new();
+                self.lower_builtin_receiver(object, true, &mut parent_args, owned)?;
+                let parent = *parent_args.first()?;
+                let mut index_args = Vec::new();
+                self.lower_builtin_value(index, &mut index_args, owned)?;
+                let index_value = *index_args.first()?;
+                let element = self.value();
+                self.emit(Instruction::RuntimeCall {
+                    value: Some(element),
+                    result_type: Some(element_ty),
+                    function: get,
+                    arguments: vec![parent, index_value],
+                });
+                let unique = self.value();
+                self.emit(Instruction::MakeUnique {
+                    value: unique,
+                    operand: element,
+                    ty: element_ty,
+                });
+                self.pending_writeback.push(WriteBack {
+                    function: set,
+                    parent,
+                    index: index_value,
+                    element: unique,
+                    element_ty,
+                });
+                lowered.push(unique);
+                return Some(());
+            }
             _ => {}
         }
         self.lower_builtin_value(expression, lowered, owned)
+    }
+
+    /// Applies queued subscript write-backs (innermost first) after a mutating
+    /// builtin call, transferring each mutated element back into its parent.
+    pub(super) fn apply_pending_writeback(&mut self) {
+        let writes = std::mem::take(&mut self.pending_writeback);
+        for write in writes.into_iter().rev() {
+            self.emit(Instruction::RuntimeCall {
+                value: None,
+                result_type: None,
+                function: write.function,
+                arguments: vec![write.parent, write.index, write.element],
+            });
+            if self.layouts.types[write.element_ty.0].needs_drop {
+                self.emit(Instruction::Release {
+                    value: write.element,
+                    ty: write.element_ty,
+                });
+            }
+        }
+    }
+
+    /// Whether a mutating builtin must detach shared storage for this type.
+    fn is_cow_collection(&self, ty: Option<TypeId>) -> bool {
+        ty.is_some_and(|ty| {
+            matches!(
+                self.layouts.types[ty.0].ownership,
+                super::OwnershipKind::RcList
+                    | super::OwnershipKind::RcMap
+                    | super::OwnershipKind::RcBytes
+            )
+        })
     }
     /// Lowers one builtin-call operand. Named locals are borrowed so the
     /// runtime can retain what it stores and read-only operands stay owned by
@@ -485,8 +691,8 @@ impl Builder<'_> {
         }
         Some(())
     }
-    /// Lowers a `resource(T)` used where only a borrow is required (an `extern`
-    /// `ptr(T)` parameter). The handle value is passed without moving,
+    /// Lowers a `resource[T]` used where only a borrow is required (an `extern`
+    /// `ptr[T]` parameter). The handle value is passed without moving,
     /// retaining, or releasing it. Supports resource locals and resource fields
     /// of a local aggregate (`self.handle`).
     fn lower_resource_borrow(
@@ -548,393 +754,35 @@ impl Builder<'_> {
             _ => None,
         }
     }
-    /// Lowers the value of a `for ... in` iterable. Managed collections are
-    /// borrowed rather than moved: the iterator only reads the collection, so
-    /// the local must remain owned and be destroyed by normal cleanup.
-    fn lower_iterable(&mut self, iterable: &Expr) -> Option<ValueId> {
-        if let Expr::Name(name) = iterable
-            && let Some(local) = self.locals.get(&name.text).copied()
-            && self.local_data[local.0].ty.is_some_and(|ty| {
-                matches!(
-                    self.semantics.types[ty.0],
-                    Type::List(_) | Type::Array(_, _)
-                )
-            })
-        {
-            let value = self.value();
-            self.emit(Instruction::Borrow { value, local });
-            return Some(value);
-        }
-        // A collection field is read without taking ownership: the iterator
-        // only reads it, so the owning aggregate must keep its reference. An
-        // array field projects inline storage (its address); a list field loads
-        // the handle; neither is retained here.
-        if let Expr::Member { object, member, .. } = iterable
-            && let Expr::Name(base_name) = object.as_ref()
-            && let Some(base) = self.locals.get(&base_name.text).copied()
-            && self
-                .semantics
-                .expression_types
-                .get(&iterable.span())
-                .is_some_and(|ty| {
-                    matches!(
-                        self.semantics.types[ty.0],
-                        Type::List(_) | Type::Array(_, _)
-                    )
-                })
-        {
-            let base_value = self.value();
-            self.emit(Instruction::Borrow {
-                value: base_value,
-                local: base,
-            });
-            let value = self.value();
-            self.emit(Instruction::Field {
-                value,
-                base: base_value,
-                name: member.text.clone(),
-            });
-            return Some(value);
-        }
-        self.expr(iterable)
-    }
-    #[expect(
-        clippy::too_many_lines,
-        reason = "loop lowering keeps CFG construction and binding types together"
-    )]
-    fn lower_for(&mut self, statement: &vut_ast::For) {
-        let head = self.new_block();
-        let body = self.new_block();
-        let exit = self.new_block();
-        let mut iteration_bindings = None;
-        let mut owned_iterable: Option<(ValueId, vut_hir::TypeId)> = None;
-        match &statement.kind {
-            vut_ast::ForKind::Infinite => {
-                self.terminate(Terminator::Jump(body));
-            }
-            vut_ast::ForKind::Conditional(condition) => {
-                self.terminate(Terminator::Jump(head));
-                self.switch_to(head);
-                if let Some(value) = self.expr(condition) {
-                    self.terminate(Terminator::Branch {
-                        condition: value,
-                        then_block: body,
-                        else_block: exit,
-                    });
-                }
-            }
-            vut_ast::ForKind::Iterable {
-                value: name,
-                index: index_name,
-                iterable,
-            } => {
-                let iterable_type = self
-                    .semantics
-                    .expression_types
-                    .get(&iterable.span())
-                    .copied();
-                let element_type = iterable_type.and_then(|ty| match self.semantics.types[ty.0] {
-                    Type::Array(element, _) | Type::List(element) | Type::Variadic(element) => {
-                        Some(element)
-                    }
-                    _ => None,
-                });
-                let array = iterable_type.and_then(|ty| match self.semantics.types[ty.0] {
-                    Type::Array(element, length) => {
-                        Some((length, self.layouts.element_storage_size(element)))
-                    }
-                    _ => None,
-                });
-                let element_stride =
-                    element_type.map(|element| self.layouts.element_storage_size(element));
-                let variadic = iterable_type.and_then(|ty| match self.semantics.types[ty.0] {
-                    Type::Variadic(element) => Some(element),
-                    _ => None,
-                });
-                // `(data, literal length, runtime length, stride)`.
-                let mut source = None;
-                if let Some(element) = variadic {
-                    let pair = self.variadic_param.as_ref().and_then(|pair| {
-                        matches!(iterable, Expr::Name(name) if name.text == pair.name)
-                            .then_some((pair.data, pair.len))
-                    });
-                    if let Some((data_local, len_local)) = pair {
-                        let data_value = self.value();
-                        self.emit(Instruction::Copy {
-                            value: data_value,
-                            local: data_local,
-                        });
-                        let len_value = self.value();
-                        self.emit(Instruction::Copy {
-                            value: len_value,
-                            local: len_local,
-                        });
-                        source = Some((
-                            data_value,
-                            None,
-                            Some(len_value),
-                            Some(self.layouts.element_storage_size(element)),
-                        ));
-                    }
-                } else if let Some(iterable_value) = self.lower_iterable(iterable) {
-                    // A local or field-projected collection stays owned by its
-                    // owner; any other collection is a temporary this loop must
-                    // release after the exit edge.
-                    let borrowed = matches!(iterable, Expr::Name(_))
-                        || matches!(iterable, Expr::Member { object, .. }
-                            if matches!(object.as_ref(), Expr::Name(_)));
-                    if !borrowed
-                        && let Some(ty) = iterable_type.filter(|ty| {
-                            matches!(
-                                self.semantics.types[ty.0],
-                                Type::List(_) | Type::Array(_, _)
-                            )
-                        })
-                    {
-                        owned_iterable = Some((iterable_value, ty));
-                    }
-                    source = Some((
-                        iterable_value,
-                        array.map(|value| value.0),
-                        None,
-                        array.map(|value| value.1).or(element_stride),
-                    ));
-                }
-                if let Some((iterable_value, length, length_value, stride)) = source {
-                    let iterator = self.value();
-                    self.emit(Instruction::IteratorInit {
-                        iterator,
-                        iterable: iterable_value,
-                        length,
-                        length_value,
-                        stride,
-                        slot: None,
-                    });
-                    self.terminate(Terminator::Jump(head));
-                    self.switch_to(head);
-                    let has_value = self.value();
-                    let value = self.value();
-                    let index = self.value();
-                    self.emit(Instruction::IteratorNext {
-                        has_value,
-                        value,
-                        index,
-                        iterator,
-                        element_type: element_type.expect("checked iterable has an element type"),
-                    });
-                    iteration_bindings =
-                        Some((name.clone(), index_name.clone(), value, index, element_type));
-                    self.terminate(Terminator::Branch {
-                        condition: has_value,
-                        then_block: body,
-                        else_block: exit,
-                    });
-                }
-            }
-        }
-        self.switch_to(body);
-        self.conditional_depth += 1;
-        // The loop bindings live inside the per-iteration cleanup scope so a
-        // managed element is released at the end of each iteration.
-        let mark = self.local_data.len();
-        if let Some((name, index_name, value, index, element_type)) = iteration_bindings {
-            let local = self.add_local(name.text, None, name.span);
-            self.local_data[local.0].ty = element_type;
-            self.emit(Instruction::Store { local, value });
-            // The iterator yields borrowed elements; retain managed elements so
-            // the binding owns a reference and using it by value is safe.
-            if let Some(ty) = element_type
-                && self.layouts.types[ty.0].needs_drop
-            {
-                self.emit(Instruction::Retain { value, ty });
-            }
-            if let Some(name) = index_name {
-                let local = self.add_local(name.text, None, name.span);
-                self.local_data[local.0].ty = self
-                    .semantics
-                    .types
-                    .iter()
-                    .position(|ty| matches!(ty, Type::Int))
-                    .map(vut_hir::TypeId);
-                self.emit(Instruction::Store {
-                    local,
-                    value: index,
-                });
-            }
-        }
-        let continue_target = if matches!(statement.kind, vut_ast::ForKind::Infinite) {
-            body
-        } else {
-            head
-        };
-        self.loop_targets.push(LoopTarget {
-            continue_target,
-            exit,
-            mark,
-            iterable: owned_iterable,
-        });
-        self.lower_statements(&statement.body.statements);
-        self.loop_targets.pop();
-        if !self.is_terminated() {
-            self.close_scope(mark);
-            self.terminate(Terminator::Jump(continue_target));
-        }
-        self.conditional_depth -= 1;
-        self.switch_to(exit);
-        if let Some((value, ty)) = owned_iterable {
-            self.emit(Instruction::Release { value, ty });
-        }
-    }
-    /// Wraps `value` into an optional when `expected` is `T?` and `actual` is
-    /// `T`. Managed handles wrap by identity; scalars are boxed.
-    pub(super) fn coerce_optional(
-        &mut self,
-        value: ValueId,
-        actual: Option<TypeId>,
-        expected: Option<TypeId>,
-    ) -> ValueId {
-        let (Some(actual), Some(expected)) = (actual, expected) else {
-            return value;
-        };
-        let Type::Optional(inner) = self.semantics.types[expected.0] else {
-            return value;
-        };
-        // A `null` literal has the placeholder `Null` type: managed optionals
-        // represent absence as the zero handle, but tagged optionals need a
-        // zeroed aggregate block, so re-emit the constant with the optional type.
-        if matches!(self.semantics.types[actual.0], Type::Null) {
-            if !matches!(
-                self.semantics.types[inner.0],
-                Type::Str
-                    | Type::Bytes
-                    | Type::List(_)
-                    | Type::Map(_, _)
-                    | Type::Vutcon(_)
-                    | Type::Future(_)
-                    | Type::Resource(_)
-                    | Type::Interface(_)
-                    | Type::Dyn
-            ) {
-                let absent = self.value();
-                self.emit(Instruction::ConstNull {
-                    value: absent,
-                    ty: Some(expected),
-                });
-                return absent;
-            }
-            return value;
-        }
-        if actual != inner {
-            return value;
-        }
-        let wrapped = self.value();
-        self.emit(Instruction::OptionalWrap {
-            value: wrapped,
-            operand: value,
-            ty: expected,
-            inner,
-        });
-        wrapped
-    }
-    /// Applies the full value coercion toward an expected type: interface/`dyn`
-    /// boxing (`T` -> `interface`/`dyn`) followed by optional wrapping
-    /// (`T` -> `T?`). Used wherever a value is stored into a typed destination.
-    pub(super) fn coerce_value(
-        &mut self,
-        value: ValueId,
-        actual: Option<TypeId>,
-        expected: Option<TypeId>,
-    ) -> ValueId {
-        let (Some(actual), Some(expected)) = (actual, expected) else {
-            return value;
-        };
-        let boxed = self.coerce_interface(value, actual, expected);
-        self.coerce_optional(boxed, Some(actual), Some(expected))
-    }
-    /// Whether storing a value into `expected` requires boxing/wrapping rather
-    /// than a plain bit copy.
-    pub(super) fn value_needs_coercion(&self, expected: TypeId) -> bool {
-        matches!(
-            self.semantics.types[expected.0],
-            Type::Dyn | Type::Interface(_) | Type::Optional(_)
-        )
-    }
-    /// Expected concrete type for each non-receiver argument of a builtin call,
-    /// for arguments that store the receiver's element/value type.
-    pub(super) fn builtin_argument_types(
-        &self,
-        function: crate::BuiltinFunction,
-        receiver_ty: Option<TypeId>,
-    ) -> Vec<Option<TypeId>> {
-        use crate::BuiltinFunction;
-        let Some(receiver) = receiver_ty.and_then(|ty| self.semantics.types.get(ty.0).cloned())
-        else {
-            return Vec::new();
-        };
-        match receiver {
-            Type::List(element) => match function {
-                BuiltinFunction::ListPush | BuiltinFunction::ListContains => {
-                    vec![Some(element)]
-                }
-                BuiltinFunction::ListInsert | BuiltinFunction::ListSet => {
-                    vec![None, Some(element)]
-                }
-                _ => Vec::new(),
-            },
-            Type::Map(_, value) => match function {
-                BuiltinFunction::MapSet | BuiltinFunction::MapGetOr => {
-                    vec![None, Some(value)]
-                }
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
-        }
-    }
-    pub(super) fn cleanup_except(&mut self, returned: Option<ValueId>) {
-        let _ = returned;
-        self.cleanup_from(0);
-    }
-    fn cleanup_from(&mut self, start: usize) {
-        let drops: Vec<_> = self
-            .local_data
-            .iter()
-            .enumerate()
-            .skip(start)
-            .rev()
-            .filter_map(|(index, local)| {
-                let id = LocalId(index);
-                // A receiver is borrowed by the caller and must never be
-                // released by the callee's cleanup.
-                if self.receiver_local == Some(id) {
-                    return None;
-                }
-                (!self.moved.contains(&id)
-                    && local
-                        .ty
-                        .is_some_and(|ty| self.layouts.types[ty.0].needs_drop))
-                .then_some(id)
-            })
-            .collect();
-        for local in drops {
-            self.emit(Instruction::Drop(local));
-        }
-    }
-    /// Drops the locals declared at or after `start` on the current path and
-    /// marks them consumed. Used to close a scoped arm/branch so its bindings
-    /// cannot be dropped again by an outer cleanup (path-insensitive move
-    /// tracking otherwise treats them as still live).
-    pub(super) fn close_scope(&mut self, start: usize) {
-        self.cleanup_from(start);
-        for index in start..self.local_data.len() {
-            self.moved.insert(LocalId(index));
-        }
-    }
 }
 
-/// True when a block provably leaves the enclosing flow on every path.
-fn block_terminates(block: &vut_ast::Block) -> bool {
+/// Builtins that mutate a collection in place and therefore require
+/// copy-on-write detachment when the receiver's storage is shared.
+pub(super) fn is_mutating_builtin(function: BuiltinFunction) -> bool {
     matches!(
-        block.statements.last(),
-        Some(Stmt::Return { .. } | Stmt::Break(_) | Stmt::Continue(_))
+        function,
+        BuiltinFunction::ListPush
+            | BuiltinFunction::ListSet
+            | BuiltinFunction::ListInsert
+            | BuiltinFunction::ListRemove
+            | BuiltinFunction::ListClear
+            | BuiltinFunction::ListReserve
+            | BuiltinFunction::ListExtend
+            | BuiltinFunction::ListReverse
+            | BuiltinFunction::ListSort
+            | BuiltinFunction::ListTruncate
+            | BuiltinFunction::ListShrinkToFit
+            | BuiltinFunction::MapSet
+            | BuiltinFunction::MapRemove
+            | BuiltinFunction::MapClear
+            | BuiltinFunction::MapReserve
+            | BuiltinFunction::BytesSet
+            | BuiltinFunction::BytesPush
+            | BuiltinFunction::BytesExtend
+            | BuiltinFunction::BytesTruncate
+            | BuiltinFunction::BytesResize
+            | BuiltinFunction::BytesClear
+            | BuiltinFunction::BytesWriteInt { .. }
+            | BuiltinFunction::BytesReserve
     )
 }
