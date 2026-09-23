@@ -239,15 +239,22 @@ jobs:
           test -n "$archive"
           echo "path=${archive}" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        id: attest
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ steps.archive.outputs.path }}
-          bundle-path: artifacts/${{ matrix.target }}.sigstore.json
+      - name: Collect attestation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${{ steps.attest.outputs.bundle-path }}"
+          test -n "$bundle"
+          cp "$bundle" "artifacts/${{ matrix.target }}.sigstore.json"
       - name: Upload attestation bundle
         uses: actions/upload-artifact@v4
         with:
           name: attest-${{ matrix.target }}
-          path: artifacts/*.sigstore.json
+          path: artifacts/${{ matrix.target }}.sigstore.json
           if-no-files-found: error
 
   publish:
