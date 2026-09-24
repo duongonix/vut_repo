@@ -7,8 +7,8 @@ Status: implemented (M2). Distribution version is the root `Cargo.toml`
 
 | Component | Source | Example |
 | --- | --- | --- |
-| Vut distribution (`vut`, `vut-lsp`, stdlib, runtime) | root `Cargo.toml` `[workspace.package] version` | `0.1.0` |
-| `vpm` | `crates/vpm/Cargo.toml` `version` (own literal) | `0.1.0` |
+| Vut distribution (`vut`, `vut-lsp`, stdlib, runtime) | root `Cargo.toml` `[workspace.package] version` | `0.2.0` |
+| `vpm` | `crates/vpm/Cargo.toml` `version` (own literal) | `0.2.0` |
 | Runtime ABI | `vut_runtime::abi::VERSION` (integer) | `10` |
 | Manifest format | `vut_dist::manifest::FORMAT_VERSION` | `1` |
 
